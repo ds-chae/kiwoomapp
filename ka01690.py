@@ -313,12 +313,55 @@ def cancel_nxt_trade(now):
 			oso = m['oso']
 			for o in oso:
 				stex_tp = o['stex_tp']
-				if stex_tp == '2': # NXT
-					cancel_sell_order(now, m['ACCT'], m['TOKEN'], o)
+				ord_no = o['ord_no']
+				stk_cd = o['stk_cd']
+				if stex_tp == '1': # NXT
+					cancel_order_main(now, m['TOKEN'], 'KRX', ord_no, stk_cd)
 
 
-def cancel_sell_order(now, ACCT, TOKEN, o):
+# 주식 취소주문
+def fn_kt10003(token, data, cont_yn='N', next_key=''):
+	# 1. 요청할 API URL
+	# host = 'https://mockapi.kiwoom.com' # 모의투자
+	host = 'https://api.kiwoom.com'  # 실전투자
+	endpoint = '/api/dostk/ordr'
+	url = host + endpoint
 
+	# 2. header 데이터
+	headers = {
+		'Content-Type': 'application/json;charset=UTF-8',  # 컨텐츠타입
+		'authorization': f'Bearer {token}',  # 접근토큰
+		'cont-yn': cont_yn,  # 연속조회여부
+		'next-key': next_key,  # 연속조회키
+		'api-id': 'kt10003',  # TR명
+	}
+
+	# 3. http POST 요청
+	response = requests.post(url, headers=headers, json=data)
+
+	# 4. 응답 상태 코드와 데이터 출력
+	print('Code:', response.status_code)
+	print('Header:',
+	      json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4,
+	                 ensure_ascii=False))
+	print('Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON 응답을 파싱하여 출력
+
+
+def cancel_order_main(now, access_token, stex, orig_ord_no, stk_cd):
+	# 2. 요청 데이터
+	params = {
+		'dmst_stex_tp': stex, # 'KRX',  # 국내거래소구분 KRX,NXT,SOR
+		'orig_ord_no': orig_ord_no,  # 원주문번호
+		'stk_cd': stk_cd,  # 종목코드
+		'cncl_qty': '0',  # 취소수량 '0' 입력시 잔량 전부 취소
+	}
+
+	# 3. API 실행
+	fn_kt10003(token=access_token, data=params)
+
+
+# next-key, cont-yn 값이 있을 경우
+# fn_kt10003(token=MY_ACCESS_TOKEN, data=params, cont_yn='Y', next_key='nextkey..')
 
 # 실행 구간
 if __name__ == '__main__':
