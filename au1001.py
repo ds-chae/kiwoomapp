@@ -48,13 +48,13 @@ def fn_au10001(data):
     response = requests.post(url, headers=headers, json=data)
 
     # 4. 응답 상태 코드와 데이터 출력
-    print('Code:', response.status_code)
-    header_keys = ['next-key', 'cont-yn', 'api-id']
-    header_data = {key: response.headers.get(key) for key in header_keys}
-    print('Header:', json.dumps(header_data, indent=4, ensure_ascii=False))
-    print('Body:', json.dumps(
-        response.json(), indent=4, ensure_ascii=False
-    ))  # JSON 응답을 파싱하여 출력
+    print_it = False
+    if print_it:
+        print('Code:', response.status_code)
+        header_keys = ['next-key', 'cont-yn', 'api-id']
+        header_data = {key: response.headers.get(key) for key in header_keys}
+        # print('Header:', json.dumps(header_data, indent=4, ensure_ascii=False))
+        print('Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON 응답을 파싱하여 출력
 
     return response.json()['token']
 
