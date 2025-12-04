@@ -315,8 +315,12 @@ def cancel_nxt_trade(now):
 				stex_tp = o['stex_tp']
 				ord_no = o['ord_no']
 				stk_cd = o['stk_cd']
-				if stex_tp == '1': # NXT
-					cancel_order_main(now, m['TOKEN'], 'KRX', ord_no, stk_cd)
+				if stex_tp == '1': # KRX
+					#cancel_order_main(now, m['TOKEN'], 'KRX', ord_no, stk_cd)
+					pass
+				elif stex_tp == '2': # NXT
+					cancel_order_main(now, m['TOKEN'], 'NTX', ord_no, stk_cd)
+		pass
 
 
 # 주식 취소주문
