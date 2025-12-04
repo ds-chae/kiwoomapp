@@ -248,23 +248,32 @@ def fn_ka10075(token, data, cont_yn='N', next_key=''):
 	print('Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON 응답을 파싱하여 출력
 
 # 실행 구간
-if __name__ == '__main__':
-	# 1. 토큰 설정
-	MY_ACCESS_TOKEN = '사용자 AccessToken' # 접근토큰
+def get_miche():
+	key_list = get_key_list()
+	miche = []
+	for key in key_list:
+		ACCT = key['ACCT']
+		MY_ACCESS_TOKEN = get_token(key['AK'], key['SK'])  # 접근토큰
+		# 2. 요청 데이터
+		params = {
+			'all_stk_tp': '0', # 전체종목구분 0:전체, 1:종목
+			'trde_tp': '0', # 매매구분 0:전체, 1:매도, 2:매수
+			'stk_cd': '', # 종목코드
+			'stex_tp': '0', # 거래소구분 0 : 통합, 1 : KRX, 2 : NXT
+		}
 
-	# 2. 요청 데이터
-	params = {
-		'all_stk_tp': '1', # 전체종목구분 0:전체, 1:종목
-		'trde_tp': '0', # 매매구분 0:전체, 1:매도, 2:매수
-		'stk_cd': '005930', # 종목코드
-		'stex_tp': '0', # 거래소구분 0 : 통합, 1 : KRX, 2 : NXT
-	}
+		# 3. API 실행
+		m = fn_ka10075(token=MY_ACCESS_TOKEN, data=params)
+		m['ACCT'] = ACCT
+		m['TOKEN'] = MY_ACCESS_TOKEN
+		miche.append(m)
 
-	# 3. API 실행
-	fn_ka10075(token=MY_ACCESS_TOKEN, data=params)
+	return miche
 
-	# next-key, cont-yn 값이 있을 경우
-	# fn_ka10075(token=MY_ACCESS_TOKEN, data=params, cont_yn='Y', next_key='nextkey..')
+
+def cancel_nxt_trade(now):
+	miche = get_miche()
+	for m in miche:
 
 
 
@@ -282,7 +291,7 @@ if __name__ == '__main__':
 	prev_hour = datetime.datetime.now().time().hour
 
 	new_day = True
-
+	nxt_cancelled = False
 	# 매 초 혹은 주기적으로 호출하도록 구성 (예: loop 안)
 	while True:
 		now = datetime.datetime.now().time()
@@ -296,11 +305,14 @@ if __name__ == '__main__':
 				new_day = True
 				waiting_shown = False
 				no_working_shown = False
+				nxt_cancelled = False
 		elif is_between(now, nxt_start_time, nxt_end_time):
 			jango = get_jango()
 			sell_jango(now, jango, 'NXT')
 		elif is_between(now, nxt_end_time, krx_start_time):
-			cancel_nxt_trade(now)
+			if not nxt_cancelled:
+				nxt_cancelled = True
+				cancel_nxt_trade(now)
 		elif is_between(now, krx_start_time, krx_end_time):
 			jango = get_jango()
 			sell_jango(now, jango, 'KRX')
