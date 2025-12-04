@@ -270,15 +270,55 @@ def get_miche():
 
 	return miche
 
+"""
+oso	미체결	LIST	N		
+- acnt_no	계좌번호	String	N	20	
+- ord_no	주문번호	String	N	20	
+- mang_empno	관리사번	String	N	20	
+- stk_cd	종목코드	String	N	20	
+- tsk_tp	업무구분	String	N	20	
+- ord_stt	주문상태	String	N	20	
+- stk_nm	종목명	String	N	40	
+- ord_qty	주문수량	String	N	20	
+- ord_pric	주문가격	String	N	20	
+- oso_qty	미체결수량	String	N	20	
+- cntr_tot_amt	체결누계금액	String	N	20	
+- orig_ord_no	원주문번호	String	N	20	
+- io_tp_nm	주문구분	String	N	20	
+- trde_tp	매매구분	String	N	20	
+- tm	시간	String	N	20	
+- cntr_no	체결번호	String	N	20	
+- cntr_pric	체결가	String	N	20	
+- cntr_qty	체결량	String	N	20	
+- cur_prc	현재가	String	N	20	
+- sel_bid	매도호가	String	N	20	
+- buy_bid	매수호가	String	N	20	
+- unit_cntr_pric	단위체결가	String	N	20	
+- unit_cntr_qty	단위체결량	String	N	20	
+- tdy_trde_cmsn	당일매매수수료	String	N	20	
+- tdy_trde_tax	당일매매세금	String	N	20	
+- ind_invsr	개인투자자	String	N	20	
+- stex_tp	거래소구분	String	N	20	0 : 통합, 1 : KRX, 2 : NXT
+- stex_tp_txt	거래소구분텍스트	String	N	20	통합,KRX,NXT
+- sor_yn	SOR 여부값	String	N	20	Y,N
+- stop_pric	스톱가	String	N	20	스톱지정가주문 스톱가
+"""
 
 def cancel_nxt_trade(now):
 	miche = get_miche()
 	for m in miche:
+		if 'oso' in m:
+			oso = m['oso']
+			for o in oso:
+				print("stex_tp={}".format(o['stex_tp']))
 
 
 
 # 실행 구간
 if __name__ == '__main__':
+	now = datetime.datetime.now().time()
+	cancel_nxt_trade(now)
+
 	#key_list = get_key_list()
 	#for key in key_list:
 	#	print_acnt(key['ACCT'], key['AK'], key['SK'])
