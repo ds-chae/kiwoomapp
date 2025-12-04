@@ -246,6 +246,8 @@ def fn_ka10075(token, data, cont_yn='N', next_key=''):
 	print('Code:', response.status_code)
 	print('Header:', json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4, ensure_ascii=False))
 	print('Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON 응답을 파싱하여 출력
+	return response.json()
+
 
 # 실행 구간
 def get_miche():
@@ -310,8 +312,12 @@ def cancel_nxt_trade(now):
 		if 'oso' in m:
 			oso = m['oso']
 			for o in oso:
-				print("stex_tp={}".format(o['stex_tp']))
+				stex_tp = o['stex_tp']
+				if stex_tp == '2': # NXT
+					cancel_sell_order(now, m['ACCT'], m['TOKEN'], o)
 
+
+def cancel_sell_order(now, ACCT, TOKEN, o):
 
 
 # 실행 구간
