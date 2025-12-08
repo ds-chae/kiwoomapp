@@ -1,15 +1,16 @@
 import requests
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, time, date
 from dotenv import load_dotenv
 from au1001 import get_token, get_key_list
-import time
+import time as time_module
 import threading
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, status, Cookie
+from fastapi.responses import HTMLResponse, RedirectResponse
 import uvicorn
 from contextlib import asynccontextmanager
+import secrets
 
 # Load environment variables from .env file
 load_dotenv()
@@ -20,6 +21,15 @@ KIWOOM_AK = os.getenv('KIWOOM_AK')
 
 SK_0130 = os.getenv('SK_0130')
 AK_0130 = os.getenv('AK_0130')
+
+# Authentication configuration
+LOGIN_USERNAME = os.getenv('LOGIN_USERNAME')
+LOGIN_PASSWORD = os.getenv('LOGIN_PASSWORD')
+SECRET_KEY = os.getenv('SECRET_KEY', secrets.token_urlsafe(32))
+TOKEN_EXPIRY_HOURS = 24
+
+# In-memory token storage (in production, use Redis or database)
+active_tokens = {}
 
 # 일별잔고수익률
 def fn_ka01690(token, data, cont_yn='N', next_key=''):
@@ -56,7 +66,7 @@ def print_acnt(ACCT, AK, SK):
 
 	# 2. 요청 데이터
 	params = {
-		'qry_dt': datetime.datetime.now().strftime('%Y%m%d'),  # 조회일자 (오늘 날짜)
+		'qry_dt': datetime.now().strftime('%Y%m%d'),  # 조회일자 (오늘 날짜)
 	}
 
 	#print(f"ACCT={ACCT}")
@@ -158,8 +168,6 @@ def print_j(j):
 					return True
 	pass
 	return False
-
-import datetime
 
 def round_trunc(dp):
 	p = int(dp)
@@ -404,18 +412,18 @@ def cancel_order_main(now, access_token, stex, orig_ord_no, stk_cd):
 # next-key, cont-yn 값이 있을 경우
 # fn_kt10003(token=MY_ACCESS_TOKEN, data=params, cont_yn='Y', next_key='nextkey..')
 
-day_start_time = datetime.time(6, 0)  # 07:00
-nxt_start_time = datetime.time(7, 59)  # 07:00
-nxt_end_time = datetime.time(8, 49)  # 07:00
-krx_start_time = datetime.time(8,51)
-krx_end_time = datetime.time(15,30)
+day_start_time = time(6, 0)  # 07:00
+nxt_start_time = time(7, 59)  # 07:00
+nxt_end_time = time(8, 49)  # 07:00
+krx_start_time = time(8,51)
+krx_end_time = time(15,30)
 new_day = True
 nxt_cancelled = False
 krx_first = False
 
 def cur_date():
 	# Get today's date
-	today = datetime.date.today()
+	today = date.today()
 
 	# Format the date as YYYYMMDD
 	formatted_date = today.strftime("%Y%m%d")
@@ -450,7 +458,7 @@ def set_new_day():
 
 	if new_day:
 		return
-	now = datetime.datetime.now().time()
+	now = datetime.now().time()
 	print('{} {} Setting new day=True'.format(cur_date(), now))
 	new_day = True
 	waiting_shown = False
@@ -515,7 +523,7 @@ def background_timer_thread():
 		for _ in range(30):  # Check every 0.1 seconds for 3 seconds total
 			if thread_stop_event.is_set():
 				break
-			time.sleep(0.1)
+			time_module.sleep(0.1)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -592,7 +600,7 @@ def periodic_timer_handler():
 	"""Periodic timer event handler that runs the trading loop logic"""
 	global prev_hour, new_day, stored_jango_data
 	
-	now = datetime.datetime.now().time()
+	now = datetime.now().time()
 	now_hour = now.hour
 	if prev_hour is not None and now_hour != prev_hour:
 		print('{} Hour change from {} to {}'.format(cur_date(), prev_hour, now_hour))
@@ -613,7 +621,7 @@ def format_account_data():
 	global stored_jango_data
 	try:
 		# Determine which market is active based on current time
-		now = datetime.datetime.now().time()
+		now = datetime.now().time()
 		active_market = None
 		
 		if is_between(now, nxt_start_time, nxt_end_time):
@@ -714,10 +722,253 @@ def format_account_data():
 		return []
 
 
+# Authentication functions
+def create_token() -> str:
+	"""Create a new authentication token"""
+	token = secrets.token_urlsafe(32)
+	expiry = datetime.now() + timedelta(hours=TOKEN_EXPIRY_HOURS)
+	active_tokens[token] = {
+		'expiry': expiry,
+		'created': datetime.now()
+	}
+	return token
+
+def verify_token(token: str) -> bool:
+	"""Verify if a token is valid"""
+	if not token or token not in active_tokens:
+		return False
+	
+	token_data = active_tokens[token]
+	if datetime.now() > token_data['expiry']:
+		# Token expired, remove it
+		del active_tokens[token]
+		return False
+	
+	return True
+
+def cleanup_expired_tokens():
+	"""Remove expired tokens from memory"""
+	now = datetime.now()
+	expired_tokens = [token for token, data in active_tokens.items() if now > data['expiry']]
+	for token in expired_tokens:
+		del active_tokens[token]
+
+async def get_current_user(token: str = Cookie(None)):
+	"""Dependency to get current authenticated user"""
+	if not token:
+		raise HTTPException(
+			status_code=status.HTTP_401_UNAUTHORIZED,
+			detail="Not authenticated",
+			headers={"WWW-Authenticate": "Bearer"},
+		)
+	
+	if not verify_token(token):
+		raise HTTPException(
+			status_code=status.HTTP_401_UNAUTHORIZED,
+			detail="Invalid or expired token",
+			headers={"WWW-Authenticate": "Bearer"},
+		)
+	
+	return {"authenticated": True}
+
+
+# Login page
+@app.get("/login", response_class=HTMLResponse)
+@app.get("/login/", response_class=HTMLResponse)
+async def login_page():
+	"""Display login page"""
+	html_content = """
+	<!DOCTYPE html>
+	<html lang="ko">
+	<head>
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<title>Login</title>
+		<style>
+			* {
+				margin: 0;
+				padding: 0;
+				box-sizing: border-box;
+			}
+			body {
+				font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+				background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+				display: flex;
+				justify-content: center;
+				align-items: center;
+				min-height: 100vh;
+				padding: 20px;
+			}
+			.login-container {
+				background: white;
+				border-radius: 12px;
+				box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+				padding: 40px;
+				width: 100%;
+				max-width: 400px;
+			}
+			h1 {
+				color: #333;
+				margin-bottom: 30px;
+				text-align: center;
+				font-size: 28px;
+			}
+			.form-group {
+				margin-bottom: 20px;
+			}
+			label {
+				display: block;
+				margin-bottom: 8px;
+				color: #555;
+				font-weight: 500;
+			}
+			input[type="text"],
+			input[type="password"] {
+				width: 100%;
+				padding: 12px;
+				border: 2px solid #e0e0e0;
+				border-radius: 6px;
+				font-size: 16px;
+				transition: border-color 0.3s;
+			}
+			input[type="text"]:focus,
+			input[type="password"]:focus {
+				outline: none;
+				border-color: #667eea;
+			}
+			.btn-login {
+				width: 100%;
+				padding: 12px;
+				background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+				color: white;
+				border: none;
+				border-radius: 6px;
+				font-size: 16px;
+				font-weight: 600;
+				cursor: pointer;
+				transition: transform 0.2s, box-shadow 0.2s;
+			}
+			.btn-login:hover {
+				transform: translateY(-2px);
+				box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+			}
+			.btn-login:active {
+				transform: translateY(0);
+			}
+			.error-message {
+				background: #fee;
+				color: #c33;
+				padding: 12px;
+				border-radius: 6px;
+				margin-bottom: 20px;
+				display: none;
+			}
+			.error-message.show {
+				display: block;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="login-container">
+			<h1>🔐 Login</h1>
+			<div id="error-message" class="error-message"></div>
+			<form id="login-form">
+				<div class="form-group">
+					<label for="username">Username</label>
+					<input type="text" id="username" name="username" required autocomplete="username">
+				</div>
+				<div class="form-group">
+					<label for="password">Password</label>
+					<input type="password" id="password" name="password" required autocomplete="current-password">
+				</div>
+				<button type="submit" class="btn-login">Login</button>
+			</form>
+		</div>
+		<script>
+			document.getElementById('login-form').addEventListener('submit', async function(e) {
+				e.preventDefault();
+				const username = document.getElementById('username').value;
+				const password = document.getElementById('password').value;
+				const errorDiv = document.getElementById('error-message');
+				
+				try {
+					const response = await fetch('./api/login', {
+						method: 'POST',
+						headers: {
+							'Content-Type': 'application/json',
+						},
+						body: JSON.stringify({ username: username, password: password })
+					});
+					
+					const result = await response.json();
+					
+					if (result.status === 'success') {
+						// Set cookie and redirect
+						document.cookie = `token=${result.token}; path=/; max-age=${24 * 60 * 60}`;
+						window.location.href = './stock';
+					} else {
+						errorDiv.textContent = result.message || 'Login failed';
+						errorDiv.classList.add('show');
+					}
+				} catch (error) {
+					errorDiv.textContent = 'Error: ' + error.message;
+					errorDiv.classList.add('show');
+				}
+			});
+		</script>
+	</body>
+	</html>
+	"""
+	return HTMLResponse(content=html_content)
+
+# Login API endpoint
+@app.post("/api/login")
+@app.post("/{proxy_path:path}/api/login")
+async def login(request: dict, proxy_path: str = ""):
+	"""Handle login and issue token"""
+	cleanup_expired_tokens()
+	
+	username = request.get('username', '')
+	password = request.get('password', '')
+	
+	if username == LOGIN_USERNAME and password == LOGIN_PASSWORD:
+		token = create_token()
+		return {
+			"status": "success",
+			"message": "Login successful",
+			"token": token
+		}
+	else:
+		raise HTTPException(
+			status_code=status.HTTP_401_UNAUTHORIZED,
+			detail="Invalid username or password"
+		)
+
+# Logout endpoint
+@app.post("/api/logout")
+@app.post("/{proxy_path:path}/api/logout")
+async def logout(token: str = Cookie(None)):
+	"""Handle logout by invalidating token"""
+	if token and token in active_tokens:
+		del active_tokens[token]
+	response = RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
+	response.delete_cookie(key="token", path="/")
+	return {"status": "success", "message": "Logged out successfully"}
+
+# Root redirect to login
+@app.get("/")
+async def root_redirect():
+	"""Redirect root to login"""
+	return RedirectResponse(url="./login", status_code=status.HTTP_302_FOUND)
+
 @app.get("/stock", response_class=HTMLResponse)
 @app.get("/stock/", response_class=HTMLResponse)
-async def root():
+async def root(token: str = Cookie(None)):
 	"""Display account information UI"""
+	# Check authentication
+	if not token or not verify_token(token):
+		return RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
+	
 	account_data = format_account_data()
 	
 	html_content = """
@@ -1353,22 +1604,40 @@ async def root():
 
 @app.get("/api/account-data")
 @app.get("/stock/api/account-data")
-async def get_account_data_api(proxy_path: str = ""):
+async def get_account_data_api(proxy_path: str = "", token: str = Cookie(None)):
 	"""API endpoint to get account data as JSON"""
+	# Check authentication
+	if not token or not verify_token(token):
+		raise HTTPException(
+			status_code=status.HTTP_401_UNAUTHORIZED,
+			detail="Not authenticated"
+		)
 	account_data = format_account_data()
 	return {"status": "success", "data": account_data}
 
 @app.get("/api/sell-prices")
 @app.get("/{proxy_path:path}/api/sell-prices")
-async def get_sell_prices_api(proxy_path: str = ""):
+async def get_sell_prices_api(proxy_path: str = "", token: str = Cookie(None)):
 	"""API endpoint to get sell prices"""
+	# Check authentication
+	if not token or not verify_token(token):
+		raise HTTPException(
+			status_code=status.HTTP_401_UNAUTHORIZED,
+			detail="Not authenticated"
+		)
 	global sell_prices
 	return {"status": "success", "data": sell_prices}
 
 @app.post("/api/sell-prices")
 @app.post("/{proxy_path:path}/api/sell-prices")
-async def update_sell_prices_api(request: dict, proxy_path: str = ""):
+async def update_sell_prices_api(request: dict, proxy_path: str = "", token: str = Cookie(None)):
 	"""API endpoint to update sell prices"""
+	# Check authentication
+	if not token or not verify_token(token):
+		raise HTTPException(
+			status_code=status.HTTP_401_UNAUTHORIZED,
+			detail="Not authenticated"
+		)
 	global sell_prices
 	try:
 		stock_code = request.get('stock_code')
@@ -1446,7 +1715,7 @@ async def get_miche_endpoint():
 async def cancel_nxt_trade_endpoint():
 	"""Cancel NXT trades"""
 	try:
-		now = datetime.datetime.now().time()
+		now = datetime.now().time()
 		cancel_nxt_trade(now)
 		return {"status": "success", "message": "Cancel NXT trade executed"}
 	except Exception as e:
