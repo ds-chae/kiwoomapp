@@ -1012,6 +1012,30 @@ async def root():
 		</div>
 		<button class="refresh-btn" onclick="updateTable()">🔄 Refresh</button>
 		<script>
+		// Add event listeners for mutual exclusivity between price and rate
+		document.addEventListener('DOMContentLoaded', function() {
+			const sellPriceInput = document.getElementById('sell-price-input');
+			const profitRateInput = document.getElementById('profit-rate-input');
+			
+			// When price is entered, clear rate
+			if (sellPriceInput) {
+				sellPriceInput.addEventListener('input', function() {
+					if (this.value.trim() !== '') {
+						profitRateInput.value = '';
+					}
+				});
+			}
+			
+			// When rate is entered, clear price
+			if (profitRateInput) {
+				profitRateInput.addEventListener('input', function() {
+					if (this.value.trim() !== '') {
+						sellPriceInput.value = '';
+					}
+				});
+			}
+		});
+		
 		function getProfitClass(profitRate) {
 			const profitValue = parseFloat(profitRate.replace('%', '').replace('+', ''));
 			if (profitValue > 0) return 'profit-positive';
@@ -1358,16 +1382,21 @@ async def update_sell_prices_api(request: dict):
 		if stock_name and stock_name.strip():
 			sell_prices[stock_code]['stock_name'] = stock_name.strip()
 		
+		# Mutual exclusivity: if price is set, clear rate; if rate is set, clear price
 		if price is not None and price != '':
-			# Set fixed price
+			# Set fixed price and clear rate
 			sell_prices[stock_code]['price'] = str(price)
+			if 'rate' in sell_prices[stock_code]:
+				del sell_prices[stock_code]['rate']
 		elif 'price' in sell_prices[stock_code]:
 			# Remove price if explicitly set to None/empty
 			del sell_prices[stock_code]['price']
 		
 		if rate is not None and rate != '':
-			# Set profit rate
+			# Set profit rate and clear price
 			sell_prices[stock_code]['rate'] = float(rate)
+			if 'price' in sell_prices[stock_code]:
+				del sell_prices[stock_code]['price']
 		elif 'rate' in sell_prices[stock_code]:
 			# Remove rate if explicitly set to None/empty
 			del sell_prices[stock_code]['rate']
