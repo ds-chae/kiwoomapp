@@ -714,7 +714,7 @@ def format_account_data():
 		return []
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/stock", response_class=HTMLResponse)
 async def root():
 	"""Display account information UI"""
 	account_data = format_account_data()
@@ -1132,7 +1132,7 @@ async def root():
 		}
 		
 		function updateTable() {
-			fetch('/api/account-data')
+			fetch('./api/account-data')
 				.then(response => response.json())
 				.then(result => {
 					if (result.status === 'success') {
@@ -1262,7 +1262,7 @@ async def root():
 				rate: profitRate ? (parseFloat(profitRate) / 100) : null
 			};
 			
-			fetch('/api/sell-prices', {
+			fetch('./api/sell-prices', {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',
@@ -1303,7 +1303,7 @@ async def root():
 				rate: null
 			};
 			
-			fetch('/api/sell-prices', {
+			fetch('./api/sell-prices', {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',
@@ -1351,19 +1351,22 @@ async def root():
 	return html_content
 
 @app.get("/api/account-data")
-async def get_account_data_api():
+@app.get("/{proxy_path:path}/api/account-data")
+async def get_account_data_api(proxy_path: str = ""):
 	"""API endpoint to get account data as JSON"""
 	account_data = format_account_data()
 	return {"status": "success", "data": account_data}
 
 @app.get("/api/sell-prices")
-async def get_sell_prices_api():
+@app.get("/{proxy_path:path}/api/sell-prices")
+async def get_sell_prices_api(proxy_path: str = ""):
 	"""API endpoint to get sell prices"""
 	global sell_prices
 	return {"status": "success", "data": sell_prices}
 
 @app.post("/api/sell-prices")
-async def update_sell_prices_api(request: dict):
+@app.post("/{proxy_path:path}/api/sell-prices")
+async def update_sell_prices_api(request: dict, proxy_path: str = ""):
 	"""API endpoint to update sell prices"""
 	global sell_prices
 	try:
