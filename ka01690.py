@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from au1001 import get_token, get_key_list
 import time as time_module
 import threading
-from fastapi import FastAPI, HTTPException, status, Cookie
+from fastapi import FastAPI, HTTPException, status, Cookie, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 import uvicorn
 from contextlib import asynccontextmanager
@@ -993,7 +993,8 @@ async def root(token: str = Cookie(None)):
 	"""Display account information UI"""
 	# Check authentication
 	if not token or not verify_token(token):
-		return RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
+		# Redirect to login - use /stock/login if accessed through proxy
+		return RedirectResponse(url="/stock/login", status_code=status.HTTP_302_FOUND)
 	
 	account_data = format_account_data()
 	ip_suffix = get_server_ip_last_digit()
