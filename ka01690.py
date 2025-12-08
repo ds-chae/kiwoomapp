@@ -1183,6 +1183,34 @@ async def root(token: str = Cookie(None)):
 			.btn-delete:hover {
 				opacity: 0.9;
 			}
+			.btn-logout {
+				background: #6c757d;
+				color: white;
+				border: none;
+				padding: 10px 20px;
+				border-radius: 4px;
+				cursor: pointer;
+				font-size: 14px;
+				font-weight: 600;
+				margin-left: auto;
+			}
+			.btn-logout:hover {
+				opacity: 0.9;
+			}
+			.update-form-header {
+				display: flex;
+				justify-content: space-between;
+				align-items: center;
+				width: 100%;
+				margin-bottom: 15px;
+			}
+			.update-form-content {
+				display: flex;
+				gap: 15px;
+				align-items: flex-end;
+				flex-wrap: wrap;
+				flex: 1;
+			}
 			.message {
 				padding: 10px;
 				margin-top: 10px;
@@ -1268,24 +1296,29 @@ async def root(token: str = Cookie(None)):
 			</div>
 			<div class="update-section" id="update-section">
 				<div class="update-form">
-					<div class="form-group">
-						<label for="stock-name-display">Stock Name</label>
-						<input type="text" id="stock-name-display" readonly style="background-color: #f5f5f5; cursor: not-allowed;" />
+					<div class="update-form-header">
+						<div class="update-form-content">
+							<div class="form-group">
+								<label for="stock-name-display">Stock Name</label>
+								<input type="text" id="stock-name-display" readonly style="background-color: #f5f5f5; cursor: not-allowed;" />
+							</div>
+							<div class="form-group">
+								<label for="stock-code-input">Stock Code</label>
+								<input type="text" id="stock-code-input" placeholder="e.g., 005930" />
+							</div>
+							<div class="form-group">
+								<label for="sell-price-input">Sell Price (Fixed)</label>
+								<input type="number" id="sell-price-input" placeholder="Leave empty for rate" />
+							</div>
+							<div class="form-group">
+								<label for="profit-rate-input">Profit Rate (%)</label>
+								<input type="number" step="0.01" id="profit-rate-input" placeholder="e.g., 5.5 for 5.5%" />
+							</div>
+							<button class="btn-update" onclick="updateSellPrice()">Update</button>
+							<button class="btn-delete" onclick="deleteSellPrice()">Delete</button>
+						</div>
+						<button class="btn-logout" onclick="logout()">🚪 Logout</button>
 					</div>
-					<div class="form-group">
-						<label for="stock-code-input">Stock Code</label>
-						<input type="text" id="stock-code-input" placeholder="e.g., 005930" />
-					</div>
-					<div class="form-group">
-						<label for="sell-price-input">Sell Price (Fixed)</label>
-						<input type="number" id="sell-price-input" placeholder="Leave empty for rate" />
-					</div>
-					<div class="form-group">
-						<label for="profit-rate-input">Profit Rate (%)</label>
-						<input type="number" step="0.01" id="profit-rate-input" placeholder="e.g., 5.5 for 5.5%" />
-					</div>
-					<button class="btn-update" onclick="updateSellPrice()">Update</button>
-					<button class="btn-delete" onclick="deleteSellPrice()">Delete</button>
 				</div>
 				<div id="update-message" class="message"></div>
 			</div>
@@ -1564,6 +1597,68 @@ async def root(token: str = Cookie(None)):
 			})
 			.catch(error => {
 				showMessage('Error updating sell price: ' + error, 'error');
+			});
+		}
+		
+		function logout() {
+			fetch('./api/logout', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				}
+			})
+			.then(response => response.json())
+			.then(result => {
+				// Clear cookie and redirect to login
+				document.cookie = 'token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+				const currentPath = window.location.pathname;
+				if (currentPath.includes('/stock')) {
+					window.location.href = '/stock/login';
+				} else {
+					window.location.href = '/login';
+				}
+			})
+			.catch(error => {
+				console.error('Logout error:', error);
+				// Still redirect even if API call fails
+				document.cookie = 'token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+				const currentPath = window.location.pathname;
+				if (currentPath.includes('/stock')) {
+					window.location.href = '/stock/login';
+				} else {
+					window.location.href = '/login';
+				}
+			});
+		}
+		
+		function logout() {
+			fetch('./api/logout', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				}
+			})
+			.then(response => response.json())
+			.then(result => {
+				// Clear cookie and redirect to login
+				document.cookie = 'token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+				const currentPath = window.location.pathname;
+				if (currentPath.includes('/stock')) {
+					window.location.href = '/stock/login';
+				} else {
+					window.location.href = '/login';
+				}
+			})
+			.catch(error => {
+				console.error('Logout error:', error);
+				// Still redirect even if API call fails
+				document.cookie = 'token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+				const currentPath = window.location.pathname;
+				if (currentPath.includes('/stock')) {
+					window.location.href = '/stock/login';
+				} else {
+					window.location.href = '/login';
+				}
 			});
 		}
 		
