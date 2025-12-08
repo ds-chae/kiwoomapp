@@ -795,13 +795,13 @@ async def get_current_user(token: str = Cookie(None)):
 async def login_page():
 	"""Display login page"""
 	ip_suffix = get_server_ip_last_digit()
-	html_content = f"""
+	html_content = """
 	<!DOCTYPE html>
 	<html lang="ko">
 	<head>
 		<meta charset="UTF-8">
 		<meta name="viewport" content="width=device-width, initial-scale=1.0">
-		<title>Login - {ip_suffix}</title>
+		<title>Login - """ + ip_suffix + """</title>
 		<style>
 			* {
 				margin: 0;
@@ -990,13 +990,13 @@ async def root(token: str = Cookie(None)):
 	account_data = format_account_data()
 	ip_suffix = get_server_ip_last_digit()
 	
-	html_content = f"""
+	html_content = """
 	<!DOCTYPE html>
 	<html lang="ko">
 	<head>
 		<meta charset="UTF-8">
 		<meta name="viewport" content="width=device-width, initial-scale=1.0">
-		<title>Account Holdings - {ip_suffix}</title>
+		<title>Account Holdings - """ + ip_suffix + """</title>
 		<style>
 			* {
 				margin: 0;
