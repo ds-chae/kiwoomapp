@@ -248,7 +248,7 @@ def sell_jango(now, jango, market):
 						if ord_uv != 'None' :
 							trde_tp = '0'  # 매매구분 0:보통 , 3:시장가 , 5:조건부지정가 , 81:장마감후시간외 , 61:장시작전시간외, 62:시간외단일가 , 6:최유리지정가 , 7:최우선지정가 , 10:보통(IOC) , 13:시장가(IOC) , 16:최유리(IOC) , 20:보통(FOK) , 23:시장가(FOK) , 26:최유리(FOK) , 28:스톱지정가,29:중간가,30:중간가(IOC),31:중간가(FOK)
 							ret_status = sell_order(MY_ACCESS_TOKEN, dmst_stex_tp=market, stk_cd=stk_cd,
-								ord_qty=trde_able_qty, ord_uv=ord_uv, trde_tp=trde_tp, cond_uv='')
+														ord_qty=trde_able_qty, ord_uv=ord_uv, trde_tp=trde_tp, cond_uv='')
 							print('sell_order_result')
 							print(ret_status)
 							rcde = ret_status['return_code']
@@ -715,6 +715,7 @@ def format_account_data():
 
 
 @app.get("/stock", response_class=HTMLResponse)
+@app.get("/stock/", response_class=HTMLResponse)
 async def root():
 	"""Display account information UI"""
 	account_data = format_account_data()
