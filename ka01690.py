@@ -32,6 +32,7 @@ TOKEN_EXPIRY_HOURS = 24
 # In-memory token storage (in production, use Redis or database)
 active_tokens = {}
 
+
 # Get server IP address last digit for title
 def get_server_ip_last_digit():
 	"""Get the last digit of the server's IP address"""
@@ -448,30 +449,35 @@ def cur_date():
 	# Print the formatted date
 	return formatted_date
 
+current_status = ''
 
 def daily_work(now):
-	global new_day, krx_first
+	global new_day, krx_first, current_status
 	global nxt_start_time, nxt_end_time, krx_start_time,nxt_cancelled, krx_end_time
 	stored_jango_data = get_jango()
 	if is_between(now, nxt_start_time, nxt_end_time):
+		current_status = 'NXT'
 		sell_jango(now, stored_jango_data, 'NXT')
 	elif is_between(now, nxt_end_time, krx_start_time):
+		current_status = 'NXT->KRX'
 		if not nxt_cancelled:
 			nxt_cancelled = True
 			cancel_nxt_trade(now)
 	elif is_between(now, krx_start_time, krx_end_time):
+		current_status = 'KRX'
 		if not krx_first:
 			print('{} krx_first get_jango and sell_jango.'.format(now))
 			krx_first = True
 		sell_jango(now, stored_jango_data, 'KRX')
 	else:
 		if (new_day):
+			current_status = 'OFF'
 			new_day = False
 			print('{} {} Setting new day=False'.format(cur_date(), now))
 
 
 def set_new_day():
-	global new_day, waiting_shown, no_working_shown, nxt_cancelled, ktx_first
+	global new_day, waiting_shown, no_working_shown, nxt_cancelled, ktx_first, current_status
 
 	if new_day:
 		return
@@ -482,6 +488,7 @@ def set_new_day():
 	no_working_shown = False
 	nxt_cancelled = False
 	ktx_first = False
+	current_status = 'NEW'
 
 SELL_PRICES_FILE = 'sell_price_rate.json'
 sell_prices = {}
@@ -639,13 +646,7 @@ def format_account_data():
 	try:
 		# Determine which market is active based on current time
 		now = datetime.now().time()
-		active_market = None
-		
-		if is_between(now, nxt_start_time, nxt_end_time):
-			active_market = 'NXT'
-		elif is_between(now, krx_start_time, krx_end_time):
-			active_market = 'KRX'
-		
+
 		# Get holdings from stored data for active market only
 		all_jango = stored_jango_data
 
@@ -1232,7 +1233,7 @@ async def root(token: str = Cookie(None)):
 	<body>
 		<div class="container">
 			<div class="header">
-				<h1>📊 Account Holdings</h1>
+				<h1 id="headline-time">📊 Account -</h1>
 				<p>Stock Holdings and Trading Information</p>
 			</div>
 			<div class="table-container">
@@ -1449,6 +1450,17 @@ async def root(token: str = Cookie(None)):
 				.then(response => response.json())
 				.then(result => {
 					if (result.status === 'success') {
+						// Update headline with timestamp and status
+						if (result.timestamp) {
+							const headlineTime = document.getElementById('headline-time');
+							if (headlineTime) {
+								let headlineText = '📊 Account ' + result.timestamp;
+								if (result.current_status) {
+									headlineText += ' (' + result.current_status + ')';
+								}
+								headlineTime.textContent = headlineText;
+							}
+						}
 						const data = result.data || [];
 						let tbody = document.querySelector('tbody');
 						
@@ -1736,7 +1748,8 @@ async def get_account_data_api(proxy_path: str = "", token: str = Cookie(None)):
 			detail="Not authenticated"
 		)
 	account_data = format_account_data()
-	return {"status": "success", "data": account_data}
+	current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+	return {"status": "success", "data": account_data, "timestamp": current_time, "current_status": current_status}
 
 @app.get("/api/sell-prices")
 @app.get("/{proxy_path:path}/api/sell-prices")
@@ -1749,7 +1762,8 @@ async def get_sell_prices_api(proxy_path: str = "", token: str = Cookie(None)):
 			detail="Not authenticated"
 		)
 	global sell_prices
-	return {"status": "success", "data": sell_prices}
+	current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+	return {"status": "success", "data": sell_prices, "timestamp": current_time}
 
 @app.post("/api/sell-prices")
 @app.post("/{proxy_path:path}/api/sell-prices")
