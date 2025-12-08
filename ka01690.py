@@ -679,6 +679,16 @@ def format_account_data():
 				except:
 					trde_able_qty = '0'
 				
+				rmnd_qty = stock.get('rmnd_qty', '0')
+				# Remove leading zeros from rmnd_qty
+				try:
+					if rmnd_qty and len(rmnd_qty) > 4:
+						rmnd_qty = str(int(rmnd_qty[4:].lstrip('0') or '0'))
+					else:
+						rmnd_qty = str(int(rmnd_qty.lstrip('0') or '0'))
+				except:
+					rmnd_qty = '0'
+				
 				pur_pric = stock.get('pur_pric', '0')
 				pur_pric_float = float(pur_pric) if pur_pric else 0.0
 				
@@ -729,6 +739,7 @@ def format_account_data():
 						'stock_code': stk_cd_clean,
 						'stock_name': stk_nm,
 						'tradeable_qty': trde_able_qty,
+						'rmnd_qty': rmnd_qty,
 						'avg_buy_price': f"{pur_pric_float:,.0f}" if pur_pric_float > 0 else '-',
 						'profit_rate': f"{prft_rt_float:+.2f}%",
 						'preset_sell_price': preset_sell_price
@@ -1274,7 +1285,7 @@ async def root(token: str = Cookie(None)):
 							<td>{item['account']}</td>
 							<td><strong>{item['stock_code']}</strong></td>
 							<td>{item['stock_name']}</td>
-							<td>{item['tradeable_qty']}</td>
+							<td>{item['tradeable_qty']} / {item.get('rmnd_qty', '0')}</td>
 							<td>{item['avg_buy_price']}</td>
 							<td class="{profit_class}">{item['profit_rate']}</td>
 							<td>{item['preset_sell_price']}</td>
@@ -1360,12 +1371,13 @@ async def root(token: str = Cookie(None)):
 		function createRow(item) {
 			const rowId = item.account + '_' + item.stock_code;
 			const profitClass = getProfitClass(item.profit_rate);
+			const rmndQty = item.rmnd_qty || '0';
 			return `
 				<tr data-row-id="${rowId}" data-stock-code="${item.stock_code}" data-stock-name="${item.stock_name}" data-preset-price="${item.preset_sell_price}" onclick="selectRow(this)">
 					<td>${item.account}</td>
 					<td><strong>${item.stock_code}</strong></td>
 					<td>${item.stock_name}</td>
-					<td>${item.tradeable_qty}</td>
+					<td>${item.tradeable_qty} / ${rmndQty}</td>
 					<td>${item.avg_buy_price}</td>
 					<td class="${profitClass}">${item.profit_rate}</td>
 					<td>${item.preset_sell_price}</td>
@@ -1530,7 +1542,8 @@ async def root(token: str = Cookie(None)):
 									cells[0].textContent = item.account;
 									cells[1].innerHTML = '<strong>' + item.stock_code + '</strong>';
 									cells[2].textContent = item.stock_name;
-									cells[3].textContent = item.tradeable_qty;
+									const rmndQty = item.rmnd_qty || '0';
+									cells[3].textContent = item.tradeable_qty + ' / ' + rmndQty;
 									cells[4].textContent = item.avg_buy_price;
 									cells[5].textContent = item.profit_rate;
 									cells[5].className = getProfitClass(item.profit_rate);
