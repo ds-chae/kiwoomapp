@@ -5,6 +5,11 @@ from datetime import datetime
 from dotenv import load_dotenv
 from au1001 import get_token, get_key_list
 import time
+import threading
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
+import uvicorn
+from contextlib import asynccontextmanager
 
 # Load environment variables from .env file
 load_dotenv()
@@ -220,37 +225,35 @@ def sell_jango(now, jango, market):
 			acnt_evlt_remn_indv_tot = j["acnt_evlt_remn_indv_tot"]
 			for indv in acnt_evlt_remn_indv_tot:
 				stk_cd=indv['stk_cd']
+				stk_nm=indv['stk_nm']
+				print(stk_cd, stk_nm)
 				if stk_cd[0] == 'A':
 					stk_cd = stk_cd[1:]
 				trde_able_qty = indv["trde_able_qty"]
 				rmnd_qty = indv['rmnd_qty']
 				pur_pric = float(indv['pur_pric'])
-				if stk_cd in sell_prices: # if indv['stk_nm'] == '박셀바이오':
+				if stk_cd in sell_prices:
 					sell_cond = sell_prices[stk_cd]
 					if int(trde_able_qty) != 0:
 						trde_able_qty = trde_able_qty[4:]
-						ord_uv = '-'
+						ord_uv = 'None'
 						if 'price' in sell_cond:
-							ord_uv = '' + sell_cond['price']
-						if ord_uv == '-':
+							ord_uv = str(sell_cond['price'])
+						if ord_uv == 'None':
 							if 'rate' in sell_cond:
 								s_rate = sell_cond['rate']
 								s_price = pur_pric * (1.0 + s_rate)
 								s_price = round_trunc(s_price)
 								ord_uv = '' + s_price
-						if ord_uv != '-' :
+						if ord_uv != 'None' :
 							trde_tp = '0'  # 매매구분 0:보통 , 3:시장가 , 5:조건부지정가 , 81:장마감후시간외 , 61:장시작전시간외, 62:시간외단일가 , 6:최유리지정가 , 7:최우선지정가 , 10:보통(IOC) , 13:시장가(IOC) , 16:최유리(IOC) , 20:보통(FOK) , 23:시장가(FOK) , 26:최유리(FOK) , 28:스톱지정가,29:중간가,30:중간가(IOC),31:중간가(FOK)
 							ret_status = sell_order(MY_ACCESS_TOKEN, dmst_stex_tp=market, stk_cd=stk_cd,
-														ord_qty=trde_able_qty, ord_uv=ord_uv, trde_tp=trde_tp, cond_uv='')
+								ord_qty=trde_able_qty, ord_uv=ord_uv, trde_tp=trde_tp, cond_uv='')
 							print('sell_order_result')
 							print(ret_status)
 							rcde = ret_status['return_code']
 							#code = rmsg[7:13]
 							print(rcde)
-							if rcde == 0:
-								return True
-						else:
-							return False
 
 
 import requests
@@ -424,9 +427,9 @@ def cur_date():
 def daily_work(now):
 	global new_day, krx_first
 	global nxt_start_time, nxt_end_time, krx_start_time,nxt_cancelled, krx_end_time
+	stored_jango_data = get_jango()
 	if is_between(now, nxt_start_time, nxt_end_time):
-		jango = get_jango()
-		sell_jango(now, jango, 'NXT')
+		sell_jango(now, stored_jango_data, 'NXT')
 	elif is_between(now, nxt_end_time, krx_start_time):
 		if not nxt_cancelled:
 			nxt_cancelled = True
@@ -435,8 +438,7 @@ def daily_work(now):
 		if not krx_first:
 			print('{} krx_first get_jango and sell_jango.'.format(now))
 			krx_first = True
-		jango = get_jango()
-		sell_jango(now, jango, 'KRX')
+		sell_jango(now, stored_jango_data, 'KRX')
 	else:
 		if (new_day):
 			new_day = False
@@ -448,6 +450,7 @@ def set_new_day():
 
 	if new_day:
 		return
+	now = datetime.datetime.now().time()
 	print('{} {} Setting new day=True'.format(cur_date(), now))
 	new_day = True
 	waiting_shown = False
@@ -465,7 +468,7 @@ def load_dictionaries_from_json():
 	# Load sell_prices
 	if os.path.exists(SELL_PRICES_FILE):
 		try:
-			with open(SELL_PRICES_FILE, 'r') as f:
+			with open(SELL_PRICES_FILE, 'r', encoding='utf-8') as f:
 				sell_prices = json.load(f)
 			print(f"Loaded sell_prices from {SELL_PRICES_FILE}: {sell_prices}")
 		except Exception as e:
@@ -475,39 +478,947 @@ def load_dictionaries_from_json():
 		sell_prices = {}
 		print(f"Created new sell_prices dictionary")
 
+def save_dictionaries_to_json():
+	"""Save sell_prices to JSON file"""
+	global sell_prices
+	try:
+		with open(SELL_PRICES_FILE, 'w', encoding='utf-8') as f:
+			json.dump(sell_prices, f, indent=2, ensure_ascii=False)
+		print(f"Saved sell_prices to {SELL_PRICES_FILE}")
+		return True
+	except Exception as e:
+		print(f"Error saving sell_prices: {e}")
+		return False
 
+
+
+# Global variable for tracking previous hour
+prev_hour = None
+# Global storage for jango data (updated by timer handler)
+stored_jango_data = []
+# Background thread for periodic timer handler
+background_thread = None
+thread_stop_event = threading.Event()
+
+def background_timer_thread():
+	"""Background thread that calls periodic_timer_handler every 3 seconds"""
+	global thread_stop_event
+	while not thread_stop_event.is_set():
+		try:
+			periodic_timer_handler()
+		except Exception as e:
+			print(f"Error in periodic_timer_handler: {e}")
+			import traceback
+			traceback.print_exc()
+		
+		# Sleep for 3 seconds, but check stop event periodically
+		for _ in range(30):  # Check every 0.1 seconds for 3 seconds total
+			if thread_stop_event.is_set():
+				break
+			time.sleep(0.1)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+	"""Lifespan event handler for startup and shutdown"""
+	global stored_jango_data, background_thread, thread_stop_event
+	import traceback
+	
+	# Startup
+	print("Starting application...")
+	try:
+		load_dictionaries_from_json()
+		print("Dictionaries loaded successfully")
+	except Exception as e:
+		print(f"Error loading dictionaries: {e}")
+		traceback.print_exc()
+	
+	# Initialize stored jango data by calling once immediately (non-blocking, allow failure)
+	print("Initializing jango data...")
+	try:
+		stored_jango_data = get_jango('KRX')
+		print("KRX jango data initialized")
+	except Exception as e:
+		print(f"Error initializing KRX jango data: {e}")
+		traceback.print_exc()
+		stored_jango_data = []
+	
+	try:
+		stored_jango_data = get_jango('NXT')
+		print("NXT jango data initialized")
+	except Exception as e:
+		print(f"Error initializing NXT jango data: {e}")
+		traceback.print_exc()
+		stored_jango_data = []
+	
+	# Start background thread for periodic timer handler
+	print("Starting background timer thread...")
+	try:
+		thread_stop_event.clear()
+		background_thread = threading.Thread(
+			target=background_timer_thread,
+			daemon=False,  # Non-daemon thread for better debug mode support
+			name="PeriodicTimerThread"
+		)
+		background_thread.start()
+		print("Background timer thread started successfully")
+	except Exception as e:
+		print(f"Error starting background timer thread: {e}")
+		traceback.print_exc()
+		# Don't raise - allow app to start even if thread fails
+	
+	print("Application startup complete")
+	yield
+	
+	# Shutdown
+	print("Shutting down application...")
+	try:
+		if background_thread and background_thread.is_alive():
+			print("Stopping background timer thread...")
+			thread_stop_event.set()
+			background_thread.join(timeout=5.0)  # Wait up to 5 seconds for thread to finish
+			if background_thread.is_alive():
+				print("Warning: Background thread did not stop within timeout")
+			else:
+				print("Background timer thread stopped successfully")
+	except Exception as e:
+		print(f"Error stopping background timer thread: {e}")
+		traceback.print_exc()
+	print("Application shutdown complete")
+
+# FastAPI app
+app = FastAPI(lifespan=lifespan)
+
+def periodic_timer_handler():
+	"""Periodic timer event handler that runs the trading loop logic"""
+	global prev_hour, new_day, stored_jango_data
+	
+	now = datetime.datetime.now().time()
+	now_hour = now.hour
+	if prev_hour is not None and now_hour != prev_hour:
+		print('{} Hour change from {} to {}'.format(cur_date(), prev_hour, now_hour))
+	prev_hour = now_hour
+
+	if is_between(now, day_start_time, nxt_start_time):
+		set_new_day()
+	elif new_day:
+		try:
+			daily_work(now)
+		except Exception as ex:
+			new_day = False
+			print('{} {} Setting new_day False due to Exception.'.format(cur_date(), now))
+			print(ex)
+
+def format_account_data():
+	"""Format account data for display in UI"""
+	global stored_jango_data
+	try:
+		# Determine which market is active based on current time
+		now = datetime.datetime.now().time()
+		active_market = None
+		
+		if is_between(now, nxt_start_time, nxt_end_time):
+			active_market = 'NXT'
+		elif is_between(now, krx_start_time, krx_end_time):
+			active_market = 'KRX'
+		
+		# Get holdings from stored data for active market only
+		all_jango = stored_jango_data
+
+		formatted_data = []
+		seen_keys = set()  # Track unique combinations of account and stock_code
+		
+		for account in all_jango:
+			if account.get("return_code") != 0:
+				continue
+			
+			acct_no = account.get('ACCT', '')
+			acnt_evlt_remn_indv_tot = account.get("acnt_evlt_remn_indv_tot", [])
+			
+			for stock in acnt_evlt_remn_indv_tot:
+				stk_cd = stock.get('stk_cd', '')
+				# Remove 'A' prefix if present
+				if stk_cd and stk_cd[0] == 'A':
+					stk_cd_clean = stk_cd[1:]
+				else:
+					stk_cd_clean = stk_cd
+				
+				stk_nm = stock.get('stk_nm', '')
+				trde_able_qty = stock.get('trde_able_qty', '0')
+				# Remove leading zeros from trde_able_qty
+				try:
+					if trde_able_qty and len(trde_able_qty) > 4:
+						trde_able_qty = str(int(trde_able_qty[4:].lstrip('0') or '0'))
+					else:
+						trde_able_qty = str(int(trde_able_qty.lstrip('0') or '0'))
+				except:
+					trde_able_qty = '0'
+				
+				pur_pric = stock.get('pur_pric', '0')
+				pur_pric_float = float(pur_pric) if pur_pric else 0.0
+				
+				prft_rt = stock.get('prft_rt', '0')
+				prft_rt_float = float(prft_rt) if prft_rt else 0.0
+				
+				# Get preset sell price from sell_prices dictionary
+				price_part = 'None'
+				rate_part = 'None'
+				
+				if stk_cd_clean in sell_prices:
+					sell_cond = sell_prices[stk_cd_clean]
+					
+					if 'price' in sell_cond:
+						try:
+							price_val = sell_cond['price']
+							if price_val and str(price_val).strip() and str(price_val) != 'None':
+								price_part = f"{float(price_val):.0f}"
+						except (ValueError, TypeError):
+							pass
+					
+					if 'rate' in sell_cond:
+						try:
+							rate_val = sell_cond['rate']
+							if rate_val is not None and str(rate_val).strip() and str(rate_val) != 'None':
+								rate_part = f"{float(rate_val)*100:+.2f}%"
+						except (ValueError, TypeError):
+							pass
+					
+					# Update stock name in sell_prices if available
+					if stk_nm and stk_nm.strip():
+						sell_prices[stk_cd_clean]['stock_name'] = stk_nm
+				else:
+					# Create entry with stock name if stock exists but no sell price entry
+					if stk_nm and stk_nm.strip():
+						sell_prices[stk_cd_clean] = {'stock_name': stk_nm}
+				
+				preset_sell_price = f"{price_part} / {rate_part}"
+				
+				# Create unique key from account and stock_code
+				unique_key = f"{acct_no}_{stk_cd_clean}"
+				
+				# Only add if not already seen (deduplicate by account and stock_code)
+				if unique_key not in seen_keys:
+					seen_keys.add(unique_key)
+					formatted_data.append({
+						'account': acct_no,
+						'stock_code': stk_cd_clean,
+						'stock_name': stk_nm,
+						'tradeable_qty': trde_able_qty,
+						'avg_buy_price': f"{pur_pric_float:,.0f}" if pur_pric_float > 0 else '-',
+						'profit_rate': f"{prft_rt_float:+.2f}%",
+						'preset_sell_price': preset_sell_price
+					})
+		
+		return formatted_data
+	except Exception as e:
+		print(f"Error formatting account data: {e}")
+		return []
+
+
+@app.get("/", response_class=HTMLResponse)
+async def root():
+	"""Display account information UI"""
+	account_data = format_account_data()
+	
+	html_content = """
+	<!DOCTYPE html>
+	<html lang="ko">
+	<head>
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<title>Account Holdings</title>
+		<style>
+			* {
+				margin: 0;
+				padding: 0;
+				box-sizing: border-box;
+			}
+			body {
+				font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+				background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+				padding: 20px;
+				min-height: 100vh;
+			}
+			.container {
+				max-width: 1400px;
+				margin: 0 auto;
+				background: white;
+				border-radius: 12px;
+				box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+				overflow: hidden;
+			}
+			.header {
+				background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+				color: white;
+				padding: 30px;
+				text-align: center;
+			}
+			.header h1 {
+				font-size: 2.5em;
+				margin-bottom: 10px;
+			}
+			.header p {
+				font-size: 1.1em;
+				opacity: 0.9;
+			}
+			.table-container {
+				padding: 30px;
+				overflow-x: auto;
+			}
+			table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 14px;
+			}
+			thead {
+				background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+				color: white;
+			}
+			th {
+				padding: 15px;
+				text-align: left;
+				font-weight: 600;
+				text-transform: uppercase;
+				letter-spacing: 0.5px;
+				font-size: 12px;
+			}
+			td {
+				padding: 15px;
+				border-bottom: 1px solid #e0e0e0;
+			}
+			tbody tr {
+				transition: background-color 0.2s;
+			}
+			tbody tr {
+				cursor: pointer;
+			}
+			tbody tr:hover {
+				background-color: #f5f5f5;
+			}
+			tbody tr.selected {
+				background-color: #e3f2fd;
+				border-left: 4px solid #667eea;
+			}
+			tbody tr.selected:hover {
+				background-color: #bbdefb;
+			}
+			tbody tr:last-child td {
+				border-bottom: none;
+			}
+			.profit-positive {
+				color: #e74c3c;
+				font-weight: 600;
+			}
+			.profit-negative {
+				color: #3498db;
+				font-weight: 600;
+			}
+			.profit-zero {
+				color: #7f8c8d;
+			}
+			.refresh-btn {
+				position: fixed;
+				bottom: 30px;
+				right: 30px;
+				background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+				color: white;
+				border: none;
+				padding: 15px 30px;
+				border-radius: 50px;
+				cursor: pointer;
+				font-size: 16px;
+				box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+				transition: transform 0.2s;
+			}
+			.refresh-btn:hover {
+				transform: scale(1.05);
+			}
+			.empty-state {
+				text-align: center;
+				padding: 60px 20px;
+				color: #7f8c8d;
+			}
+			.empty-state h2 {
+				font-size: 2em;
+				margin-bottom: 10px;
+			}
+			.update-section {
+				padding: 30px;
+				background: #f8f9fa;
+				border-top: 1px solid #e0e0e0;
+			}
+			.update-section h2 {
+				margin-bottom: 20px;
+				color: #333;
+			}
+			.update-form {
+				display: flex;
+				gap: 15px;
+				align-items: flex-end;
+				flex-wrap: wrap;
+				margin-bottom: 15px;
+			}
+			.form-group {
+				display: flex;
+				flex-direction: column;
+				gap: 5px;
+			}
+			.form-group label {
+				font-size: 12px;
+				font-weight: 600;
+				color: #555;
+			}
+			.form-group input {
+				padding: 10px;
+				border: 1px solid #ddd;
+				border-radius: 4px;
+				font-size: 14px;
+			}
+			.form-group input:focus {
+				outline: none;
+				border-color: #667eea;
+			}
+			.btn-update {
+				background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+				color: white;
+				border: none;
+				padding: 10px 20px;
+				border-radius: 4px;
+				cursor: pointer;
+				font-size: 14px;
+				font-weight: 600;
+			}
+			.btn-update:hover {
+				opacity: 0.9;
+			}
+			.btn-delete {
+				background: #e74c3c;
+				color: white;
+				border: none;
+				padding: 10px 20px;
+				border-radius: 4px;
+				cursor: pointer;
+				font-size: 14px;
+				font-weight: 600;
+			}
+			.btn-delete:hover {
+				opacity: 0.9;
+			}
+			.message {
+				padding: 10px;
+				margin-top: 10px;
+				border-radius: 4px;
+				display: none;
+			}
+			.message.success {
+				background: #d4edda;
+				color: #155724;
+				border: 1px solid #c3e6cb;
+			}
+			.message.error {
+				background: #f8d7da;
+				color: #721c24;
+				border: 1px solid #f5c6cb;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="container">
+			<div class="header">
+				<h1>📊 Account Holdings</h1>
+				<p>Stock Holdings and Trading Information</p>
+			</div>
+			<div class="table-container">
+	"""
+	
+	if account_data:
+		html_content += """
+				<table>
+					<thead>
+						<tr>
+							<th>Account</th>
+							<th>Stock Code</th>
+							<th>Stock Name</th>
+							<th>Tradeable Qty</th>
+							<th>Avg Buy Price</th>
+							<th>Profit Rate</th>
+							<th>Preset Sell Price</th>
+						</tr>
+					</thead>
+					<tbody>
+		"""
+		
+		for item in account_data:
+			profit_class = "profit-zero"
+			profit_rate = item['profit_rate'].replace('%', '').replace('+', '')
+			try:
+				profit_value = float(profit_rate)
+				if profit_value > 0:
+					profit_class = "profit-positive"
+				elif profit_value < 0:
+					profit_class = "profit-negative"
+			except:
+				pass
+			
+			row_id = f"{item['account']}_{item['stock_code']}"
+			html_content += f"""
+						<tr data-row-id="{row_id}" data-stock-code="{item['stock_code']}" data-stock-name="{item['stock_name']}" data-preset-price="{item['preset_sell_price']}" onclick="selectRow(this)">
+							<td>{item['account']}</td>
+							<td><strong>{item['stock_code']}</strong></td>
+							<td>{item['stock_name']}</td>
+							<td>{item['tradeable_qty']}</td>
+							<td>{item['avg_buy_price']}</td>
+							<td class="{profit_class}">{item['profit_rate']}</td>
+							<td>{item['preset_sell_price']}</td>
+						</tr>
+			"""
+		
+		html_content += """
+					</tbody>
+				</table>
+		"""
+	else:
+		html_content += """
+				<div class="empty-state">
+					<h2>No Holdings Found</h2>
+					<p>No account holdings are currently available.</p>
+				</div>
+		"""
+	
+	html_content += """
+			</div>
+			<div class="update-section" id="update-section">
+				<div class="update-form">
+					<div class="form-group">
+						<label for="stock-name-display">Stock Name</label>
+						<input type="text" id="stock-name-display" readonly style="background-color: #f5f5f5; cursor: not-allowed;" />
+					</div>
+					<div class="form-group">
+						<label for="stock-code-input">Stock Code</label>
+						<input type="text" id="stock-code-input" placeholder="e.g., 005930" />
+					</div>
+					<div class="form-group">
+						<label for="sell-price-input">Sell Price (Fixed)</label>
+						<input type="number" id="sell-price-input" placeholder="Leave empty for rate" />
+					</div>
+					<div class="form-group">
+						<label for="profit-rate-input">Profit Rate (%)</label>
+						<input type="number" step="0.01" id="profit-rate-input" placeholder="e.g., 5.5 for 5.5%" />
+					</div>
+					<button class="btn-update" onclick="updateSellPrice()">Update</button>
+					<button class="btn-delete" onclick="deleteSellPrice()">Delete</button>
+				</div>
+				<div id="update-message" class="message"></div>
+			</div>
+		</div>
+		<button class="refresh-btn" onclick="updateTable()">🔄 Refresh</button>
+		<script>
+		function getProfitClass(profitRate) {
+			const profitValue = parseFloat(profitRate.replace('%', '').replace('+', ''));
+			if (profitValue > 0) return 'profit-positive';
+			if (profitValue < 0) return 'profit-negative';
+			return 'profit-zero';
+		}
+		
+		function createRow(item) {
+			const rowId = item.account + '_' + item.stock_code;
+			const profitClass = getProfitClass(item.profit_rate);
+			return `
+				<tr data-row-id="${rowId}" data-stock-code="${item.stock_code}" data-stock-name="${item.stock_name}" data-preset-price="${item.preset_sell_price}" onclick="selectRow(this)">
+					<td>${item.account}</td>
+					<td><strong>${item.stock_code}</strong></td>
+					<td>${item.stock_name}</td>
+					<td>${item.tradeable_qty}</td>
+					<td>${item.avg_buy_price}</td>
+					<td class="${profitClass}">${item.profit_rate}</td>
+					<td>${item.preset_sell_price}</td>
+				</tr>
+			`;
+		}
+		
+		function selectRow(rowElement) {
+			// Remove selected class from all rows
+			document.querySelectorAll('tbody tr').forEach(tr => {
+				tr.classList.remove('selected');
+			});
+			
+			// Add selected class to clicked row
+			rowElement.classList.add('selected');
+			
+			// Get stock code, stock name, and preset price from row
+			const stockCode = rowElement.getAttribute('data-stock-code');
+			const stockName = rowElement.getAttribute('data-stock-name') || '';
+			const presetPrice = rowElement.getAttribute('data-preset-price') || '-';
+			
+			// Fill stock name (read-only)
+			document.getElementById('stock-name-display').value = stockName;
+			
+			// Fill stock code input
+			document.getElementById('stock-code-input').value = stockCode;
+			
+			// Parse preset price (format: "price / rate%" or "None / rate%" or "price / None")
+			if (presetPrice === '-') {
+				// No preset price, clear inputs
+				document.getElementById('sell-price-input').value = '';
+				document.getElementById('profit-rate-input').value = '';
+			} else {
+				// Check if it contains a slash (has both price and rate)
+				const slashMatch = presetPrice.match(/^(.+?)\s*\/\s*(.+)$/);
+				if (slashMatch) {
+					// Format: "price / rate%" or "None / rate%" or "price / None"
+					const pricePart = slashMatch[1].trim();
+					const ratePart = slashMatch[2].trim();
+					
+					// Parse price
+					if (pricePart === 'None') {
+						document.getElementById('sell-price-input').value = '';
+					} else {
+						const priceValue = pricePart.replace(/[^\d.]/g, '');
+						document.getElementById('sell-price-input').value = priceValue;
+					}
+					
+					// Parse rate
+					if (ratePart === 'None') {
+						document.getElementById('profit-rate-input').value = '';
+					} else {
+						const rateMatch = ratePart.match(/([\d.+-]+)%/);
+						if (rateMatch) {
+							const ratePercent = parseFloat(rateMatch[1]);
+							document.getElementById('profit-rate-input').value = ratePercent.toFixed(2);
+						}
+					}
+				} else {
+					// Fallback: try to parse as single value (for backward compatibility)
+					const rateMatch = presetPrice.match(/([\d.+-]+)%/);
+					if (rateMatch) {
+						const ratePercent = parseFloat(rateMatch[1]);
+						document.getElementById('profit-rate-input').value = ratePercent.toFixed(2);
+						document.getElementById('sell-price-input').value = '';
+					} else {
+						const priceValue = presetPrice.replace(/[^\d.]/g, '');
+						if (priceValue) {
+							document.getElementById('sell-price-input').value = priceValue;
+							document.getElementById('profit-rate-input').value = '';
+						}
+					}
+				}
+			}
+			
+			// Scroll to update section
+			document.getElementById('update-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
+		}
+		
+		function updateTable() {
+			fetch('/api/account-data')
+				.then(response => response.json())
+				.then(result => {
+					if (result.status === 'success') {
+						const data = result.data || [];
+						let tbody = document.querySelector('tbody');
+						
+						if (!tbody) {
+							// Table doesn't exist, create it
+							const tableContainer = document.querySelector('.table-container');
+							if (data.length === 0) {
+								tableContainer.innerHTML = `
+									<div class="empty-state">
+										<h2>No Holdings Found</h2>
+										<p>No account holdings are currently available.</p>
+									</div>
+								`;
+								return;
+							}
+							
+							tableContainer.innerHTML = `
+								<table>
+									<thead>
+										<tr>
+											<th>Account</th>
+											<th>Stock Code</th>
+											<th>Stock Name</th>
+											<th>Tradeable Qty</th>
+											<th>Avg Buy Price</th>
+											<th>Profit Rate</th>
+											<th>Preset Sell Price</th>
+										</tr>
+									</thead>
+									<tbody></tbody>
+								</table>
+							`;
+							tbody = document.querySelector('tbody');
+						}
+						
+						if (!tbody) return;
+						
+						// Create a set of existing row IDs
+						const existingRows = new Set();
+						Array.from(tbody.querySelectorAll('tr')).forEach(row => {
+							existingRows.add(row.getAttribute('data-row-id'));
+						});
+						
+						// Create a set of new row IDs
+						const newRowIds = new Set();
+						data.forEach(item => {
+							newRowIds.add(item.account + '_' + item.stock_code);
+						});
+						
+						// Remove rows that don't exist in new data
+						Array.from(tbody.querySelectorAll('tr')).forEach(row => {
+							const rowId = row.getAttribute('data-row-id');
+							if (!newRowIds.has(rowId)) {
+								row.remove();
+							}
+						});
+						
+						// Add or update rows
+						data.forEach(item => {
+							const rowId = item.account + '_' + item.stock_code;
+							let existingRow = tbody.querySelector(`tr[data-row-id="${rowId}"]`);
+							
+							if (existingRow) {
+								// Update existing row
+								const cells = existingRow.querySelectorAll('td');
+								if (cells.length >= 7) {
+									cells[0].textContent = item.account;
+									cells[1].innerHTML = '<strong>' + item.stock_code + '</strong>';
+									cells[2].textContent = item.stock_name;
+									cells[3].textContent = item.tradeable_qty;
+									cells[4].textContent = item.avg_buy_price;
+									cells[5].textContent = item.profit_rate;
+									cells[5].className = getProfitClass(item.profit_rate);
+									cells[6].textContent = item.preset_sell_price;
+								}
+								// Update data attributes
+								existingRow.setAttribute('data-stock-code', item.stock_code);
+								existingRow.setAttribute('data-preset-price', item.preset_sell_price);
+								// Re-add click handler
+								existingRow.onclick = function() { selectRow(this); };
+							} else {
+								// Add new row
+								const tempDiv = document.createElement('div');
+								tempDiv.innerHTML = createRow(item).trim();
+								const newRow = tempDiv.querySelector('tr');
+								if (newRow) {
+									tbody.appendChild(newRow);
+								}
+							}
+						});
+						
+						// Handle empty state
+						if (data.length === 0 && tbody) {
+							const tableContainer = document.querySelector('.table-container');
+							tableContainer.innerHTML = `
+								<div class="empty-state">
+									<h2>No Holdings Found</h2>
+									<p>No account holdings are currently available.</p>
+								</div>
+							`;
+						}
+					}
+				})
+				.catch(error => {
+					console.error('Error updating table:', error);
+				});
+		}
+		
+		function updateSellPrice() {
+			const stockCode = document.getElementById('stock-code-input').value.trim();
+			const stockName = document.getElementById('stock-name-display').value.trim();
+			const sellPrice = document.getElementById('sell-price-input').value.trim();
+			const profitRate = document.getElementById('profit-rate-input').value.trim();
+			
+			if (!stockCode) {
+				showMessage('Please enter a stock code', 'error');
+				return;
+			}
+			
+			const data = {
+				stock_code: stockCode,
+				stock_name: stockName || null,
+				price: sellPrice || null,
+				rate: profitRate ? (parseFloat(profitRate) / 100) : null
+			};
+			
+			fetch('/api/sell-prices', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify(data)
+			})
+			.then(response => response.json())
+			.then(result => {
+				if (result.status === 'success') {
+					showMessage('Sell price updated successfully!', 'success');
+					document.getElementById('stock-name-display').value = '';
+					document.getElementById('stock-code-input').value = '';
+					document.getElementById('sell-price-input').value = '';
+					document.getElementById('profit-rate-input').value = '';
+					setTimeout(updateTable, 500);
+				} else {
+					showMessage('Error: ' + result.message, 'error');
+				}
+			})
+			.catch(error => {
+				showMessage('Error updating sell price: ' + error, 'error');
+			});
+		}
+		
+		function deleteSellPrice() {
+			const stockCode = document.getElementById('stock-code-input').value.trim();
+			const stockName = document.getElementById('stock-name-display').value.trim();
+			
+			if (!stockCode) {
+				showMessage('Please enter a stock code', 'error');
+				return;
+			}
+			
+			const data = {
+				stock_code: stockCode,
+				stock_name: stockName || null,
+				price: null,
+				rate: null
+			};
+			
+			fetch('/api/sell-prices', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify(data)
+			})
+			.then(response => response.json())
+			.then(result => {
+				if (result.status === 'success') {
+					showMessage('Sell price deleted successfully!', 'success');
+					document.getElementById('stock-name-display').value = '';
+					document.getElementById('stock-code-input').value = '';
+					document.getElementById('sell-price-input').value = '';
+					document.getElementById('profit-rate-input').value = '';
+					setTimeout(updateTable, 500);
+				} else {
+					showMessage('Error: ' + result.message, 'error');
+				}
+			})
+			.catch(error => {
+				showMessage('Error deleting sell price: ' + error, 'error');
+			});
+		}
+		
+		function showMessage(message, type) {
+			const messageDiv = document.getElementById('update-message');
+			messageDiv.textContent = message;
+			messageDiv.className = 'message ' + type;
+			messageDiv.style.display = 'block';
+			setTimeout(() => {
+				messageDiv.style.display = 'none';
+			}, 3000);
+		}
+		
+		// Auto-update every 1 second
+		setInterval(updateTable, 1000);
+		
+		// Initial update after page load
+		updateTable();
+		</script>
+	</body>
+	</html>
+	"""
+	
+	return html_content
+
+@app.get("/api/account-data")
+async def get_account_data_api():
+	"""API endpoint to get account data as JSON"""
+	account_data = format_account_data()
+	return {"status": "success", "data": account_data}
+
+@app.get("/api/sell-prices")
+async def get_sell_prices_api():
+	"""API endpoint to get sell prices"""
+	global sell_prices
+	return {"status": "success", "data": sell_prices}
+
+@app.post("/api/sell-prices")
+async def update_sell_prices_api(request: dict):
+	"""API endpoint to update sell prices"""
+	global sell_prices
+	try:
+		stock_code = request.get('stock_code')
+		stock_name = request.get('stock_name')
+		price = request.get('price')
+		rate = request.get('rate')
+		
+		if not stock_code:
+			return {"status": "error", "message": "stock_code is required"}
+		
+		if stock_code not in sell_prices:
+			sell_prices[stock_code] = {}
+		
+		# Store stock name if provided
+		if stock_name and stock_name.strip():
+			sell_prices[stock_code]['stock_name'] = stock_name.strip()
+		
+		if price is not None and price != '':
+			# Set fixed price
+			sell_prices[stock_code]['price'] = str(price)
+		elif 'price' in sell_prices[stock_code]:
+			# Remove price if explicitly set to None/empty
+			del sell_prices[stock_code]['price']
+		
+		if rate is not None and rate != '':
+			# Set profit rate
+			sell_prices[stock_code]['rate'] = float(rate)
+		elif 'rate' in sell_prices[stock_code]:
+			# Remove rate if explicitly set to None/empty
+			del sell_prices[stock_code]['rate']
+		
+		# Remove entry if both price and rate are missing (but keep stock_name)
+		if 'price' not in sell_prices[stock_code] and 'rate' not in sell_prices[stock_code]:
+			# Only remove if stock_name is also not present
+			if 'stock_name' not in sell_prices[stock_code]:
+				del sell_prices[stock_code]
+		
+		# Save to file
+		if save_dictionaries_to_json():
+			return {"status": "success", "message": "Sell price updated", "data": sell_prices}
+		else:
+			return {"status": "error", "message": "Failed to save to file"}
+	except Exception as e:
+		return {"status": "error", "message": str(e)}
+
+@app.get("/health")
+async def health():
+	return {"status": "healthy"}
+
+@app.get("/jango")
+async def get_jango_endpoint(market: str = 'KRX'):
+	"""Get account balance and holdings from stored data"""
+	global stored_jango_data
+	try:
+		result = stored_jango_data
+		return {"status": "success", "data": result}
+	except Exception as e:
+		return {"status": "error", "message": str(e)}
+
+@app.get("/miche")
+async def get_miche_endpoint():
+	"""Get unexecuted orders"""
+	try:
+		result = get_miche()
+		return {"status": "success", "data": result}
+	except Exception as e:
+		return {"status": "error", "message": str(e)}
+
+@app.post("/cancel-nxt-trade")
+async def cancel_nxt_trade_endpoint():
+	"""Cancel NXT trades"""
+	try:
+		now = datetime.datetime.now().time()
+		cancel_nxt_trade(now)
+		return {"status": "success", "message": "Cancel NXT trade executed"}
+	except Exception as e:
+		return {"status": "error", "message": str(e)}
 
 # 실행 구간
 if __name__ == '__main__':
-	p = round_trunc(102171)
-	print(p)
-	now = datetime.datetime.now().time()
-	cancel_nxt_trade(now)
-
-	load_dictionaries_from_json()
-
-	#key_list = get_key_list()
-	#for key in key_list:
-	#	print_acnt(key['ACCT'], key['AK'], key['SK'])
-
-	prev_hour = datetime.datetime.now().time().hour
-
-	# 매 초 혹은 주기적으로 호출하도록 구성 (예: loop 안)
-	while True:
-		now = datetime.datetime.now().time()
-		now_hour = now.hour
-		if now_hour != prev_hour:
-			print('{} Hour change from {} to {}'.format(cur_date(), prev_hour, now_hour))
-
-		if is_between(now, day_start_time, nxt_start_time):
-			set_new_day()
-		elif new_day:
-			try:
-				daily_work(now)
-			except Exception as ex:
-				new_day = False
-				print('{} {} Setting new_day False due to Exception.'.format(cur_date(), now))
-				print(ex)
-
-		prev_hour = now_hour
-		time.sleep(5)
+	uvicorn.run(app, host="0.0.0.0", port=8006)
