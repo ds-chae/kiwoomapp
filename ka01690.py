@@ -156,6 +156,28 @@ def print_j(j):
 
 import datetime
 
+def round_trunc(dp):
+	p = int(dp)
+	modulus = 1
+
+	if (p < 1000) :
+		modulus = 1 # 1, 000¿ø ¹Ì¸¸ 1¿ø 1¿ø 5¿ø
+	elif (p < 5000) :
+		modulus = 5 # // // 1, 000 ~ 5, 000¿ø ¹Ì¸¸ 5¿ø 5¿ø
+	elif (p < 10000) :
+		modulus = 10 #// 5, 000 ~ 10, 000¿ø ¹Ì¸¸ 10¿ø 10¿ø 10¿ø
+	elif (p < 50000) :
+		modulus = 50 # // 10, 000 ~ 50, 000¿ø ¹Ì¸¸ 50¿ø 50¿ø 50¿ø
+	elif (p < 100000) :
+		modulus = 100 # // 50, 000 ~ 100, 000¿ø ¹Ì¸¸ 100¿ø 100¿ø 100¿ø
+	elif (p < 500000) :
+		modulus = 500 # // 100, 000 ~ 500, 000¿ø ¹Ì¸¸ 500¿ø 500¿ø
+	else :
+		modulus = 1000
+
+	p = ( (p // modulus) + 1) * modulus
+	return p
+
 
 def is_between(now, start, end):
     return start <= now <= end
@@ -202,21 +224,33 @@ def sell_jango(now, jango, market):
 					stk_cd = stk_cd[1:]
 				trde_able_qty = indv["trde_able_qty"]
 				rmnd_qty = indv['rmnd_qty']
-				if indv['stk_nm'] == '박셀바이오':
+				pur_pric = float(indv['pur_pric'])
+				if stk_cd in sell_prices: # if indv['stk_nm'] == '박셀바이오':
+					sell_cond = sell_prices[stk_cd]
 					if int(trde_able_qty) != 0:
 						trde_able_qty = trde_able_qty[4:]
-						ord_uv = '10590'
-						trde_tp = '0'  # 매매구분 0:보통 , 3:시장가 , 5:조건부지정가 , 81:장마감후시간외 , 61:장시작전시간외, 62:시간외단일가 , 6:최유리지정가 , 7:최우선지정가 , 10:보통(IOC) , 13:시장가(IOC) , 16:최유리(IOC) , 20:보통(FOK) , 23:시장가(FOK) , 26:최유리(FOK) , 28:스톱지정가,29:중간가,30:중간가(IOC),31:중간가(FOK)
-						ret_status = sell_order(MY_ACCESS_TOKEN, dmst_stex_tp=market, stk_cd=stk_cd,
-													ord_qty=trde_able_qty, ord_uv=ord_uv, trde_tp=trde_tp, cond_uv='')
-						print('sell_order_result')
-						print(ret_status)
-						rcde = ret_status['return_code']
-						#code = rmsg[7:13]
-						print(rcde)
-						if rcde == 0:
-							return True
-
+						ord_uv = '-'
+						if 'price' in sell_cond:
+							ord_uv = '' + sell_cond['price']
+						if ord_uv == '-':
+							if 'rate' in sell_cond:
+								s_rate = sell_cond['rate']
+								s_price = pur_pric * (1.0 + s_rate)
+								s_price = round_trunc(s_price)
+								ord_uv = '' + s_price
+						if ord_uv != '-' :
+							trde_tp = '0'  # 매매구분 0:보통 , 3:시장가 , 5:조건부지정가 , 81:장마감후시간외 , 61:장시작전시간외, 62:시간외단일가 , 6:최유리지정가 , 7:최우선지정가 , 10:보통(IOC) , 13:시장가(IOC) , 16:최유리(IOC) , 20:보통(FOK) , 23:시장가(FOK) , 26:최유리(FOK) , 28:스톱지정가,29:중간가,30:중간가(IOC),31:중간가(FOK)
+							ret_status = sell_order(MY_ACCESS_TOKEN, dmst_stex_tp=market, stk_cd=stk_cd,
+														ord_qty=trde_able_qty, ord_uv=ord_uv, trde_tp=trde_tp, cond_uv='')
+							print('sell_order_result')
+							print(ret_status)
+							rcde = ret_status['return_code']
+							#code = rmsg[7:13]
+							print(rcde)
+							if rcde == 0:
+								return True
+						else:
+							return False
 
 
 import requests
@@ -319,7 +353,7 @@ def cancel_nxt_trade(now):
 					#cancel_order_main(now, m['TOKEN'], 'KRX', ord_no, stk_cd)
 					pass
 				elif stex_tp == '2': # NXT
-					cancel_order_main(now, m['TOKEN'], 'NTX', ord_no, stk_cd)
+					cancel_order_main(now, m['TOKEN'], 'NXT', ord_no, stk_cd)
 		pass
 
 
@@ -367,52 +401,113 @@ def cancel_order_main(now, access_token, stex, orig_ord_no, stk_cd):
 # next-key, cont-yn 값이 있을 경우
 # fn_kt10003(token=MY_ACCESS_TOKEN, data=params, cont_yn='Y', next_key='nextkey..')
 
+day_start_time = datetime.time(6, 0)  # 07:00
+nxt_start_time = datetime.time(7, 59)  # 07:00
+nxt_end_time = datetime.time(8, 49)  # 07:00
+krx_start_time = datetime.time(8,51)
+krx_end_time = datetime.time(15,30)
+new_day = True
+nxt_cancelled = False
+krx_first = False
+
+def cur_date():
+	# Get today's date
+	today = datetime.date.today()
+
+	# Format the date as YYYYMMDD
+	formatted_date = today.strftime("%Y%m%d")
+
+	# Print the formatted date
+	return formatted_date
+
+
+def daily_work(now):
+	global new_day, krx_first
+	global nxt_start_time, nxt_end_time, krx_start_time,nxt_cancelled, krx_end_time
+	if is_between(now, nxt_start_time, nxt_end_time):
+		jango = get_jango()
+		sell_jango(now, jango, 'NXT')
+	elif is_between(now, nxt_end_time, krx_start_time):
+		if not nxt_cancelled:
+			nxt_cancelled = True
+			cancel_nxt_trade(now)
+	elif is_between(now, krx_start_time, krx_end_time):
+		if not krx_first:
+			print('{} krx_first get_jango and sell_jango.'.format(now))
+			krx_first = True
+		jango = get_jango()
+		sell_jango(now, jango, 'KRX')
+	else:
+		if (new_day):
+			new_day = False
+			print('{} {} Setting new day=False'.format(cur_date(), now))
+
+
+def set_new_day():
+	global new_day, waiting_shown, no_working_shown, nxt_cancelled, ktx_first
+
+	if new_day:
+		return
+	print('{} {} Setting new day=True'.format(cur_date(), now))
+	new_day = True
+	waiting_shown = False
+	no_working_shown = False
+	nxt_cancelled = False
+	ktx_first = False
+
+SELL_PRICES_FILE = 'sell_price_rate.json'
+sell_prices = {}
+
+def load_dictionaries_from_json():
+	"""Load sell_prices and profit_rate from JSON files"""
+	global sell_prices
+
+	# Load sell_prices
+	if os.path.exists(SELL_PRICES_FILE):
+		try:
+			with open(SELL_PRICES_FILE, 'r') as f:
+				sell_prices = json.load(f)
+			print(f"Loaded sell_prices from {SELL_PRICES_FILE}: {sell_prices}")
+		except Exception as e:
+			print(f"Error loading sell_prices: {e}")
+			sell_prices = {}
+	else:
+		sell_prices = {}
+		print(f"Created new sell_prices dictionary")
+
+
+
 # 실행 구간
 if __name__ == '__main__':
+	p = round_trunc(102171)
+	print(p)
 	now = datetime.datetime.now().time()
 	cancel_nxt_trade(now)
+
+	load_dictionaries_from_json()
 
 	#key_list = get_key_list()
 	#for key in key_list:
 	#	print_acnt(key['ACCT'], key['AK'], key['SK'])
-	day_start_time = datetime.time(6, 0)  # 07:00
-	nxt_start_time = datetime.time(7, 59)  # 07:00
-	nxt_end_time = datetime.time(8, 49)  # 07:00
-	krx_start_time = datetime.time(8,51)
-	krx_end_time = datetime.time(15,30)
 
 	prev_hour = datetime.datetime.now().time().hour
 
-	new_day = True
-	nxt_cancelled = False
 	# 매 초 혹은 주기적으로 호출하도록 구성 (예: loop 안)
 	while True:
 		now = datetime.datetime.now().time()
 		now_hour = now.hour
 		if now_hour != prev_hour:
-			print('Hour change from {} to {}'.format(prev_hour, now_hour))
+			print('{} Hour change from {} to {}'.format(cur_date(), prev_hour, now_hour))
 
 		if is_between(now, day_start_time, nxt_start_time):
-			if not new_day:
-				print('{} Setting new day=True', now)
-				new_day = True
-				waiting_shown = False
-				no_working_shown = False
-				nxt_cancelled = False
-		elif is_between(now, nxt_start_time, nxt_end_time):
-			jango = get_jango()
-			sell_jango(now, jango, 'NXT')
-		elif is_between(now, nxt_end_time, krx_start_time):
-			if not nxt_cancelled:
-				nxt_cancelled = True
-				cancel_nxt_trade(now)
-		elif is_between(now, krx_start_time, krx_end_time):
-			jango = get_jango()
-			sell_jango(now, jango, 'KRX')
-		else:
-			if(new_day):
+			set_new_day()
+		elif new_day:
+			try:
+				daily_work(now)
+			except Exception as ex:
 				new_day = False
-				print('{} Setting new day=False', now)
+				print('{} {} Setting new_day False due to Exception.'.format(cur_date(), now))
+				print(ex)
 
 		prev_hour = now_hour
 		time.sleep(5)
