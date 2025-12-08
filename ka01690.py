@@ -792,6 +792,8 @@ async def get_current_user(token: str = Cookie(None)):
 # Login page
 @app.get("/login", response_class=HTMLResponse)
 @app.get("/login/", response_class=HTMLResponse)
+@app.get("/stock/login", response_class=HTMLResponse)
+@app.get("/stock/login/", response_class=HTMLResponse)
 async def login_page():
 	"""Display login page"""
 	ip_suffix = get_server_ip_last_digit()
@@ -923,7 +925,13 @@ async def login_page():
 					if (result.status === 'success') {
 						// Set cookie and redirect
 						document.cookie = `token=${result.token}; path=/; max-age=${24 * 60 * 60}`;
-						window.location.href = './stock';
+						// Determine redirect path based on current location
+						const currentPath = window.location.pathname;
+						if (currentPath.includes('/stock/login')) {
+							window.location.href = '/stock';
+						} else {
+							window.location.href = '/stock';
+						}
 					} else {
 						errorDiv.textContent = result.message || 'Login failed';
 						errorDiv.classList.add('show');
