@@ -1351,7 +1351,7 @@ async def root():
 	return html_content
 
 @app.get("/api/account-data")
-@app.get("/{proxy_path:path}/api/account-data")
+@app.get("/stock/api/account-data")
 async def get_account_data_api(proxy_path: str = ""):
 	"""API endpoint to get account data as JSON"""
 	account_data = format_account_data()
