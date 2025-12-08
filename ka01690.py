@@ -11,6 +11,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 import uvicorn
 from contextlib import asynccontextmanager
 import secrets
+import socket
 
 # Load environment variables from .env file
 load_dotenv()
@@ -30,6 +31,22 @@ TOKEN_EXPIRY_HOURS = 24
 
 # In-memory token storage (in production, use Redis or database)
 active_tokens = {}
+
+# Get server IP address last digit for title
+def get_server_ip_last_digit():
+	"""Get the last digit of the server's IP address"""
+	try:
+		# Connect to a remote address to determine local IP
+		s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+		s.connect(("8.8.8.8", 80))
+		ip = s.getsockname()[0]
+		s.close()
+		# Extract last digit from IP address
+		last_digit = ip.split('.')[-1]
+		return last_digit
+	except Exception:
+		# Fallback if unable to get IP
+		return "?"
 
 # 일별잔고수익률
 def fn_ka01690(token, data, cont_yn='N', next_key=''):
@@ -777,13 +794,14 @@ async def get_current_user(token: str = Cookie(None)):
 @app.get("/login/", response_class=HTMLResponse)
 async def login_page():
 	"""Display login page"""
-	html_content = """
+	ip_suffix = get_server_ip_last_digit()
+	html_content = f"""
 	<!DOCTYPE html>
 	<html lang="ko">
 	<head>
 		<meta charset="UTF-8">
 		<meta name="viewport" content="width=device-width, initial-scale=1.0">
-		<title>Login</title>
+		<title>Login - {ip_suffix}</title>
 		<style>
 			* {
 				margin: 0;
@@ -970,14 +988,15 @@ async def root(token: str = Cookie(None)):
 		return RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
 	
 	account_data = format_account_data()
+	ip_suffix = get_server_ip_last_digit()
 	
-	html_content = """
+	html_content = f"""
 	<!DOCTYPE html>
 	<html lang="ko">
 	<head>
 		<meta charset="UTF-8">
 		<meta name="viewport" content="width=device-width, initial-scale=1.0">
-		<title>Account Holdings</title>
+		<title>Account Holdings - {ip_suffix}</title>
 		<style>
 			* {
 				margin: 0;
