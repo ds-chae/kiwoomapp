@@ -2269,4 +2269,4 @@ async def cancel_nxt_trade_endpoint():
 
 # 실행 구간
 if __name__ == '__main__':
-	uvicorn.run(app, host="0.0.0.0", port=8006)
+	uvicorn.run(app, host="0.0.0.0", port=8006, access_log=False)
