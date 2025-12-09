@@ -113,7 +113,7 @@ import json
 
 
 # Gyeja pyungga jango
-def fn_kt00018(token, data, cont_yn='N', next_key=''):
+def fn_kt00018(log_jango, token, data, cont_yn='N', next_key=''):
 	# 1. ¿äÃ»ÇÒ API URL
 	#host = 'https://mockapi.kiwoom.com' # ¸ðÀÇÅõÀÚ
 	host = 'https://api.kiwoom.com' # ½ÇÀüÅõÀÚ
@@ -133,29 +133,42 @@ def fn_kt00018(token, data, cont_yn='N', next_key=''):
 	response = requests.post(url, headers=headers, json=data)
 
 	# 4. ÀÀ´ä »óÅÂ ÄÚµå¿Í µ¥ÀÌÅÍ Ãâ·Â
-	#print('Code:', response.status_code)
-	#print('Header:', json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4, ensure_ascii=False))
-	#print('Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON ÀÀ´äÀ» ÆÄ½ÌÇÏ¿© Ãâ·Â
+	if log_jango:
+		print('get_jango => Code:', response.status_code)
+		print('get_jango => Header:', json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4, ensure_ascii=False))
+		print('get_jango => Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON ÀÀ´äÀ» ÆÄ½ÌÇÏ¿© Ãâ·Â
+		print('get_jango => Finish:')
+		print('')
 
 	return response.json()
 
-def get_jango(market = 'KRX'):
+get_jango_count = 0
+
+
+def get_jango(now, market = 'KRX'):
+	global get_jango_count
+	log_jango = (get_jango_count == 0)
+
+	get_jango_count += 1
+	if get_jango_count >= 10 :
+		get_jango_count = 0
+
 	key_list = get_key_list()
 	jango = []
 	for key in key_list:
 		MY_ACCESS_TOKEN = get_token(key['AK'], key['SK'])  # 접근토큰
-		j = call_fn_kt00018(market, key['ACCT'], MY_ACCESS_TOKEN)
+		j = call_fn_kt00018(log_jango, market, key['ACCT'], MY_ACCESS_TOKEN)
 		j['ACCT'] = key['ACCT']
 		j['MY_ACCESS_TOKEN'] = MY_ACCESS_TOKEN
 		jango.append(j)
 	return jango
 
-def call_fn_kt00018(market, ACCT, MY_ACCESS_TOKEN):
+def call_fn_kt00018(log_jango, market, ACCT, MY_ACCESS_TOKEN):
 	params = {
 		'qry_tp': '2', # 1:Hapsan, 2:Gaebyul
 		'dmst_stex_tp': market, # KRX, NXT
 	}
-	return fn_kt00018(token=MY_ACCESS_TOKEN, data=params)
+	return fn_kt00018(log_jango, token=MY_ACCESS_TOKEN, data=params)
 
 	# next-key, cont-yn °ªÀÌ ÀÖÀ» °æ¿ì
 	# fn_kt00018(token=MY_ACCESS_TOKEN, data=params, cont_yn='Y', next_key='nextkey..')
@@ -494,7 +507,7 @@ current_status = ''
 def daily_work(now):
 	global new_day, krx_first, current_status
 	global nxt_start_time, nxt_end_time, krx_start_time,nxt_cancelled, krx_end_time
-	stored_jango_data = get_jango()
+	stored_jango_data = get_jango(now)
 	if is_between(now, nxt_start_time, nxt_end_time):
 		current_status = 'NXT'
 		sell_jango(now, stored_jango_data, 'NXT')
@@ -606,20 +619,14 @@ async def lifespan(app: FastAPI):
 
 	# Initialize stored jango data by calling once immediately (non-blocking, allow failure)
 	print("Initializing jango data...")
+	now = datetime.now().time()
 	try:
-		stored_jango_data = get_jango('KRX')
+		stored_jango_data = get_jango(now, 'KRX')
 		print("KRX jango data initialized")
 	except Exception as e:
 		print(f"Error initializing KRX jango data: {e}")
 		stored_jango_data = []
-	
-	try:
-		stored_jango_data = get_jango('NXT')
-		print("NXT jango data initialized")
-	except Exception as e:
-		print(f"Error initializing NXT jango data: {e}")
-		stored_jango_data = []
-	
+
 	# Start background thread for periodic timer handler
 	print("Starting background timer thread...")
 	try:
