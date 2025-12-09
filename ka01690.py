@@ -1247,6 +1247,29 @@ async def root(token: str = Cookie(None)):
 				color: #721c24;
 				border: 1px solid #f5c6cb;
 			}
+			.account-group {
+				margin-bottom: 40px;
+			}
+			.account-group-header {
+				background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+				color: white;
+				padding: 15px 20px;
+				border-radius: 8px 8px 0 0;
+				font-size: 1.3em;
+				font-weight: 600;
+				margin-bottom: 0;
+			}
+			.account-group-header h2 {
+				margin: 0;
+				font-size: 1.2em;
+			}
+			.account-group table {
+				border-radius: 0 0 8px 8px;
+				overflow: hidden;
+			}
+			.account-group table thead {
+				background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+			}
 		</style>
 	</head>
 	<body>
@@ -1255,62 +1278,13 @@ async def root(token: str = Cookie(None)):
 				<h1 id="headline-time">📊 Account -</h1>
 				<p>Stock Holdings and Trading Information</p>
 			</div>
-			<div class="table-container">
-	"""
-	
-	if account_data:
-		html_content += """
-				<table>
-					<thead>
-						<tr>
-							<th>Account</th>
-							<th>Stock Code</th>
-							<th>Stock Name</th>
-							<th>Tradeable Qty</th>
-							<th>Avg Buy Price</th>
-							<th>Profit Rate</th>
-							<th>Preset Sell Price</th>
-						</tr>
-					</thead>
-					<tbody>
-		"""
-		
-		for item in account_data:
-			profit_class = "profit-zero"
-			profit_rate = item['profit_rate'].replace('%', '').replace('+', '')
-			try:
-				profit_value = float(profit_rate)
-				if profit_value > 0:
-					profit_class = "profit-positive"
-				elif profit_value < 0:
-					profit_class = "profit-negative"
-			except:
-				pass
-			
-			row_id = f"{item['account']}_{item['stock_code']}"
-			html_content += f"""
-						<tr data-row-id="{row_id}" data-stock-code="{item['stock_code']}" data-stock-name="{item['stock_name']}" data-preset-price="{item['preset_sell_price']}" onclick="selectRow(this)">
-							<td>{item['account']}</td>
-							<td><strong>{item['stock_code']}</strong></td>
-							<td>{item['stock_name']}</td>
-							<td>{item['tradeable_qty']} / {item.get('rmnd_qty', '0')}</td>
-							<td>{item['avg_buy_price']}</td>
-							<td class="{profit_class}">{item['profit_rate']}</td>
-							<td>{item['preset_sell_price']}</td>
-						</tr>
-			"""
-		
-		html_content += """
-					</tbody>
-				</table>
-		"""
-	else:
-		html_content += """
+			<div class="table-container" id="table-container">
 				<div class="empty-state">
-					<h2>No Holdings Found</h2>
-					<p>No account holdings are currently available.</p>
+					<h2>Loading...</h2>
+					<p>Loading account holdings...</p>
 				</div>
-		"""
+			</div>
+	"""
 	
 	html_content += """
 			</div>
@@ -1482,107 +1456,84 @@ async def root(token: str = Cookie(None)):
 							}
 						}
 						const data = result.data || [];
-						let tbody = document.querySelector('tbody');
+						const tableContainer = document.getElementById('table-container');
 						
-						if (!tbody) {
-							// Table doesn't exist, create it
-							const tableContainer = document.querySelector('.table-container');
-							if (data.length === 0) {
-								tableContainer.innerHTML = `
-									<div class="empty-state">
-										<h2>No Holdings Found</h2>
-										<p>No account holdings are currently available.</p>
-									</div>
-								`;
-								return;
+						// Group data by account on the frontend
+						const accountGroups = {};
+						for (const item of data) {
+							const acctNo = item.account || '';
+							if (!accountGroups[acctNo]) {
+								accountGroups[acctNo] = [];
 							}
-							
-							tableContainer.innerHTML = `
-								<table>
-									<thead>
-										<tr>
-											<th>Account</th>
-											<th>Stock Code</th>
-											<th>Stock Name</th>
-											<th>Tradeable Qty</th>
-											<th>Avg Buy Price</th>
-											<th>Profit Rate</th>
-											<th>Preset Sell Price</th>
-										</tr>
-									</thead>
-									<tbody></tbody>
-								</table>
-							`;
-							tbody = document.querySelector('tbody');
+							accountGroups[acctNo].push(item);
 						}
 						
-						if (!tbody) return;
+						// Check if we have any data
+						const hasData = Object.keys(accountGroups).length > 0 && 
+							Object.values(accountGroups).some(stocks => stocks && stocks.length > 0);
 						
-						// Create a set of existing row IDs
-						const existingRows = new Set();
-						Array.from(tbody.querySelectorAll('tr')).forEach(row => {
-							existingRows.add(row.getAttribute('data-row-id'));
-						});
-						
-						// Create a set of new row IDs
-						const newRowIds = new Set();
-						data.forEach(item => {
-							newRowIds.add(item.account + '_' + item.stock_code);
-						});
-						
-						// Remove rows that don't exist in new data
-						Array.from(tbody.querySelectorAll('tr')).forEach(row => {
-							const rowId = row.getAttribute('data-row-id');
-							if (!newRowIds.has(rowId)) {
-								row.remove();
-							}
-						});
-						
-						// Add or update rows
-						data.forEach(item => {
-							const rowId = item.account + '_' + item.stock_code;
-							let existingRow = tbody.querySelector(`tr[data-row-id="${rowId}"]`);
-							
-							if (existingRow) {
-								// Update existing row
-								const cells = existingRow.querySelectorAll('td');
-								if (cells.length >= 7) {
-									cells[0].textContent = item.account;
-									cells[1].innerHTML = '<strong>' + item.stock_code + '</strong>';
-									cells[2].textContent = item.stock_name;
-									const rmndQty = item.rmnd_qty || '0';
-									cells[3].textContent = item.tradeable_qty + ' / ' + rmndQty;
-									cells[4].textContent = item.avg_buy_price;
-									cells[5].textContent = item.profit_rate;
-									cells[5].className = getProfitClass(item.profit_rate);
-									cells[6].textContent = item.preset_sell_price;
-								}
-								// Update data attributes
-								existingRow.setAttribute('data-stock-code', item.stock_code);
-								existingRow.setAttribute('data-preset-price', item.preset_sell_price);
-								// Re-add click handler
-								existingRow.onclick = function() { selectRow(this); };
-							} else {
-								// Add new row
-								const tempDiv = document.createElement('div');
-								tempDiv.innerHTML = createRow(item).trim();
-								const newRow = tempDiv.querySelector('tr');
-								if (newRow) {
-									tbody.appendChild(newRow);
-								}
-							}
-						});
-						
-						// Handle empty state
-						if (data.length === 0 && tbody) {
-							const tableContainer = document.querySelector('.table-container');
+						if (!hasData) {
 							tableContainer.innerHTML = `
 								<div class="empty-state">
 									<h2>No Holdings Found</h2>
 									<p>No account holdings are currently available.</p>
 								</div>
 							`;
+							return;
 						}
+						
+						// Build HTML for grouped accounts
+						let htmlContent = '';
+						const sortedAccounts = Object.keys(accountGroups).sort();
+						
+						for (const acctNo of sortedAccounts) {
+							const stocks = accountGroups[acctNo] || [];
+							if (stocks.length === 0) continue;
+							
+							htmlContent += `
+								<div class="account-group">
+									<div class="account-group-header">
+										<h2>Account: ${acctNo}</h2>
+									</div>
+									<table>
+										<thead>
+											<tr>
+												<th>Stock Code</th>
+												<th>Stock Name</th>
+												<th>Tradeable Qty</th>
+												<th>Avg Buy Price</th>
+												<th>Profit Rate</th>
+												<th>Preset Sell Price</th>
+											</tr>
+										</thead>
+										<tbody>
+							`;
+							
+							for (const item of stocks) {
+								const rowId = item.account + '_' + item.stock_code;
+								const profitClass = getProfitClass(item.profit_rate);
+								const rmndQty = item.rmnd_qty || '0';
+								
+								htmlContent += `
+									<tr data-row-id="${rowId}" data-stock-code="${item.stock_code}" data-stock-name="${item.stock_name}" data-preset-price="${item.preset_sell_price}" onclick="selectRow(this)">
+										<td><strong>${item.stock_code}</strong></td>
+										<td>${item.stock_name}</td>
+										<td>${item.tradeable_qty} / ${rmndQty}</td>
+										<td>${item.avg_buy_price}</td>
+										<td class="${profitClass}">${item.profit_rate}</td>
+										<td>${item.preset_sell_price}</td>
+									</tr>
+								`;
+							}
+							
+							htmlContent += `
+										</tbody>
+									</table>
+								</div>
+							`;
+						}
+						
+						tableContainer.innerHTML = htmlContent;
 					}
 				})
 				.catch(error => {
