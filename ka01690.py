@@ -241,7 +241,12 @@ def is_between(now, start, end):
 				},
 """
 
-def call_sell_order(trde_able_qty, sell_cond):
+def call_sell_order(MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond):
+	trde_able_qty = indv.get("trde_able_qty", "0")
+	rmnd_qty = indv.get('rmnd_qty', "0")
+	pur_pric_str = indv.get('pur_pric', '0')
+	pur_pric = float(pur_pric_str) if pur_pric_str else 0.0
+
 	trde_able_qty_int = int(trde_able_qty) if trde_able_qty else 0
 	if trde_able_qty_int == 0:
 		return
@@ -274,7 +279,7 @@ def call_sell_order(trde_able_qty, sell_cond):
 			if code == '507615':
 				not_nxt_cd[stk_cd] = True
 		print(rcde)
-
+	print('call_sell_order:{}'.format(stk_nm))
 
 
 def sell_jango(now, jango, market):
@@ -294,18 +299,14 @@ def sell_jango(now, jango, market):
 				if stk_cd and len(stk_cd) > 0 and stk_cd[0] == 'A':
 					stk_cd = stk_cd[1:]
 					
-				trde_able_qty = indv.get("trde_able_qty", "0")
-				rmnd_qty = indv.get('rmnd_qty', "0")
-				pur_pric_str = indv.get('pur_pric', '0')
-				pur_pric = float(pur_pric_str) if pur_pric_str else 0.0
-
 				if stk_cd in not_nxt_cd and market == 'NXT':
 					continue
 					
 				if stk_cd not in sell_prices:
 					continue
+
 				sell_cond = sell_prices[stk_cd]
-				call_sell_order(trde_able_qty, sell_cond)
+				call_sell_order(MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond)
 		except Exception as ex:
 			print('at 314')
 			print(ex)
@@ -583,9 +584,7 @@ def background_timer_thread():
 			periodic_timer_handler()
 		except Exception as e:
 			print(f"Error in periodic_timer_handler: {e}")
-			import traceback
-			traceback.print_exc()
-		
+
 		# Sleep for 3 seconds, but check stop event periodically
 		for _ in range(20):  # Check every 0.1 seconds for 3 seconds total
 			if thread_stop_event.is_set():
@@ -596,8 +595,7 @@ def background_timer_thread():
 async def lifespan(app: FastAPI):
 	"""Lifespan event handler for startup and shutdown"""
 	global stored_jango_data, background_thread, thread_stop_event
-	import traceback
-	
+
 	# Startup
 	print("Starting application...")
 	try:
@@ -605,8 +603,7 @@ async def lifespan(app: FastAPI):
 		print("Dictionaries loaded successfully")
 	except Exception as e:
 		print(f"Error loading dictionaries: {e}")
-		traceback.print_exc()
-	
+
 	# Initialize stored jango data by calling once immediately (non-blocking, allow failure)
 	print("Initializing jango data...")
 	try:
@@ -614,7 +611,6 @@ async def lifespan(app: FastAPI):
 		print("KRX jango data initialized")
 	except Exception as e:
 		print(f"Error initializing KRX jango data: {e}")
-		traceback.print_exc()
 		stored_jango_data = []
 	
 	try:
@@ -622,7 +618,6 @@ async def lifespan(app: FastAPI):
 		print("NXT jango data initialized")
 	except Exception as e:
 		print(f"Error initializing NXT jango data: {e}")
-		traceback.print_exc()
 		stored_jango_data = []
 	
 	# Start background thread for periodic timer handler
@@ -638,7 +633,6 @@ async def lifespan(app: FastAPI):
 		print("Background timer thread started successfully")
 	except Exception as e:
 		print(f"Error starting background timer thread: {e}")
-		traceback.print_exc()
 		# Don't raise - allow app to start even if thread fails
 	
 	print("Application startup complete")
@@ -657,7 +651,6 @@ async def lifespan(app: FastAPI):
 				print("Background timer thread stopped successfully")
 	except Exception as e:
 		print(f"Error stopping background timer thread: {e}")
-		traceback.print_exc()
 	print("Application shutdown complete")
 
 # FastAPI app
@@ -680,8 +673,8 @@ def periodic_timer_handler():
 			daily_work(now)
 		except Exception as ex:
 			new_day = False
-			print('{} {} Setting new_day False due to Exception.'.format(cur_date(), now))
 			print(ex)
+			print('{} {} Setting new_day False due to Exception.'.format(cur_date(), now))
 
 def format_account_data():
 	"""Format account data for display in UI"""
