@@ -585,12 +585,14 @@ def save_dictionaries_to_json():
 prev_hour = None
 # Global storage for jango data (updated by timer handler)
 stored_jango_data = []
+# Global storage for miche data (updated by timer handler)
+stored_miche_data = []
 # Background thread for periodic timer handler
 background_thread = None
 thread_stop_event = threading.Event()
 
 def background_timer_thread():
-	"""Background thread that calls periodic_timer_handler every 3 seconds"""
+	"""Background thread that calls periodic_timer_handler every 1 second"""
 	global thread_stop_event
 	while not thread_stop_event.is_set():
 		try:
@@ -598,8 +600,8 @@ def background_timer_thread():
 		except Exception as e:
 			print(f"Error in periodic_timer_handler: {e}")
 
-		# Sleep for 3 seconds, but check stop event periodically
-		for _ in range(20):  # Check every 0.1 seconds for 3 seconds total
+		# Sleep for 1 second, but check stop event periodically
+		for _ in range(10):  # Check every 0.1 seconds for 1 second total
 			if thread_stop_event.is_set():
 				break
 			time_module.sleep(0.1)
@@ -607,7 +609,7 @@ def background_timer_thread():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
 	"""Lifespan event handler for startup and shutdown"""
-	global stored_jango_data, background_thread, thread_stop_event
+	global stored_jango_data, stored_miche_data, background_thread, thread_stop_event
 
 	# Startup
 	print("Starting application...")
@@ -626,6 +628,15 @@ async def lifespan(app: FastAPI):
 	except Exception as e:
 		print(f"Error initializing KRX jango data: {e}")
 		stored_jango_data = []
+	
+	# Initialize stored miche data by calling once immediately (non-blocking, allow failure)
+	print("Initializing miche data...")
+	try:
+		stored_miche_data = get_miche()
+		print("Miche data initialized")
+	except Exception as e:
+		print(f"Error initializing miche data: {e}")
+		stored_miche_data = []
 
 	# Start background thread for periodic timer handler
 	print("Starting background timer thread...")
@@ -665,13 +676,19 @@ app = FastAPI(lifespan=lifespan)
 
 def periodic_timer_handler():
 	"""Periodic timer event handler that runs the trading loop logic"""
-	global prev_hour, new_day, stored_jango_data
+	global prev_hour, new_day, stored_jango_data, stored_miche_data
 	
 	now = datetime.now().time()
 	now_hour = now.hour
 	if prev_hour is not None and now_hour != prev_hour:
 		print('{} Hour change from {} to {}'.format(cur_date(), prev_hour, now_hour))
 	prev_hour = now_hour
+
+	# Update miche data periodically
+	try:
+		stored_miche_data = get_miche()
+	except Exception as e:
+		print(f"Error updating miche data: {e}")
 
 	if is_between(now, day_start_time, nxt_start_time):
 		set_new_day()
@@ -2068,12 +2085,9 @@ async def get_miche_data_api(proxy_path: str = "", token: str = Cookie(None)):
 			status_code=status.HTTP_401_UNAUTHORIZED,
 			detail="Not authenticated"
 		)
-	try:
-		miche_data = get_miche()
-		current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-		return {"status": "success", "data": miche_data, "timestamp": current_time}
-	except Exception as e:
-		return {"status": "error", "message": str(e)}
+	global stored_miche_data
+	current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+	return {"status": "success", "data": stored_miche_data, "timestamp": current_time}
 
 @app.post("/api/cancel-order")
 @app.post("/stock/api/cancel-order")
