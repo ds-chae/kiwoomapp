@@ -241,58 +241,86 @@ def is_between(now, start, end):
 				},
 """
 
-def sell_jango(now, jango, market):
-	for j in jango:
-		if j["return_code"] != 0 :
-			print('return code not 0 for {}'.format(j['ACCT']))
-			pass
-		else:
-			MY_ACCESS_TOKEN = j['MY_ACCESS_TOKEN']
-			acnt_evlt_remn_indv_tot = j["acnt_evlt_remn_indv_tot"]
-			for indv in acnt_evlt_remn_indv_tot:
-				stk_cd=indv['stk_cd']
-				stk_nm=indv['stk_nm']
-				#print(stk_cd, stk_nm)
-				if stk_cd[0] == 'A':
-					stk_cd = stk_cd[1:]
-				trde_able_qty = indv["trde_able_qty"]
-				rmnd_qty = indv['rmnd_qty']
-				pur_pric = float(indv['pur_pric'])
-				sellable = True
-				if stk_cd in not_nxt_cd and market == 'NXT':
-					sellable = False
-				if stk_cd in sell_prices and sellable:
-					sell_cond = sell_prices[stk_cd]
-					if int(trde_able_qty) != 0:
-						trde_able_qty = trde_able_qty[4:]
-						ord_uv = 'None'
-						if 'price' in sell_cond:
-							ord_uv = str(sell_cond['price'])
-						if ord_uv == 'None':
-							if 'rate' in sell_cond:
-								s_rate = sell_cond['rate']
-								s_price = pur_pric * (1.0 + s_rate)
-								s_price = round_trunc(s_price)
-								ord_uv = str(s_price)
-						if ord_uv != 'None' :
-							trde_tp = '0'  # 매매구분 0:보통 , 3:시장가 , 5:조건부지정가 , 81:장마감후시간외 , 61:장시작전시간외, 62:시간외단일가 , 6:최유리지정가 , 7:최우선지정가 , 10:보통(IOC) , 13:시장가(IOC) , 16:최유리(IOC) , 20:보통(FOK) , 23:시장가(FOK) , 26:최유리(FOK) , 28:스톱지정가,29:중간가,30:중간가(IOC),31:중간가(FOK)
-							ret_status = sell_order(MY_ACCESS_TOKEN, dmst_stex_tp=market, stk_cd=stk_cd,
-														ord_qty=trde_able_qty, ord_uv=ord_uv, trde_tp=trde_tp, cond_uv='')
-							print('sell_order_result')
-							print(ret_status)
-							rcde = ret_status['return_code']
-							rmsg = ret_status['return_msg']
-							code = rmsg[7:13]
-							if code == '507615':
-								not_nxt_cd[stk_cd] = True
-							print(rcde)
+def call_sell_order(trde_able_qty, sell_cond):
+	trde_able_qty_int = int(trde_able_qty) if trde_able_qty else 0
+	if trde_able_qty_int == 0:
+		return
+	if isinstance(trde_able_qty, str) and len(trde_able_qty) > 4:
+		trde_able_qty = trde_able_qty[4:]
 
+	ord_uv = 'None'
+	if 'price' in sell_cond:
+		ord_uv = str(sell_cond['price'])
+	if ord_uv == 'None':
+		if 'rate' in sell_cond:
+			s_rate = sell_cond['rate']
+			s_price = pur_pric * (1.0 + s_rate)
+			s_price = round_trunc(s_price)
+			ord_uv = str(s_price)
+
+	if ord_uv == 'None': # price is not calculated
+		return
+
+	trde_tp = '0'  # 매매구분 0:보통 , 3:시장가 , 5:조건부지정가 , 81:장마감후시간외 , 61:장시작전시간외, 62:시간외단일가 , 6:최유리지정가 , 7:최우선지정가 , 10:보통(IOC) , 13:시장가(IOC) , 16:최유리(IOC) , 20:보통(FOK) , 23:시장가(FOK) , 26:최유리(FOK) , 28:스톱지정가,29:중간가,30:중간가(IOC),31:중간가(FOK)
+	ret_status = sell_order(MY_ACCESS_TOKEN, dmst_stex_tp=market, stk_cd=stk_cd,
+	                        ord_qty=trde_able_qty, ord_uv=ord_uv, trde_tp=trde_tp, cond_uv='')
+	print('sell_order_result')
+	print(ret_status)
+	if isinstance(ret_status, dict):
+		rcde = ret_status.get('return_code')
+		rmsg = ret_status.get('return_msg', '')
+		if rmsg and len(rmsg) > 13:
+			code = rmsg[7:13]
+			if code == '507615':
+				not_nxt_cd[stk_cd] = True
+		print(rcde)
+
+
+
+def sell_jango(now, jango, market):
+	global auto_sell_enabled
+	if not auto_sell_enabled:
+		return
+
+	for j in jango:
+		try:
+			MY_ACCESS_TOKEN = j.get('MY_ACCESS_TOKEN')
+
+			acnt_evlt_remn_indv_tot = j.get("acnt_evlt_remn_indv_tot", [])
+
+			for indv in acnt_evlt_remn_indv_tot:
+				stk_cd = indv.get('stk_cd', '')
+				stk_nm = indv.get('stk_nm', '')
+				if stk_cd and len(stk_cd) > 0 and stk_cd[0] == 'A':
+					stk_cd = stk_cd[1:]
+					
+				trde_able_qty = indv.get("trde_able_qty", "0")
+				rmnd_qty = indv.get('rmnd_qty', "0")
+				pur_pric_str = indv.get('pur_pric', '0')
+				pur_pric = float(pur_pric_str) if pur_pric_str else 0.0
+
+				if stk_cd in not_nxt_cd and market == 'NXT':
+					continue
+					
+				if stk_cd not in sell_prices:
+					continue
+				sell_cond = sell_prices[stk_cd]
+				call_sell_order(trde_able_qty, sell_cond)
+		except Exception as ex:
+			print('at 314')
+			print(ex)
+			exit()
+	pass
 
 import requests
 import json
 
+log_miche = False
+
 # 미체결요청
 def fn_ka10075(token, data, cont_yn='N', next_key=''):
+	global log_miche
+
 	# 1. 요청할 API URL
 	#host = 'https://mockapi.kiwoom.com' # 모의투자
 	host = 'https://api.kiwoom.com' # 실전투자
@@ -310,11 +338,11 @@ def fn_ka10075(token, data, cont_yn='N', next_key=''):
 
 	# 3. http POST 요청
 	response = requests.post(url, headers=headers, json=data)
-
-	# 4. 응답 상태 코드와 데이터 출력
-	print('Code:', response.status_code)
-	print('Header:', json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4, ensure_ascii=False))
-	print('Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON 응답을 파싱하여 출력
+	if log_miche:
+		# 4. 응답 상태 코드와 데이터 출력
+		print('Code:', response.status_code)
+		print('Header:', json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4, ensure_ascii=False))
+		print('Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON 응답을 파싱하여 출력
 	return response.json()
 
 
@@ -393,7 +421,8 @@ def cancel_nxt_trade(now):
 
 
 # 주식 취소주문
-def fn_kt10003(token, data, cont_yn='N', next_key=''):
+def fn_kt10003(now, token, data, cont_yn='N', next_key=''):
+	print("{} cancel order begin fn_kt10003".format(now))
 	# 1. 요청할 API URL
 	# host = 'https://mockapi.kiwoom.com' # 모의투자
 	host = 'https://api.kiwoom.com'  # 실전투자
@@ -418,19 +447,22 @@ def fn_kt10003(token, data, cont_yn='N', next_key=''):
 	      json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4,
 	                 ensure_ascii=False))
 	print('Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON 응답을 파싱하여 출력
+	print("{} cancel order end fn_kt10003".format(now))
 
+	return response.json()
 
-def cancel_order_main(now, access_token, stex, orig_ord_no, stk_cd):
+def cancel_order_main(now, access_token, stex, ord_no, stk_cd):
+	print('cancel_order_main: ord_no={}'.format(ord_no))
 	# 2. 요청 데이터
 	params = {
 		'dmst_stex_tp': stex, # 'KRX',  # 국내거래소구분 KRX,NXT,SOR
-		'orig_ord_no': orig_ord_no,  # 원주문번호
+		'orig_ord_no': ord_no,  # 주문번호 (using ord_no as orig_ord_no for cancellation)
 		'stk_cd': stk_cd,  # 종목코드
 		'cncl_qty': '0',  # 취소수량 '0' 입력시 잔량 전부 취소
 	}
 
 	# 3. API 실행
-	fn_kt10003(token=access_token, data=params)
+	return fn_kt10003(now, token=access_token, data=params)
 
 
 # next-key, cont-yn 값이 있을 경우
@@ -500,6 +532,9 @@ def set_new_day():
 
 SELL_PRICES_FILE = 'sell_price_rate.json'
 sell_prices = {}
+
+# Global flag for auto sell
+auto_sell_enabled = True
 
 def load_dictionaries_from_json():
 	"""Load sell_prices and profit_rate from JSON files"""
@@ -1217,6 +1252,24 @@ async def root(token: str = Cookie(None)):
 			.btn-logout:hover {
 				opacity: 0.9;
 			}
+			.btn-auto-sell {
+				background: #27ae60;
+				color: white;
+				border: none;
+				padding: 10px 20px;
+				border-radius: 4px;
+				cursor: pointer;
+				font-size: 14px;
+				font-weight: 600;
+				margin-left: auto;
+				margin-right: 10px;
+			}
+			.btn-auto-sell:hover {
+				opacity: 0.9;
+			}
+			.btn-auto-sell.disabled {
+				background: #95a5a6;
+			}
 			.update-form-header {
 				display: flex;
 				justify-content: space-between;
@@ -1270,6 +1323,34 @@ async def root(token: str = Cookie(None)):
 			.account-group table thead {
 				background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
 			}
+			.miche-section {
+				margin-top: 40px;
+				padding-top: 30px;
+				border-top: 2px solid #e0e0e0;
+			}
+			.miche-section h2 {
+				color: #333;
+				margin-bottom: 20px;
+				font-size: 1.5em;
+			}
+			.btn-cancel {
+				background: #e74c3c;
+				color: white;
+				border: none;
+				padding: 6px 12px;
+				border-radius: 4px;
+				cursor: pointer;
+				font-size: 12px;
+				font-weight: 600;
+				transition: background-color 0.2s;
+			}
+			.btn-cancel:hover {
+				background: #c0392b;
+			}
+			.btn-cancel:disabled {
+				background: #95a5a6;
+				cursor: not-allowed;
+			}
 		</style>
 	</head>
 	<body>
@@ -1282,6 +1363,15 @@ async def root(token: str = Cookie(None)):
 				<div class="empty-state">
 					<h2>Loading...</h2>
 					<p>Loading account holdings...</p>
+				</div>
+			</div>
+			<div class="miche-section" id="miche-section" style="display: none;">
+				<h2>📋 Unexecuted Orders (미체결)</h2>
+				<div id="miche-container">
+					<div class="empty-state">
+						<h2>Loading...</h2>
+						<p>Loading unexecuted orders...</p>
+					</div>
 				</div>
 			</div>
 	"""
@@ -1311,6 +1401,7 @@ async def root(token: str = Cookie(None)):
 							<button class="btn-update" onclick="updateSellPrice()">Update</button>
 							<button class="btn-delete" onclick="deleteSellPrice()">Delete</button>
 						</div>
+						<button class="btn-auto-sell" id="btn-auto-sell" onclick="toggleAutoSell()">Auto Sell: OFF</button>
 						<button class="btn-logout" onclick="logout()">🚪 Logout</button>
 					</div>
 				</div>
@@ -1697,11 +1788,255 @@ async def root(token: str = Cookie(None)):
 			}, 3000);
 		}
 		
+		function updateMiche() {
+			fetch('./api/miche-data')
+				.then(response => response.json())
+				.then(result => {
+					if (result.status === 'success') {
+						const micheData = result.data || [];
+						const micheContainer = document.getElementById('miche-container');
+						const micheSection = document.getElementById('miche-section');
+						
+						// Group miche data by account
+						const accountGroups = {};
+						for (const item of micheData) {
+							const acctNo = item.ACCT || '';
+							if (!accountGroups[acctNo]) {
+								accountGroups[acctNo] = [];
+							}
+							// Extract oso (unexecuted orders) from each account
+							if (item.oso && Array.isArray(item.oso)) {
+								for (const order of item.oso) {
+									// Add ACCT to each order for cancellation
+									const orderWithAcct = {
+										...order,
+										ACCT: acctNo
+									};
+									accountGroups[acctNo].push(orderWithAcct);
+								}
+							}
+						}
+						
+						// Check if we have any data
+						const hasData = Object.keys(accountGroups).length > 0 && 
+							Object.values(accountGroups).some(orders => orders && orders.length > 0);
+						
+						if (!hasData) {
+							micheContainer.innerHTML = `
+								<div class="empty-state">
+									<h2>No Unexecuted Orders</h2>
+									<p>No unexecuted orders are currently available.</p>
+								</div>
+							`;
+							micheSection.style.display = 'none';
+							return;
+						}
+						
+						// Show miche section
+						micheSection.style.display = 'block';
+						
+						// Build HTML for grouped miche orders
+						let htmlContent = '';
+						const sortedAccounts = Object.keys(accountGroups).sort();
+						
+						for (const acctNo of sortedAccounts) {
+							const orders = accountGroups[acctNo] || [];
+							if (orders.length === 0) continue;
+							
+							htmlContent += `
+								<div class="account-group">
+									<div class="account-group-header">
+										<h2>Account: ${acctNo}</h2>
+									</div>
+									<table>
+										<thead>
+											<tr>
+												<th>Stock Code</th>
+												<th>Stock Name</th>
+												<th>Order Type</th>
+												<th>Order Qty</th>
+												<th>Order Price</th>
+												<th>Unexecuted Qty</th>
+												<th>Current Price</th>
+												<th>Exchange</th>
+												<th>Time</th>
+												<th>Action</th>
+											</tr>
+										</thead>
+										<tbody>
+							`;
+							
+							for (const order of orders) {
+								const stkCd = order.stk_cd || '';
+								const stkCdClean = stkCd && stkCd[0] === 'A' ? stkCd.substring(1) : stkCd;
+								const ordQty = order.ord_qty ? parseInt(order.ord_qty.replace(/^0+/, '') || '0') : 0;
+								const osoQty = order.oso_qty ? parseInt(order.oso_qty.replace(/^0+/, '') || '0') : 0;
+								const ordPric = order.ord_pric ? parseInt(order.ord_pric.replace(/^0+/, '') || '0') : 0;
+								const curPrc = order.cur_prc ? parseInt(order.cur_prc.replace(/^0+/, '') || '0') : 0;
+								const ordNo = order.ord_no || '';
+								const stexTp = order.stex_tp || '0';
+								
+								htmlContent += `
+									<tr>
+										<td><strong>${stkCdClean}</strong></td>
+										<td>${order.stk_nm || '-'}</td>
+										<td>${order.io_tp_nm || '-'}</td>
+										<td>${ordQty.toLocaleString()}</td>
+										<td>${ordPric > 0 ? ordPric.toLocaleString() : '-'}</td>
+										<td><strong>${osoQty.toLocaleString()}</strong></td>
+										<td>${curPrc > 0 ? curPrc.toLocaleString() : '-'}</td>
+										<td>${order.stex_tp_txt || order.stex_tp || '-'}</td>
+										<td>${order.tm || '-'}</td>
+										<td>
+											<button class="btn-cancel" 
+												data-acct="${order.ACCT || acctNo}"
+												data-stex-tp="${stexTp}"
+												data-ord-no="${ordNo}"
+												data-stk-cd="${stkCd}"
+												onclick="cancelOrder(this)">
+												Cancel
+											</button>
+										</td>
+									</tr>
+								`;
+							}
+							
+							htmlContent += `
+										</tbody>
+									</table>
+								</div>
+							`;
+						}
+						
+						micheContainer.innerHTML = htmlContent;
+					} else {
+						const micheSection = document.getElementById('miche-section');
+						micheSection.style.display = 'none';
+					}
+				})
+				.catch(error => {
+					console.error('Error updating miche:', error);
+					const micheSection = document.getElementById('miche-section');
+					micheSection.style.display = 'none';
+				});
+		}
+		
+		function cancelOrder(buttonElement) {
+			const acct = buttonElement.getAttribute('data-acct');
+			const stexTp = buttonElement.getAttribute('data-stex-tp');
+			const ordNo = buttonElement.getAttribute('data-ord-no');
+			const stkCd = buttonElement.getAttribute('data-stk-cd');
+			
+			if (!acct || !ordNo || !stkCd) {
+				alert('Missing required information to cancel order');
+				return;
+			}
+			
+			if (!confirm('Are you sure you want to cancel this order?')) {
+				return;
+			}
+			
+			// Disable button during request
+			buttonElement.disabled = true;
+			buttonElement.textContent = 'Cancelling...';
+			
+			fetch('./api/cancel-order', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({
+					acct: acct,
+					stex: stexTp,
+					ord_no: ordNo,
+					stk_cd: stkCd
+				})
+			})
+			.then(response => response.json())
+			.then(result => {
+				if (result.status === 'success') {
+					alert('Order cancellation requested successfully');
+					// Refresh miche data after a short delay
+					setTimeout(updateMiche, 1000);
+				} else {
+					alert('Error cancelling order: ' + (result.message || 'Unknown error'));
+					buttonElement.disabled = false;
+					buttonElement.textContent = 'Cancel';
+				}
+			})
+			.catch(error => {
+				console.error('Error cancelling order:', error);
+				alert('Error cancelling order: ' + error.message);
+				buttonElement.disabled = false;
+				buttonElement.textContent = 'Cancel';
+			});
+		}
+		
+		function loadAutoSellStatus() {
+			fetch('./api/auto-sell')
+				.then(response => response.json())
+				.then(result => {
+					if (result.status === 'success') {
+						updateAutoSellButton(result.enabled);
+					}
+				})
+				.catch(error => {
+					console.error('Error loading auto sell status:', error);
+				});
+		}
+		
+		function updateAutoSellButton(enabled) {
+			const btn = document.getElementById('btn-auto-sell');
+			if (btn) {
+				if (enabled) {
+					btn.textContent = 'Auto Sell: ON';
+					btn.classList.remove('disabled');
+					btn.style.background = '#27ae60';
+				} else {
+					btn.textContent = 'Auto Sell: OFF';
+					btn.classList.add('disabled');
+					btn.style.background = '#95a5a6';
+				}
+			}
+		}
+		
+		function toggleAutoSell() {
+			const btn = document.getElementById('btn-auto-sell');
+			const currentState = !btn.classList.contains('disabled');
+			const newState = !currentState;
+			
+			fetch('./api/auto-sell', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({ enabled: newState })
+			})
+			.then(response => response.json())
+			.then(result => {
+				if (result.status === 'success') {
+					updateAutoSellButton(result.enabled);
+					showMessage(result.message || `Auto sell ${result.enabled ? 'enabled' : 'disabled'}`, 'success');
+				} else {
+					showMessage('Error: ' + (result.message || 'Failed to update auto sell status'), 'error');
+				}
+			})
+			.catch(error => {
+				console.error('Error toggling auto sell:', error);
+				showMessage('Error toggling auto sell: ' + error.message, 'error');
+			});
+		}
+		
 		// Auto-update every 1 second
-		setInterval(updateTable, 1000);
+		setInterval(function() {
+			updateTable();
+			updateMiche();
+		}, 1000);
 		
 		// Initial update after page load
 		updateTable();
+		updateMiche();
+		loadAutoSellStatus();
 		</script>
 	</body>
 	</html>
@@ -1722,6 +2057,74 @@ async def get_account_data_api(proxy_path: str = "", token: str = Cookie(None)):
 	account_data = format_account_data()
 	current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 	return {"status": "success", "data": account_data, "timestamp": current_time, "current_status": current_status}
+
+@app.get("/api/miche-data")
+@app.get("/stock/api/miche-data")
+async def get_miche_data_api(proxy_path: str = "", token: str = Cookie(None)):
+	"""API endpoint to get miche (unexecuted orders) data as JSON"""
+	# Check authentication
+	if not token or not verify_token(token):
+		raise HTTPException(
+			status_code=status.HTTP_401_UNAUTHORIZED,
+			detail="Not authenticated"
+		)
+	try:
+		miche_data = get_miche()
+		current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+		return {"status": "success", "data": miche_data, "timestamp": current_time}
+	except Exception as e:
+		return {"status": "error", "message": str(e)}
+
+@app.post("/api/cancel-order")
+@app.post("/stock/api/cancel-order")
+async def cancel_order_api(request: dict, proxy_path: str = "", token: str = Cookie(None)):
+	"""API endpoint to cancel an order"""
+	# Check authentication
+	if not token or not verify_token(token):
+		raise HTTPException(
+			status_code=status.HTTP_401_UNAUTHORIZED,
+			detail="Not authenticated"
+		)
+	try:
+		acct = request.get('acct')  # Account number
+		stex = request.get('stex')  # Exchange type: KRX, NXT, SOR
+		ord_no = request.get('ord_no')
+		stk_cd = request.get('stk_cd')
+		print('cancel_order_api ord_no={}'.format(ord_no))
+		if not all([acct, stex, ord_no, stk_cd]):
+			return {"status": "error", "message": "Missing required parameters"}
+		
+		# Validate order number - check if it's not empty or all zeros
+		ord_no_clean = ord_no.strip().lstrip('0') if ord_no else ''
+		if not ord_no_clean:
+			return {"status": "error", "message": "Invalid order number (empty or zeros)"}
+		
+		# Retrieve token from backend using account number
+		key_list = get_key_list()
+		access_token = None
+		for key in key_list:
+			if key['ACCT'] == acct:
+				access_token = get_token(key['AK'], key['SK'])
+				break
+		
+		if not access_token:
+			return {"status": "error", "message": "Account not found or unable to retrieve token"}
+		
+		# Remove 'A' prefix from stock code if present
+		if stk_cd and stk_cd[0] == 'A':
+			stk_cd = stk_cd[1:]
+		
+		# Map stex_tp to exchange string
+		stex_map = {'0': 'KRX', '1': 'KRX', '2': 'NXT'}
+		if stex in stex_map:
+			stex = stex_map[stex]
+		
+		now = datetime.now().time()
+		cancel_order_main(now, access_token, stex, ord_no, stk_cd)
+		
+		return {"status": "success", "message": "Order cancellation requested"}
+	except Exception as e:
+		return {"status": "error", "message": str(e)}
 
 @app.get("/api/sell-prices")
 @app.get("/{proxy_path:path}/api/sell-prices")
@@ -1794,6 +2197,40 @@ async def update_sell_prices_api(request: dict, proxy_path: str = "", token: str
 			return {"status": "success", "message": "Sell price updated", "data": sell_prices}
 		else:
 			return {"status": "error", "message": "Failed to save to file"}
+	except Exception as e:
+		return {"status": "error", "message": str(e)}
+
+@app.get("/api/auto-sell")
+@app.get("/stock/api/auto-sell")
+async def get_auto_sell_api(proxy_path: str = "", token: str = Cookie(None)):
+	"""API endpoint to get auto sell flag status"""
+	# Check authentication
+	if not token or not verify_token(token):
+		raise HTTPException(
+			status_code=status.HTTP_401_UNAUTHORIZED,
+			detail="Not authenticated"
+		)
+	global auto_sell_enabled
+	return {"status": "success", "enabled": auto_sell_enabled}
+
+@app.post("/api/auto-sell")
+@app.post("/stock/api/auto-sell")
+async def set_auto_sell_api(request: dict, proxy_path: str = "", token: str = Cookie(None)):
+	"""API endpoint to set auto sell flag"""
+	# Check authentication
+	if not token or not verify_token(token):
+		raise HTTPException(
+			status_code=status.HTTP_401_UNAUTHORIZED,
+			detail="Not authenticated"
+		)
+	global auto_sell_enabled
+	try:
+		enabled = request.get('enabled')
+		if enabled is None:
+			return {"status": "error", "message": "Missing 'enabled' parameter"}
+		
+		auto_sell_enabled = bool(enabled)
+		return {"status": "success", "enabled": auto_sell_enabled, "message": f"Auto sell {'enabled' if auto_sell_enabled else 'disabled'}"}
 	except Exception as e:
 		return {"status": "error", "message": str(e)}
 
