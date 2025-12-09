@@ -252,13 +252,16 @@ def sell_jango(now, jango, market):
 			for indv in acnt_evlt_remn_indv_tot:
 				stk_cd=indv['stk_cd']
 				stk_nm=indv['stk_nm']
-				print(stk_cd, stk_nm)
+				#print(stk_cd, stk_nm)
 				if stk_cd[0] == 'A':
 					stk_cd = stk_cd[1:]
 				trde_able_qty = indv["trde_able_qty"]
 				rmnd_qty = indv['rmnd_qty']
 				pur_pric = float(indv['pur_pric'])
-				if stk_cd in sell_prices:
+				sellable = True
+				if stk_cd in not_nxt_cd and market == 'NXT':
+					sellable = False
+				if stk_cd in sell_prices and sellable:
 					sell_cond = sell_prices[stk_cd]
 					if int(trde_able_qty) != 0:
 						trde_able_qty = trde_able_qty[4:]
@@ -270,7 +273,7 @@ def sell_jango(now, jango, market):
 								s_rate = sell_cond['rate']
 								s_price = pur_pric * (1.0 + s_rate)
 								s_price = round_trunc(s_price)
-								ord_uv = '' + s_price
+								ord_uv = str(s_price)
 						if ord_uv != 'None' :
 							trde_tp = '0'  # 매매구분 0:보통 , 3:시장가 , 5:조건부지정가 , 81:장마감후시간외 , 61:장시작전시간외, 62:시간외단일가 , 6:최유리지정가 , 7:최우선지정가 , 10:보통(IOC) , 13:시장가(IOC) , 16:최유리(IOC) , 20:보통(FOK) , 23:시장가(FOK) , 26:최유리(FOK) , 28:스톱지정가,29:중간가,30:중간가(IOC),31:중간가(FOK)
 							ret_status = sell_order(MY_ACCESS_TOKEN, dmst_stex_tp=market, stk_cd=stk_cd,
@@ -278,7 +281,10 @@ def sell_jango(now, jango, market):
 							print('sell_order_result')
 							print(ret_status)
 							rcde = ret_status['return_code']
-							#code = rmsg[7:13]
+							rmsg = ret_status['return_msg']
+							code = rmsg[7:13]
+							if code == '507615':
+								not_nxt_cd[stk_cd] = True
 							print(rcde)
 
 
@@ -433,11 +439,12 @@ def cancel_order_main(now, access_token, stex, orig_ord_no, stk_cd):
 day_start_time = time(6, 0)  # 07:00
 nxt_start_time = time(7, 59)  # 07:00
 nxt_end_time = time(8, 49)  # 07:00
-krx_start_time = time(8,51)
+krx_start_time = time(8,55)
 krx_end_time = time(15,30)
 new_day = True
 nxt_cancelled = False
 krx_first = False
+not_nxt_cd = {}
 
 def cur_date():
 	# Get today's date
@@ -489,6 +496,7 @@ def set_new_day():
 	nxt_cancelled = False
 	ktx_first = False
 	current_status = 'NEW'
+	not_nxt_cd = {}
 
 SELL_PRICES_FILE = 'sell_price_rate.json'
 sell_prices = {}
@@ -544,7 +552,7 @@ def background_timer_thread():
 			traceback.print_exc()
 		
 		# Sleep for 3 seconds, but check stop event periodically
-		for _ in range(30):  # Check every 0.1 seconds for 3 seconds total
+		for _ in range(20):  # Check every 0.1 seconds for 3 seconds total
 			if thread_stop_event.is_set():
 				break
 			time_module.sleep(0.1)
