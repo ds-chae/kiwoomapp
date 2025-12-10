@@ -753,6 +753,9 @@ def format_account_data():
 				pur_pric = stock.get('pur_pric', '0')
 				pur_pric_float = float(pur_pric) if pur_pric else 0.0
 				
+				cur_prc = stock.get('cur_prc', '0')
+				cur_prc_float = float(cur_prc) if cur_prc else 0.0
+				
 				prft_rt = stock.get('prft_rt', '0')
 				prft_rt_float = float(prft_rt) if prft_rt else 0.0
 				
@@ -795,13 +798,23 @@ def format_account_data():
 				# Only add if not already seen (deduplicate by account and stock_code)
 				if unique_key not in seen_keys:
 					seen_keys.add(unique_key)
+					# Format avg_buy_price / cur_prc
+					if pur_pric_float > 0 and cur_prc_float > 0:
+						avg_buy_price_display = f"{pur_pric_float:,.0f} / {cur_prc_float:,.0f}"
+					elif pur_pric_float > 0:
+						avg_buy_price_display = f"{pur_pric_float:,.0f} / -"
+					elif cur_prc_float > 0:
+						avg_buy_price_display = f"- / {cur_prc_float:,.0f}"
+					else:
+						avg_buy_price_display = '-'
+					
 					formatted_data.append({
 						'account': acct_no,
 						'stock_code': stk_cd_clean,
 						'stock_name': stk_nm,
 						'tradeable_qty': trde_able_qty,
 						'rmnd_qty': rmnd_qty,
-						'avg_buy_price': f"{pur_pric_float:,.0f}" if pur_pric_float > 0 else '-',
+						'avg_buy_price': avg_buy_price_display,
 						'profit_rate': f"{prft_rt_float:+.2f}%",
 						'preset_sell_price': preset_sell_price
 					})
