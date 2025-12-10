@@ -1902,7 +1902,12 @@ async def root(token: str = Cookie(None)):
 								const stkCdClean = stkCd && stkCd[0] === 'A' ? stkCd.substring(1) : stkCd;
 								const ordQty = order.ord_qty ? parseInt(order.ord_qty.replace(/^0+/, '') || '0') : 0;
 								const osoQty = order.oso_qty ? parseInt(order.oso_qty.replace(/^0+/, '') || '0') : 0;
-								const ordPric = order.ord_pric ? parseInt(order.ord_pric.replace(/^0+/, '') || '0') : 0;
+								// Parse ord_pric field - handle zero-padded strings
+								let ordPric = 0;
+								if (order.ord_pric) {
+									const ordPricStr = order.ord_pric.toString().replace(/^0+/, '') || '0';
+									ordPric = parseInt(ordPricStr) || 0;
+								}
 								const curPrc = order.cur_prc ? parseInt(order.cur_prc.replace(/^0+/, '') || '0') : 0;
 								const ordNo = order.ord_no || '';
 								const stexTp = order.stex_tp || '0';
