@@ -507,6 +507,7 @@ current_status = ''
 def daily_work(now):
 	global new_day, krx_first, current_status
 	global nxt_start_time, nxt_end_time, krx_start_time,nxt_cancelled, krx_end_time
+	global stored_jango_data
 	stored_jango_data = get_jango(now)
 	if is_between(now, nxt_start_time, nxt_end_time):
 		current_status = 'NXT'
