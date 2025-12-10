@@ -1396,12 +1396,36 @@ async def root(token: str = Cookie(None)):
 					<p>Loading account holdings...</p>
 				</div>
 			</div>
-			<div class="miche-section" id="miche-section" style="display: none;">
+			<div class="miche-section" id="miche-section">
 				<h2>📋 Unexecuted Orders (미체결)</h2>
 				<div id="miche-container">
-					<div class="empty-state">
-						<h2>Loading...</h2>
-						<p>Loading unexecuted orders...</p>
+					<div class="account-group">
+						<div class="account-group-header">
+							<h2>Unexecuted Orders</h2>
+						</div>
+						<table>
+							<thead>
+								<tr>
+									<th>Stock Code</th>
+									<th>Stock Name</th>
+									<th>Order Type</th>
+									<th>Order Qty</th>
+									<th>Order Price</th>
+									<th>Unexecuted Qty</th>
+									<th>Current Price</th>
+									<th>Exchange</th>
+									<th>Time</th>
+									<th>Action</th>
+								</tr>
+							</thead>
+							<tbody>
+								<tr>
+									<td colspan="10" style="text-align: center; padding: 20px; color: #7f8c8d;">
+										Loading...
+									</td>
+								</tr>
+							</tbody>
+						</table>
 					</div>
 				</div>
 			</div>
@@ -1852,32 +1876,18 @@ async def root(token: str = Cookie(None)):
 						const hasData = Object.keys(accountGroups).length > 0 && 
 							Object.values(accountGroups).some(orders => orders && orders.length > 0);
 						
-						if (!hasData) {
-							micheContainer.innerHTML = `
-								<div class="empty-state">
-									<h2>No Unexecuted Orders</h2>
-									<p>No unexecuted orders are currently available.</p>
-								</div>
-							`;
-							micheSection.style.display = 'none';
-							return;
-						}
-						
-						// Show miche section
+						// Always show miche section
 						micheSection.style.display = 'block';
 						
 						// Build HTML for grouped miche orders
 						let htmlContent = '';
-						const sortedAccounts = Object.keys(accountGroups).sort();
 						
-						for (const acctNo of sortedAccounts) {
-							const orders = accountGroups[acctNo] || [];
-							if (orders.length === 0) continue;
-							
+						if (!hasData) {
+							// Show table with headers but empty tbody
 							htmlContent += `
 								<div class="account-group">
 									<div class="account-group-header">
-										<h2>Account: ${acctNo}</h2>
+										<h2>Unexecuted Orders</h2>
 									</div>
 									<table>
 										<thead>
@@ -1895,65 +1905,166 @@ async def root(token: str = Cookie(None)):
 											</tr>
 										</thead>
 										<tbody>
-							`;
-							
-							for (const order of orders) {
-								const stkCd = order.stk_cd || '';
-								const stkCdClean = stkCd && stkCd[0] === 'A' ? stkCd.substring(1) : stkCd;
-								const ordQty = order.ord_qty ? parseInt(order.ord_qty.replace(/^0+/, '') || '0') : 0;
-								const osoQty = order.oso_qty ? parseInt(order.oso_qty.replace(/^0+/, '') || '0') : 0;
-								// Parse ord_pric field - handle zero-padded strings
-								let ordPric = 0;
-								if (order.ord_pric) {
-									const ordPricStr = order.ord_pric.toString().replace(/^0+/, '') || '0';
-									ordPric = parseInt(ordPricStr) || 0;
-								}
-								const curPrc = order.cur_prc ? parseInt(order.cur_prc.replace(/^0+/, '') || '0') : 0;
-								const ordNo = order.ord_no || '';
-								const stexTp = order.stex_tp || '0';
-								
-								htmlContent += `
-									<tr>
-										<td><strong>${stkCdClean}</strong></td>
-										<td>${order.stk_nm || '-'}</td>
-										<td>${order.io_tp_nm || '-'}</td>
-										<td>${ordQty.toLocaleString()}</td>
-										<td>${ordPric > 0 ? ordPric.toLocaleString() : '-'}</td>
-										<td><strong>${osoQty.toLocaleString()}</strong></td>
-										<td>${curPrc > 0 ? curPrc.toLocaleString() : '-'}</td>
-										<td>${order.stex_tp_txt || order.stex_tp || '-'}</td>
-										<td>${order.tm || '-'}</td>
-										<td>
-											<button class="btn-cancel" 
-												data-acct="${order.ACCT || acctNo}"
-												data-stex-tp="${stexTp}"
-												data-ord-no="${ordNo}"
-												data-stk-cd="${stkCd}"
-												onclick="cancelOrder(this)">
-												Cancel
-											</button>
-										</td>
-									</tr>
-								`;
-							}
-							
-							htmlContent += `
+											<tr>
+												<td colspan="10" style="text-align: center; padding: 20px; color: #7f8c8d;">
+													No unexecuted orders available
+												</td>
+											</tr>
 										</tbody>
 									</table>
 								</div>
 							`;
+						} else {
+							const sortedAccounts = Object.keys(accountGroups).sort();
+							
+							for (const acctNo of sortedAccounts) {
+								const orders = accountGroups[acctNo] || [];
+								if (orders.length === 0) continue;
+								
+								htmlContent += `
+									<div class="account-group">
+										<div class="account-group-header">
+											<h2>Account: ${acctNo}</h2>
+										</div>
+										<table>
+											<thead>
+												<tr>
+													<th>Stock Code</th>
+													<th>Stock Name</th>
+													<th>Order Type</th>
+													<th>Order Qty</th>
+													<th>Order Price</th>
+													<th>Unexecuted Qty</th>
+													<th>Current Price</th>
+													<th>Exchange</th>
+													<th>Time</th>
+													<th>Action</th>
+												</tr>
+											</thead>
+											<tbody>
+								`;
+								
+								for (const order of orders) {
+									const stkCd = order.stk_cd || '';
+									const stkCdClean = stkCd && stkCd[0] === 'A' ? stkCd.substring(1) : stkCd;
+									const ordQty = order.ord_qty ? parseInt(order.ord_qty.replace(/^0+/, '') || '0') : 0;
+									const osoQty = order.oso_qty ? parseInt(order.oso_qty.replace(/^0+/, '') || '0') : 0;
+									// Parse ord_pric field - handle zero-padded strings
+									let ordPric = 0;
+									if (order.ord_pric) {
+										const ordPricStr = order.ord_pric.toString().replace(/^0+/, '') || '0';
+										ordPric = parseInt(ordPricStr) || 0;
+									}
+									const curPrc = order.cur_prc ? parseInt(order.cur_prc.replace(/^0+/, '') || '0') : 0;
+									const ordNo = order.ord_no || '';
+									const stexTp = order.stex_tp || '0';
+									
+									htmlContent += `
+										<tr>
+											<td><strong>${stkCdClean}</strong></td>
+											<td>${order.stk_nm || '-'}</td>
+											<td>${order.io_tp_nm || '-'}</td>
+											<td>${ordQty.toLocaleString()}</td>
+											<td>${ordPric > 0 ? ordPric.toLocaleString() : '-'}</td>
+											<td><strong>${osoQty.toLocaleString()}</strong></td>
+											<td>${curPrc > 0 ? curPrc.toLocaleString() : '-'}</td>
+											<td>${order.stex_tp_txt || order.stex_tp || '-'}</td>
+											<td>${order.tm || '-'}</td>
+											<td>
+												<button class="btn-cancel" 
+													data-acct="${order.ACCT || acctNo}"
+													data-stex-tp="${stexTp}"
+													data-ord-no="${ordNo}"
+													data-stk-cd="${stkCd}"
+													onclick="cancelOrder(this)">
+													Cancel
+												</button>
+											</td>
+										</tr>
+									`;
+								}
+								
+								htmlContent += `
+											</tbody>
+										</table>
+									</div>
+								`;
+							}
 						}
 						
 						micheContainer.innerHTML = htmlContent;
 					} else {
+						// Show empty table even on API error
 						const micheSection = document.getElementById('miche-section');
-						micheSection.style.display = 'none';
+						const micheContainer = document.getElementById('miche-container');
+						micheSection.style.display = 'block';
+						micheContainer.innerHTML = `
+							<div class="account-group">
+								<div class="account-group-header">
+									<h2>Unexecuted Orders</h2>
+								</div>
+								<table>
+									<thead>
+										<tr>
+											<th>Stock Code</th>
+											<th>Stock Name</th>
+											<th>Order Type</th>
+											<th>Order Qty</th>
+											<th>Order Price</th>
+											<th>Unexecuted Qty</th>
+											<th>Current Price</th>
+											<th>Exchange</th>
+											<th>Time</th>
+											<th>Action</th>
+										</tr>
+									</thead>
+									<tbody>
+										<tr>
+											<td colspan="10" style="text-align: center; padding: 20px; color: #7f8c8d;">
+												Error loading unexecuted orders
+											</td>
+										</tr>
+									</tbody>
+								</table>
+							</div>
+						`;
 					}
 				})
 				.catch(error => {
 					console.error('Error updating miche:', error);
 					const micheSection = document.getElementById('miche-section');
-					micheSection.style.display = 'none';
+					const micheContainer = document.getElementById('miche-container');
+					micheSection.style.display = 'block';
+					micheContainer.innerHTML = `
+						<div class="account-group">
+							<div class="account-group-header">
+								<h2>Unexecuted Orders</h2>
+							</div>
+							<table>
+								<thead>
+									<tr>
+										<th>Stock Code</th>
+										<th>Stock Name</th>
+										<th>Order Type</th>
+										<th>Order Qty</th>
+										<th>Order Price</th>
+										<th>Unexecuted Qty</th>
+										<th>Current Price</th>
+										<th>Exchange</th>
+										<th>Time</th>
+										<th>Action</th>
+									</tr>
+								</thead>
+								<tbody>
+									<tr>
+										<td colspan="10" style="text-align: center; padding: 20px; color: #7f8c8d;">
+											Error loading unexecuted orders
+										</td>
+									</tr>
+								</tbody>
+							</table>
+						</div>
+					`;
 				});
 		}
 		
