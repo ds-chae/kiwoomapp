@@ -1673,23 +1673,29 @@ async def root(token: str = Cookie(None)):
 		}
 		
 		function updateTable() {
-			fetch('./api/account-data')
-				.then(response => response.json())
-				.then(result => {
-					if (result.status === 'success') {
+			// Fetch both account data and auto sell status in parallel
+			Promise.all([
+				fetch('./api/account-data').then(r => r.json()),
+				fetch('./api/auto-sell').then(r => r.json())
+			])
+				.then(([accountResult, autoSellResult]) => {
+					if (accountResult.status === 'success') {
 						// Update headline with timestamp and status
-						if (result.timestamp) {
+						if (accountResult.timestamp) {
 							const headlineTime = document.getElementById('headline-time');
 							if (headlineTime) {
-								let headlineText = '📊 Account ' + result.timestamp;
-								if (result.current_status) {
-									headlineText += ' (' + result.current_status + ')';
+								let headlineText = '📊 Account ' + accountResult.timestamp;
+								if (accountResult.current_status) {
+									headlineText += ' (' + accountResult.current_status + ')';
 								}
 								headlineTime.textContent = headlineText;
 							}
 						}
-						const data = result.data || [];
+						const data = accountResult.data || [];
 						const tableContainer = document.getElementById('table-container');
+						
+						// Get auto sell status data
+						const autoSellData = (autoSellResult.status === 'success' && autoSellResult.data) ? autoSellResult.data : {};
 						
 						// Group data by account on the frontend
 						const accountGroups = {};
@@ -1723,12 +1729,17 @@ async def root(token: str = Cookie(None)):
 							const stocks = accountGroups[acctNo] || [];
 							if (stocks.length === 0) continue;
 							
+							// Get auto sell status for this account
+							const isAutoSellEnabled = autoSellData[acctNo] === true;
+							const autoSellText = isAutoSellEnabled ? 'Auto Sell: ON' : 'Auto Sell: OFF';
+							const autoSellClass = isAutoSellEnabled ? 'account-auto-sell-btn enabled' : 'account-auto-sell-btn disabled';
+							
 							htmlContent += `
 								<div class="account-group">
 									<div class="account-group-header">
 										<h2>Account: ${acctNo}</h2>
-										<button class="account-auto-sell-btn" id="btn-auto-sell-${acctNo}" onclick="toggleAccountAutoSell('${acctNo}', this)" data-account="${acctNo}">
-											Auto Sell: OFF
+										<button class="${autoSellClass}" id="btn-auto-sell-${acctNo}" onclick="toggleAccountAutoSell('${acctNo}', this)" data-account="${acctNo}">
+											${autoSellText}
 										</button>
 									</div>
 									<table>
@@ -1770,8 +1781,6 @@ async def root(token: str = Cookie(None)):
 						}
 						
 						tableContainer.innerHTML = htmlContent;
-						// Load auto sell status for each account
-						loadAccountAutoSellStatus();
 					}
 				})
 				.catch(error => {
