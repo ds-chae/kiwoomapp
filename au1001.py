@@ -73,6 +73,10 @@ def get_token(KIWOOM_AK, KIWOOM_SK):
     token = fn_au10001(data=params)
     return token
 
+def get_one_token():
+    token = get_token(KIWOOM_AK, KIWOOM_SK)
+    return token
+
 # 실행 구간
 if __name__ == '__main__':
     token = get_token(KIWOOM_AK, KIWOOM_SK)

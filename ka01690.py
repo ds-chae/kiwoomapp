@@ -31,6 +31,7 @@ TOKEN_EXPIRY_HOURS = 24
 
 # In-memory token storage (in production, use Redis or database)
 active_tokens = {}
+updown_list = {}
 
 
 # Get server IP address last digit for title
@@ -254,6 +255,38 @@ def is_between(now, start, end):
 				},
 """
 
+from ka10007 import fn_ka10007
+
+def get_upper_limit(MY_ACCESS_TOKEN, stk_cd):
+	if not stk_cd in updown_list:
+		params = {
+			'stk_cd': stk_cd,  # 종목코드 거래소별 종목코드 (KRX:039490,NXT:039490_NX,SOR:039490_AL)
+		}
+		try:
+			response = fn_ka10007(token=MY_ACCESS_TOKEN, data=params)
+			print('calling fn_ka1007 in get_upper_limit succeeded')
+			if stk_cd == response['stk_cd']:
+				updown_list[stk_cd] = response
+			else:
+				print('calling fn_ka1007 in get_upper_limit mismatch')
+				print('stk_cd in response is {}'.format(response['stk_cd']))
+		except Exception as ex:
+			print('calling fn_ka1007 in get_upper_limit failed')
+			print(ex)
+			return
+	stk_data = updown_list[stk_cd]
+	try:
+		uplimit = stk_data['upl_pric']
+		return int(uplimit)
+	except:
+		return 0
+
+
+
+
+
+
+
 def call_sell_order(MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond):
 	global current_status
 
@@ -280,22 +313,26 @@ def call_sell_order(MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond):
 
 	if ord_uv == 'None': # price is not calculated
 		return
-
-	current_status = 'call sell_order()'
-	trde_tp = '0'  # 매매구분 0:보통 , 3:시장가 , 5:조건부지정가 , 81:장마감후시간외 , 61:장시작전시간외, 62:시간외단일가 , 6:최유리지정가 , 7:최우선지정가 , 10:보통(IOC) , 13:시장가(IOC) , 16:최유리(IOC) , 20:보통(FOK) , 23:시장가(FOK) , 26:최유리(FOK) , 28:스톱지정가,29:중간가,30:중간가(IOC),31:중간가(FOK)
-	ret_status = sell_order(MY_ACCESS_TOKEN, dmst_stex_tp=market, stk_cd=stk_cd,
-	                        ord_qty=trde_able_qty, ord_uv=ord_uv, trde_tp=trde_tp, cond_uv='')
-	print('sell_order_result')
-	print(ret_status)
-	if isinstance(ret_status, dict):
-		rcde = ret_status.get('return_code')
-		rmsg = ret_status.get('return_msg', '')
-		if rmsg and len(rmsg) > 13:
-			code = rmsg[7:13]
-			if code == '507615':
-				not_nxt_cd[stk_cd] = True
-		print(rcde)
-	print('call_sell_order:{}'.format(stk_nm))
+	upperlimit = get_upper_limit(stk_cd)
+	if int(ord_uv) > upperlimit :
+		print('{} {} {} exceed upper limit'.format(stk_cd, stk_nm, ord_uv))
+		pass
+	else:
+		working_status = 'call sell_order()'
+		trde_tp = '0'  # 매매구분 0:보통 , 3:시장가 , 5:조건부지정가 , 81:장마감후시간외 , 61:장시작전시간외, 62:시간외단일가 , 6:최유리지정가 , 7:최우선지정가 , 10:보통(IOC) , 13:시장가(IOC) , 16:최유리(IOC) , 20:보통(FOK) , 23:시장가(FOK) , 26:최유리(FOK) , 28:스톱지정가,29:중간가,30:중간가(IOC),31:중간가(FOK)
+		ret_status = sell_order(MY_ACCESS_TOKEN, dmst_stex_tp=market, stk_cd=stk_cd,
+		                        ord_qty=trde_able_qty, ord_uv=ord_uv, trde_tp=trde_tp, cond_uv='')
+		print('sell_order_result')
+		print(ret_status)
+		if isinstance(ret_status, dict):
+			rcde = ret_status.get('return_code')
+			rmsg = ret_status.get('return_msg', '')
+			if rmsg and len(rmsg) > 13:
+				code = rmsg[7:13]
+				if code == '507615':
+					not_nxt_cd[stk_cd] = True
+			print(rcde)
+		print('call_sell_order:{}'.format(stk_nm))
 
 
 def sell_jango(now, jango, market):
@@ -325,10 +362,10 @@ def sell_jango(now, jango, market):
 					continue
 
 				sell_cond = sell_prices[stk_cd]
-				current_status = 'before call_sell_order {} {} {}'.format(market, stk_cd, stk_nm)
+				working_status = 'before call_sell_order {} {} {}'.format(market, stk_cd, stk_nm)
 				call_sell_order(MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond)
 		except Exception as ex:
-			print('at 314 {}'.format(current_status))
+			print('at 314 {}'.format(working_status))
 			print(ex)
 			exit()
 	pass
@@ -494,7 +531,7 @@ nxt_start_time = time(7, 59)  # 07:00
 nxt_end_time = time(8, 49)  # 07:00
 krx_start_time = time(8,55)
 krx_end_time = time(15,30)
-new_day = True
+new_day = False
 nxt_cancelled = False
 krx_first = False
 not_nxt_cd = {}
@@ -510,6 +547,7 @@ def cur_date():
 	return formatted_date
 
 current_status = ''
+working_status = ''
 
 def daily_work(now):
 	global new_day, krx_first, current_status
@@ -542,6 +580,7 @@ def set_new_day():
 
 	if new_day:
 		return
+	print('Setting new_day=True, clearing variables.')
 	now = datetime.now().time()
 	print('{} {} Setting new day=True'.format(cur_date(), now))
 	new_day = True
@@ -551,6 +590,7 @@ def set_new_day():
 	ktx_first = False
 	current_status = 'NEW'
 	not_nxt_cd = {}
+	updown_list = {}
 
 SELL_PRICES_FILE = 'sell_price_rate.json'
 sell_prices = {}
@@ -733,7 +773,7 @@ def periodic_timer_handler():
 			new_day = False
 			print(ex)
 			print('{} {} Setting new_day False due to Exception.'.format(cur_date(), now))
-			print('currrent status={}'.format(current_status))
+			print('currrent status={}'.format(working_status))
 
 def format_account_data():
 	"""Format account data for display in UI"""
@@ -2565,4 +2605,5 @@ async def cancel_nxt_trade_endpoint():
 
 # 실행 구간
 if __name__ == '__main__':
+	set_new_day()
 	uvicorn.run(app, host="0.0.0.0", port=8006, access_log=False)
