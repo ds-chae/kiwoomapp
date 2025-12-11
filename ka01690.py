@@ -258,6 +258,7 @@ def is_between(now, start, end):
 from ka10007 import fn_ka10007
 
 def get_upper_limit(MY_ACCESS_TOKEN, stk_cd):
+	global updown_list
 	if not stk_cd in updown_list:
 		params = {
 			'stk_cd': stk_cd,  # 종목코드 거래소별 종목코드 (KRX:039490,NXT:039490_NX,SOR:039490_AL)
@@ -577,6 +578,7 @@ def daily_work(now):
 
 def set_new_day():
 	global new_day, waiting_shown, no_working_shown, nxt_cancelled, ktx_first, current_status
+	global updown_list
 
 	if new_day:
 		return
