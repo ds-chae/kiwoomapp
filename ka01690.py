@@ -1382,6 +1382,16 @@ async def root(token: str = Cookie(None)):
 				background: #95a5a6;
 				cursor: not-allowed;
 			}
+			.miche-row:hover {
+				background-color: #f5f5f5;
+			}
+			.miche-row.selected {
+				background-color: #e3f2fd;
+				border-left: 4px solid #667eea;
+			}
+			.miche-row.selected:hover {
+				background-color: #bbdefb;
+			}
 		</style>
 	</head>
 	<body>
@@ -1579,6 +1589,71 @@ async def root(token: str = Cookie(None)):
 						}
 					}
 				}
+			}
+			
+			// Scroll to update section
+			document.getElementById('update-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
+		}
+		
+		function selectMicheRow(rowElement) {
+			// Remove selected class from all miche rows
+			document.querySelectorAll('.miche-row').forEach(tr => {
+				tr.classList.remove('selected');
+			});
+			
+			// Remove selected class from all holdings rows
+			document.querySelectorAll('tbody tr:not(.miche-row)').forEach(tr => {
+				tr.classList.remove('selected');
+			});
+			
+			// Add selected class to clicked row
+			rowElement.classList.add('selected');
+			
+			// Get stock code, stock name, and order price from row
+			const stockCode = rowElement.getAttribute('data-stock-code');
+			const stockName = rowElement.getAttribute('data-stock-name') || '';
+			const orderPrice = rowElement.getAttribute('data-order-price') || '';
+			
+			// Fill stock name (read-only)
+			document.getElementById('stock-name-display').value = stockName;
+			
+			// Fill stock code input
+			document.getElementById('stock-code-input').value = stockCode;
+			
+			// Preassign order price if available, otherwise check for preset price/rate
+			if (orderPrice && orderPrice !== '0' && orderPrice !== '') {
+				// Use order price from the miche table
+				document.getElementById('sell-price-input').value = orderPrice;
+				document.getElementById('profit-rate-input').value = '';
+			} else {
+				// No order price, check if there's a preset price/rate for this stock code
+				fetch('./api/sell-prices')
+					.then(response => response.json())
+					.then(result => {
+						if (result.status === 'success' && result.data && result.data[stockCode]) {
+							const sellCond = result.data[stockCode];
+							if (sellCond.price) {
+								document.getElementById('sell-price-input').value = sellCond.price;
+								document.getElementById('profit-rate-input').value = '';
+							} else if (sellCond.rate !== undefined && sellCond.rate !== null) {
+								document.getElementById('profit-rate-input').value = (parseFloat(sellCond.rate) * 100).toFixed(2);
+								document.getElementById('sell-price-input').value = '';
+							} else {
+								document.getElementById('sell-price-input').value = '';
+								document.getElementById('profit-rate-input').value = '';
+							}
+						} else {
+							// No preset, clear inputs
+							document.getElementById('sell-price-input').value = '';
+							document.getElementById('profit-rate-input').value = '';
+						}
+					})
+					.catch(error => {
+						console.error('Error fetching sell prices:', error);
+						// On error, clear inputs
+						document.getElementById('sell-price-input').value = '';
+						document.getElementById('profit-rate-input').value = '';
+					});
 			}
 			
 			// Scroll to update section
@@ -1960,7 +2035,12 @@ async def root(token: str = Cookie(None)):
 									const stexTp = order.stex_tp || '0';
 									
 									htmlContent += `
-										<tr>
+										<tr class="miche-row" 
+											data-stock-code="${stkCdClean}" 
+											data-stock-name="${order.stk_nm || ''}" 
+											data-order-price="${ordPric || ''}"
+											onclick="selectMicheRow(this)"
+											style="cursor: pointer;">
 											<td><strong>${stkCdClean}</strong></td>
 											<td>${order.stk_nm || '-'}</td>
 											<td>${order.io_tp_nm || '-'}</td>
@@ -1976,7 +2056,7 @@ async def root(token: str = Cookie(None)):
 													data-stex-tp="${stexTp}"
 													data-ord-no="${ordNo}"
 													data-stk-cd="${stkCd}"
-													onclick="cancelOrder(this)">
+													onclick="event.stopPropagation(); cancelOrder(this)">
 													Cancel
 												</button>
 											</td>
