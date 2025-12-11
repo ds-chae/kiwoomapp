@@ -255,6 +255,8 @@ def is_between(now, start, end):
 """
 
 def call_sell_order(MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond):
+	global current_status
+
 	trde_able_qty = indv.get("trde_able_qty", "0")
 	rmnd_qty = indv.get('rmnd_qty', "0")
 	pur_pric_str = indv.get('pur_pric', '0')
@@ -279,6 +281,7 @@ def call_sell_order(MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond):
 	if ord_uv == 'None': # price is not calculated
 		return
 
+	current_status = 'call sell_order()'
 	trde_tp = '0'  # 매매구분 0:보통 , 3:시장가 , 5:조건부지정가 , 81:장마감후시간외 , 61:장시작전시간외, 62:시간외단일가 , 6:최유리지정가 , 7:최우선지정가 , 10:보통(IOC) , 13:시장가(IOC) , 16:최유리(IOC) , 20:보통(FOK) , 23:시장가(FOK) , 26:최유리(FOK) , 28:스톱지정가,29:중간가,30:중간가(IOC),31:중간가(FOK)
 	ret_status = sell_order(MY_ACCESS_TOKEN, dmst_stex_tp=market, stk_cd=stk_cd,
 	                        ord_qty=trde_able_qty, ord_uv=ord_uv, trde_tp=trde_tp, cond_uv='')
@@ -296,7 +299,7 @@ def call_sell_order(MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond):
 
 
 def sell_jango(now, jango, market):
-	global auto_sell_enabled
+	global auto_sell_enabled, current_status
 	if not auto_sell_enabled:
 		return
 
@@ -319,9 +322,10 @@ def sell_jango(now, jango, market):
 					continue
 
 				sell_cond = sell_prices[stk_cd]
+				current_status = 'before call_sell_order {} {} {}'.format(market, stk_cd, stk_nm)
 				call_sell_order(MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond)
 		except Exception as ex:
-			print('at 314')
+			print('at 314 {}'.format(current_status))
 			print(ex)
 			exit()
 	pass
@@ -700,6 +704,7 @@ def periodic_timer_handler():
 			new_day = False
 			print(ex)
 			print('{} {} Setting new_day False due to Exception.'.format(cur_date(), now))
+			print('currrent status={}'.format(current_status))
 
 def format_account_data():
 	"""Format account data for display in UI"""
