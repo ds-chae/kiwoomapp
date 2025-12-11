@@ -556,11 +556,12 @@ SELL_PRICES_FILE = 'sell_price_rate.json'
 sell_prices = {}
 
 # Global flag for auto sell - dictionary keyed by account
+AUTO_SELL_FILE = 'auto_sell_enabled.json'
 auto_sell_enabled = {}
 
 def load_dictionaries_from_json():
-	"""Load sell_prices and profit_rate from JSON files"""
-	global sell_prices
+	"""Load sell_prices and auto_sell_enabled from JSON files"""
+	global sell_prices, auto_sell_enabled
 
 	# Load sell_prices
 	if os.path.exists(SELL_PRICES_FILE):
@@ -574,6 +575,19 @@ def load_dictionaries_from_json():
 	else:
 		sell_prices = {}
 		print(f"Created new sell_prices dictionary")
+	
+	# Load auto_sell_enabled
+	if os.path.exists(AUTO_SELL_FILE):
+		try:
+			with open(AUTO_SELL_FILE, 'r', encoding='utf-8') as f:
+				auto_sell_enabled = json.load(f)
+			print(f"Loaded auto_sell_enabled from {AUTO_SELL_FILE}: {auto_sell_enabled}")
+		except Exception as e:
+			print(f"Error loading auto_sell_enabled: {e}")
+			auto_sell_enabled = {}
+	else:
+		auto_sell_enabled = {}
+		print(f"Created new auto_sell_enabled dictionary")
 
 def save_dictionaries_to_json():
 	"""Save sell_prices to JSON file"""
@@ -585,6 +599,18 @@ def save_dictionaries_to_json():
 		return True
 	except Exception as e:
 		print(f"Error saving sell_prices: {e}")
+		return False
+
+def save_auto_sell_to_json():
+	"""Save auto_sell_enabled to JSON file"""
+	global auto_sell_enabled
+	try:
+		with open(AUTO_SELL_FILE, 'w', encoding='utf-8') as f:
+			json.dump(auto_sell_enabled, f, indent=2, ensure_ascii=False)
+		print(f"Saved auto_sell_enabled to {AUTO_SELL_FILE}")
+		return True
+	except Exception as e:
+		print(f"Error saving auto_sell_enabled: {e}")
 		return False
 
 
@@ -2496,7 +2522,11 @@ async def set_auto_sell_api(request: dict, proxy_path: str = "", token: str = Co
 			return {"status": "error", "message": "Missing 'enabled' parameter"}
 		
 		auto_sell_enabled[account] = bool(enabled)
-		return {"status": "success", "enabled": auto_sell_enabled[account], "message": f"Auto sell {'enabled' if auto_sell_enabled[account] else 'disabled'} for account {account}"}
+		# Save to file
+		if save_auto_sell_to_json():
+			return {"status": "success", "enabled": auto_sell_enabled[account], "message": f"Auto sell {'enabled' if auto_sell_enabled[account] else 'disabled'} for account {account}"}
+		else:
+			return {"status": "error", "message": "Failed to save auto sell status to file"}
 	except Exception as e:
 		return {"status": "error", "message": str(e)}
 
