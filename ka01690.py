@@ -313,9 +313,9 @@ def call_sell_order(MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond):
 
 	if ord_uv == 'None': # price is not calculated
 		return
-	upperlimit = get_upper_limit(stk_cd)
+	upperlimit = get_upper_limit(MY_ACCESS_TOKEN, stk_cd)
 	if int(ord_uv) > upperlimit :
-		print('{} {} {} exceed upper limit'.format(stk_cd, stk_nm, ord_uv))
+		print('{} {} {} exceed upper limit {}'.format(stk_cd, stk_nm, ord_uv, upperlimit))
 		pass
 	else:
 		working_status = 'call sell_order()'
