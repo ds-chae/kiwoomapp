@@ -300,11 +300,14 @@ def call_sell_order(MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond):
 
 def sell_jango(now, jango, market):
 	global auto_sell_enabled, current_status
-	if not auto_sell_enabled:
-		return
 
 	for j in jango:
 		try:
+			ACCT = j.get('ACCT', '')
+			# Check auto sell enabled for this specific account
+			if ACCT not in auto_sell_enabled or not auto_sell_enabled[ACCT]:
+				continue
+			
 			MY_ACCESS_TOKEN = j.get('MY_ACCESS_TOKEN')
 
 			acnt_evlt_remn_indv_tot = j.get("acnt_evlt_remn_indv_tot", [])
@@ -552,8 +555,8 @@ def set_new_day():
 SELL_PRICES_FILE = 'sell_price_rate.json'
 sell_prices = {}
 
-# Global flag for auto sell
-auto_sell_enabled = True
+# Global flag for auto sell - dictionary keyed by account
+auto_sell_enabled = {}
 
 def load_dictionaries_from_json():
 	"""Load sell_prices and profit_rate from JSON files"""
@@ -1288,24 +1291,6 @@ async def root(token: str = Cookie(None)):
 			.btn-logout:hover {
 				opacity: 0.9;
 			}
-			.btn-auto-sell {
-				background: #27ae60;
-				color: white;
-				border: none;
-				padding: 10px 20px;
-				border-radius: 4px;
-				cursor: pointer;
-				font-size: 14px;
-				font-weight: 600;
-				margin-left: auto;
-				margin-right: 10px;
-			}
-			.btn-auto-sell:hover {
-				opacity: 0.9;
-			}
-			.btn-auto-sell.disabled {
-				background: #95a5a6;
-			}
 			.update-form-header {
 				display: flex;
 				justify-content: space-between;
@@ -1347,10 +1332,34 @@ async def root(token: str = Cookie(None)):
 				font-size: 1.3em;
 				font-weight: 600;
 				margin-bottom: 0;
+				display: flex;
+				justify-content: space-between;
+				align-items: center;
 			}
 			.account-group-header h2 {
 				margin: 0;
 				font-size: 1.2em;
+			}
+			.account-auto-sell-btn {
+				background: rgba(255, 255, 255, 0.2);
+				color: white;
+				border: 1px solid rgba(255, 255, 255, 0.3);
+				padding: 6px 15px;
+				border-radius: 4px;
+				cursor: pointer;
+				font-size: 12px;
+				font-weight: 600;
+				transition: background-color 0.2s;
+			}
+			.account-auto-sell-btn:hover {
+				background: rgba(255, 255, 255, 0.3);
+			}
+			.account-auto-sell-btn.enabled {
+				background: #27ae60;
+				border-color: #27ae60;
+			}
+			.account-auto-sell-btn.disabled {
+				background: rgba(255, 255, 255, 0.1);
 			}
 			.account-group table {
 				border-radius: 0 0 8px 8px;
@@ -1471,7 +1480,6 @@ async def root(token: str = Cookie(None)):
 							<button class="btn-update" onclick="updateSellPrice()">Update</button>
 							<button class="btn-delete" onclick="deleteSellPrice()">Delete</button>
 						</div>
-						<button class="btn-auto-sell" id="btn-auto-sell" onclick="toggleAutoSell()">Auto Sell: OFF</button>
 						<button class="btn-logout" onclick="logout()">🚪 Logout</button>
 					</div>
 				</div>
@@ -1720,6 +1728,9 @@ async def root(token: str = Cookie(None)):
 								<div class="account-group">
 									<div class="account-group-header">
 										<h2>Account: ${acctNo}</h2>
+										<button class="account-auto-sell-btn" id="btn-auto-sell-${acctNo}" onclick="toggleAccountAutoSell('${acctNo}', this)" data-account="${acctNo}">
+											Auto Sell: OFF
+										</button>
 									</div>
 									<table>
 										<thead>
@@ -1760,11 +1771,75 @@ async def root(token: str = Cookie(None)):
 						}
 						
 						tableContainer.innerHTML = htmlContent;
+						// Load auto sell status for each account
+						loadAccountAutoSellStatus();
 					}
 				})
 				.catch(error => {
 					console.error('Error updating table:', error);
 				});
+		}
+		
+		function loadAccountAutoSellStatus() {
+			fetch('./api/auto-sell')
+				.then(response => response.json())
+				.then(result => {
+					if (result.status === 'success' && result.data) {
+						const autoSellData = result.data;
+						// Update each account button
+						for (const account in autoSellData) {
+							const btn = document.getElementById('btn-auto-sell-' + account);
+							if (btn) {
+								updateAccountAutoSellButton(account, autoSellData[account]);
+							}
+						}
+					}
+				})
+				.catch(error => {
+					console.error('Error loading account auto sell status:', error);
+				});
+		}
+		
+		function updateAccountAutoSellButton(account, enabled) {
+			const btn = document.getElementById('btn-auto-sell-' + account);
+			if (btn) {
+				if (enabled) {
+					btn.textContent = 'Auto Sell: ON';
+					btn.classList.add('enabled');
+					btn.classList.remove('disabled');
+				} else {
+					btn.textContent = 'Auto Sell: OFF';
+					btn.classList.add('disabled');
+					btn.classList.remove('enabled');
+				}
+			}
+		}
+		
+		function toggleAccountAutoSell(account, buttonElement) {
+			const btn = document.getElementById('btn-auto-sell-' + account);
+			const currentState = btn && btn.classList.contains('enabled');
+			const newState = !currentState;
+			
+			fetch('./api/auto-sell', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({ account: account, enabled: newState })
+			})
+			.then(response => response.json())
+			.then(result => {
+				if (result.status === 'success') {
+					updateAccountAutoSellButton(account, result.enabled);
+					showMessage(result.message || `Auto sell ${result.enabled ? 'enabled' : 'disabled'} for account ${account}`, 'success');
+				} else {
+					showMessage('Error: ' + (result.message || 'Failed to update auto sell status'), 'error');
+				}
+			})
+			.catch(error => {
+				console.error('Error toggling account auto sell:', error);
+				showMessage('Error toggling auto sell: ' + error.message, 'error');
+			});
 		}
 		
 		function updateSellPrice() {
@@ -2204,60 +2279,6 @@ async def root(token: str = Cookie(None)):
 			});
 		}
 		
-		function loadAutoSellStatus() {
-			fetch('./api/auto-sell')
-				.then(response => response.json())
-				.then(result => {
-					if (result.status === 'success') {
-						updateAutoSellButton(result.enabled);
-					}
-				})
-				.catch(error => {
-					console.error('Error loading auto sell status:', error);
-				});
-		}
-		
-		function updateAutoSellButton(enabled) {
-			const btn = document.getElementById('btn-auto-sell');
-			if (btn) {
-				if (enabled) {
-					btn.textContent = 'Auto Sell: ON';
-					btn.classList.remove('disabled');
-					btn.style.background = '#27ae60';
-				} else {
-					btn.textContent = 'Auto Sell: OFF';
-					btn.classList.add('disabled');
-					btn.style.background = '#95a5a6';
-				}
-			}
-		}
-		
-		function toggleAutoSell() {
-			const btn = document.getElementById('btn-auto-sell');
-			const currentState = !btn.classList.contains('disabled');
-			const newState = !currentState;
-			
-			fetch('./api/auto-sell', {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-				},
-				body: JSON.stringify({ enabled: newState })
-			})
-			.then(response => response.json())
-			.then(result => {
-				if (result.status === 'success') {
-					updateAutoSellButton(result.enabled);
-					showMessage(result.message || `Auto sell ${result.enabled ? 'enabled' : 'disabled'}`, 'success');
-				} else {
-					showMessage('Error: ' + (result.message || 'Failed to update auto sell status'), 'error');
-				}
-			})
-			.catch(error => {
-				console.error('Error toggling auto sell:', error);
-				showMessage('Error toggling auto sell: ' + error.message, 'error');
-			});
-		}
 		
 		// Auto-update every 1 second
 		setInterval(function() {
@@ -2268,7 +2289,6 @@ async def root(token: str = Cookie(None)):
 		// Initial update after page load
 		updateTable();
 		updateMiche();
-		loadAutoSellStatus();
 		</script>
 	</body>
 	</html>
@@ -2432,7 +2452,7 @@ async def update_sell_prices_api(request: dict, proxy_path: str = "", token: str
 @app.get("/api/auto-sell")
 @app.get("/stock/api/auto-sell")
 async def get_auto_sell_api(proxy_path: str = "", token: str = Cookie(None)):
-	"""API endpoint to get auto sell flag status"""
+	"""API endpoint to get auto sell flag status for all accounts"""
 	# Check authentication
 	if not token or not verify_token(token):
 		raise HTTPException(
@@ -2440,12 +2460,12 @@ async def get_auto_sell_api(proxy_path: str = "", token: str = Cookie(None)):
 			detail="Not authenticated"
 		)
 	global auto_sell_enabled
-	return {"status": "success", "enabled": auto_sell_enabled}
+	return {"status": "success", "data": auto_sell_enabled}
 
 @app.post("/api/auto-sell")
 @app.post("/stock/api/auto-sell")
 async def set_auto_sell_api(request: dict, proxy_path: str = "", token: str = Cookie(None)):
-	"""API endpoint to set auto sell flag"""
+	"""API endpoint to set auto sell flag for a specific account"""
 	# Check authentication
 	if not token or not verify_token(token):
 		raise HTTPException(
@@ -2454,12 +2474,16 @@ async def set_auto_sell_api(request: dict, proxy_path: str = "", token: str = Co
 		)
 	global auto_sell_enabled
 	try:
+		account = request.get('account')
 		enabled = request.get('enabled')
+		
+		if account is None:
+			return {"status": "error", "message": "Missing 'account' parameter"}
 		if enabled is None:
 			return {"status": "error", "message": "Missing 'enabled' parameter"}
 		
-		auto_sell_enabled = bool(enabled)
-		return {"status": "success", "enabled": auto_sell_enabled, "message": f"Auto sell {'enabled' if auto_sell_enabled else 'disabled'}"}
+		auto_sell_enabled[account] = bool(enabled)
+		return {"status": "success", "enabled": auto_sell_enabled[account], "message": f"Auto sell {'enabled' if auto_sell_enabled[account] else 'disabled'} for account {account}"}
 	except Exception as e:
 		return {"status": "error", "message": str(e)}
 
