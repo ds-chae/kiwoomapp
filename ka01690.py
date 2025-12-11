@@ -1434,9 +1434,8 @@ async def root(token: str = Cookie(None)):
 									<th>Stock Name</th>
 									<th>Order Type</th>
 									<th>Order Qty</th>
-									<th>Order Price</th>
+									<th>Order / Current</th>
 									<th>Unexecuted Qty</th>
-									<th>Current Price</th>
 									<th>Exchange</th>
 									<th>Time</th>
 									<th>Action</th>
@@ -1444,7 +1443,7 @@ async def root(token: str = Cookie(None)):
 							</thead>
 							<tbody>
 								<tr>
-									<td colspan="10" style="text-align: center; padding: 20px; color: #7f8c8d;">
+									<td colspan="9" style="text-align: center; padding: 20px; color: #7f8c8d;">
 										Loading...
 									</td>
 								</tr>
@@ -2051,9 +2050,8 @@ async def root(token: str = Cookie(None)):
 												<th>Stock Name</th>
 												<th>Order Type</th>
 												<th>Order Qty</th>
-												<th>Order Price</th>
+												<th>Order / Current</th>
 												<th>Unexecuted Qty</th>
-												<th>Current Price</th>
 												<th>Exchange</th>
 												<th>Time</th>
 												<th>Action</th>
@@ -2061,7 +2059,7 @@ async def root(token: str = Cookie(None)):
 										</thead>
 										<tbody>
 											<tr>
-												<td colspan="10" style="text-align: center; padding: 20px; color: #7f8c8d;">
+												<td colspan="9" style="text-align: center; padding: 20px; color: #7f8c8d;">
 													No unexecuted orders available
 												</td>
 											</tr>
@@ -2088,9 +2086,8 @@ async def root(token: str = Cookie(None)):
 													<th>Stock Name</th>
 													<th>Order Type</th>
 													<th>Order Qty</th>
-													<th>Order Price</th>
+													<th>Order / Current</th>
 													<th>Unexecuted Qty</th>
-													<th>Current Price</th>
 													<th>Exchange</th>
 													<th>Time</th>
 													<th>Action</th>
@@ -2114,6 +2111,16 @@ async def root(token: str = Cookie(None)):
 									const ordNo = order.ord_no || '';
 									const stexTp = order.stex_tp || '0';
 									
+									// Format order price / current price
+									let priceDisplay = '-';
+									if (ordPric > 0 && curPrc > 0) {
+										priceDisplay = ordPric.toLocaleString() + ' / ' + curPrc.toLocaleString();
+									} else if (ordPric > 0) {
+										priceDisplay = ordPric.toLocaleString() + ' / -';
+									} else if (curPrc > 0) {
+										priceDisplay = '- / ' + curPrc.toLocaleString();
+									}
+									
 									htmlContent += `
 										<tr class="miche-row" 
 											data-stock-code="${stkCdClean}" 
@@ -2125,9 +2132,8 @@ async def root(token: str = Cookie(None)):
 											<td>${order.stk_nm || '-'}</td>
 											<td>${order.io_tp_nm || '-'}</td>
 											<td>${ordQty.toLocaleString()}</td>
-											<td>${ordPric > 0 ? ordPric.toLocaleString() : '-'}</td>
+											<td>${priceDisplay}</td>
 											<td><strong>${osoQty.toLocaleString()}</strong></td>
-											<td>${curPrc > 0 ? curPrc.toLocaleString() : '-'}</td>
 											<td>${order.stex_tp_txt || order.stex_tp || '-'}</td>
 											<td>${order.tm || '-'}</td>
 											<td>
@@ -2165,25 +2171,24 @@ async def root(token: str = Cookie(None)):
 								</div>
 								<table>
 									<thead>
-										<tr>
-											<th>Stock Code</th>
-											<th>Stock Name</th>
-											<th>Order Type</th>
-											<th>Order Qty</th>
-											<th>Order Price</th>
-											<th>Unexecuted Qty</th>
-											<th>Current Price</th>
-											<th>Exchange</th>
-											<th>Time</th>
-											<th>Action</th>
-										</tr>
-									</thead>
-									<tbody>
-										<tr>
-											<td colspan="10" style="text-align: center; padding: 20px; color: #7f8c8d;">
-												Error loading unexecuted orders
-											</td>
-										</tr>
+									<tr>
+										<th>Stock Code</th>
+										<th>Stock Name</th>
+										<th>Order Type</th>
+										<th>Order Qty</th>
+										<th>Order / Current</th>
+										<th>Unexecuted Qty</th>
+										<th>Exchange</th>
+										<th>Time</th>
+										<th>Action</th>
+									</tr>
+								</thead>
+								<tbody>
+									<tr>
+										<td colspan="9" style="text-align: center; padding: 20px; color: #7f8c8d;">
+											Error loading unexecuted orders
+										</td>
+									</tr>
 									</tbody>
 								</table>
 							</div>
@@ -2207,9 +2212,8 @@ async def root(token: str = Cookie(None)):
 										<th>Stock Name</th>
 										<th>Order Type</th>
 										<th>Order Qty</th>
-										<th>Order Price</th>
+										<th>Order / Current</th>
 										<th>Unexecuted Qty</th>
-										<th>Current Price</th>
 										<th>Exchange</th>
 										<th>Time</th>
 										<th>Action</th>
@@ -2217,7 +2221,7 @@ async def root(token: str = Cookie(None)):
 								</thead>
 								<tbody>
 									<tr>
-										<td colspan="10" style="text-align: center; padding: 20px; color: #7f8c8d;">
+										<td colspan="9" style="text-align: center; padding: 20px; color: #7f8c8d;">
 											Error loading unexecuted orders
 										</td>
 									</tr>
