@@ -3,7 +3,7 @@ import json
 import os
 from datetime import datetime, timedelta, time, date
 from dotenv import load_dotenv
-from au1001 import get_token, get_key_list
+from au1001 import get_token, get_key_list, get_one_token
 import time as time_module
 import threading
 from fastapi import FastAPI, HTTPException, status, Cookie, Request
@@ -601,9 +601,13 @@ sell_prices = {}
 AUTO_SELL_FILE = 'auto_sell_enabled.json'
 auto_sell_enabled = {}
 
+# Interested stocks list
+INTERESTED_STOCKS_FILE = 'interested_stocks.json'
+interested_stocks = {}
+
 def load_dictionaries_from_json():
-	"""Load sell_prices and auto_sell_enabled from JSON files"""
-	global sell_prices, auto_sell_enabled
+	"""Load sell_prices, auto_sell_enabled, and interested_stocks from JSON files"""
+	global sell_prices, auto_sell_enabled, interested_stocks
 
 	# Load sell_prices
 	if os.path.exists(SELL_PRICES_FILE):
@@ -631,6 +635,42 @@ def load_dictionaries_from_json():
 		auto_sell_enabled = {}
 		print(f"Created new auto_sell_enabled dictionary")
 
+	# Load interested_stocks
+	if os.path.exists(INTERESTED_STOCKS_FILE):
+		try:
+			with open(INTERESTED_STOCKS_FILE, 'r', encoding='utf-8') as f:
+				interested_stocks = json.load(f)
+			print(f"Loaded interested_stocks from {INTERESTED_STOCKS_FILE}: {interested_stocks}")
+		except Exception as e:
+			print(f"Error loading interested_stocks: {e}")
+			interested_stocks = {}
+	else:
+		interested_stocks = {}
+		print(f"Created new interested_stocks dictionary")
+
+	try:
+		modified = False
+		for stk in interested_stocks:
+			stk_nm = ''
+			print('istk')
+			print(stk)
+			stock = interested_stocks[stk]
+			if 'stock_name' in stock:
+				stk_nm = stock['stock_name']
+			print('interested stock_name={}'.format(stk_nm))
+			if stk_nm == '':
+				print('getting stock name')
+				stk_nm = get_stockname(stk)
+				stock['stock_name'] = stk_nm
+				modified = True
+		if modified:
+			save_interested_stocks_to_json()
+			print('interested_stocks is modified, thus saved')
+	except Exception as ex:
+		print(ex)
+		exit(0)
+
+
 def save_dictionaries_to_json():
 	"""Save sell_prices to JSON file"""
 	global sell_prices
@@ -653,6 +693,18 @@ def save_auto_sell_to_json():
 		return True
 	except Exception as e:
 		print(f"Error saving auto_sell_enabled: {e}")
+		return False
+
+def save_interested_stocks_to_json():
+	"""Save interested_stocks to JSON file"""
+	global interested_stocks
+	try:
+		with open(INTERESTED_STOCKS_FILE, 'w', encoding='utf-8') as f:
+			json.dump(interested_stocks, f, indent=2, ensure_ascii=False)
+		print(f"Saved interested_stocks to {INTERESTED_STOCKS_FILE}")
+		return True
+	except Exception as e:
+		print(f"Error saving interested_stocks: {e}")
 		return False
 
 
@@ -1320,6 +1372,17 @@ async def root(token: str = Cookie(None)):
 				outline: none;
 				border-color: #667eea;
 			}
+			.form-group select {
+				padding: 10px;
+				border: 1px solid #ddd;
+				border-radius: 4px;
+				font-size: 14px;
+				height: auto;
+			}
+			.form-group select:focus {
+				outline: none;
+				border-color: #667eea;
+			}
 			.btn-update {
 				background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
 				color: white;
@@ -1457,6 +1520,83 @@ async def root(token: str = Cookie(None)):
 				margin-bottom: 20px;
 				font-size: 1.5em;
 			}
+			.interested-stocks-section {
+				margin-top: 40px;
+				padding-top: 30px;
+				border-top: 2px solid #e0e0e0;
+			}
+			.interested-stocks-section h2 {
+				color: #333;
+				margin-bottom: 20px;
+				font-size: 1.5em;
+			}
+			.add-interested-form {
+				background: #f8f9fa;
+				padding: 20px;
+				border-radius: 8px;
+				margin-bottom: 20px;
+			}
+			.add-interested-form h3 {
+				margin-bottom: 15px;
+				color: #333;
+				font-size: 1.2em;
+			}
+			.add-interested-form-content {
+				display: flex;
+				gap: 15px;
+				align-items: flex-end;
+				flex-wrap: wrap;
+			}
+			.btn-add-interested {
+				background: #3498db;
+				color: white;
+				border: none;
+				padding: 10px 20px;
+				border-radius: 4px;
+				cursor: pointer;
+				font-size: 14px;
+				font-weight: 600;
+			}
+			.btn-add-interested:hover {
+				background: #2980b9;
+			}
+			.btn-remove-interested {
+				background: #e74c3c;
+				color: white;
+				border: none;
+				padding: 4px 8px;
+				border-radius: 4px;
+				cursor: pointer;
+				font-size: 12px;
+				font-weight: 600;
+			}
+			.btn-remove-interested:hover {
+				background: #c0392b;
+			}
+			.color-select {
+				padding: 4px 8px;
+				border: 1px solid #ddd;
+				border-radius: 4px;
+				font-size: 14px;
+				cursor: pointer;
+			}
+			.color-select:focus {
+				outline: none;
+				border-color: #667eea;
+			}
+			#interested-stocks-container tbody tr {
+				cursor: pointer;
+			}
+			#interested-stocks-container tbody tr:hover {
+				background-color: #f5f5f5;
+			}
+			#interested-stocks-container tbody tr.selected {
+				background-color: #e3f2fd;
+				border-left: 4px solid #667eea;
+			}
+			#interested-stocks-container tbody tr.selected:hover {
+				background-color: #bbdefb;
+			}
 			.btn-cancel {
 				background: #e74c3c;
 				color: white;
@@ -1577,6 +1717,69 @@ async def root(token: str = Cookie(None)):
 							<tbody>
 								<tr>
 									<td colspan="5" style="text-align: center; padding: 20px; color: #7f8c8d;">
+										Loading...
+									</td>
+								</tr>
+							</tbody>
+						</table>
+					</div>
+				</div>
+			</div>
+			<div class="interested-stocks-section" id="interested-stocks-section">
+				<h2>⭐ Interested Stocks List</h2>
+				<div class="add-interested-form">
+					<div class="add-interested-form-content">
+						<div class="form-group">
+							<label for="interested-stock-code-input">Stock Code</label>
+							<input type="text" id="interested-stock-code-input" placeholder="e.g., 005930" />
+						</div>
+						<div class="form-group">
+							<input type="text" id="interested-stock-name-input" placeholder="e.g., Samsung Electronics" />
+						</div>
+						<div class="form-group">
+							<select id="interested-stock-btype-input">
+								<option value="">Select BType</option>
+								<option value="CL">CL</option>
+								<option value="PCL">PCL</option>
+								<option value="HCL">HCL</option>
+								<option value="SCL">SCL</option>
+							</select>
+						</div>
+						<div class="form-group">
+							<select id="interested-stock-color-input">
+								<option value="">Select Color</option>
+								<option value="R">빨 (Red)</option>
+								<option value="O">주 (Orange)</option>
+								<option value="Y">노 (Yellow)</option>
+								<option value="G">초 (Green)</option>
+								<option value="B">파 (Blue)</option>
+								<option value="D">남 (Navy)</option>
+								<option value="V">보 (Purple)</option>
+							</select>
+						</div>
+						<div class="form-group">
+							<input type="number" id="interested-stock-bamount-input" placeholder="BAmount" step="1" />
+						</div>
+						<button class="btn-add-interested" onclick="addInterestedStock()">Add/Update</button>
+						<button class="btn-delete" onclick="deleteInterestedStockFromForm()">Delete</button>
+					</div>
+				</div>
+				<div id="interested-stocks-container">
+					<div class="account-group">
+						<div class="account-group-header">
+							<h2>Interested Stocks</h2>
+						</div>
+						<table>
+							<thead>
+								<tr>
+									<th>Stock Code</th>
+									<th>Stock Name</th>
+									<th>Action</th>
+								</tr>
+							</thead>
+							<tbody>
+								<tr>
+									<td colspan="3" style="text-align: center; padding: 20px; color: #7f8c8d;">
 										Loading...
 									</td>
 								</tr>
@@ -2680,17 +2883,427 @@ async def root(token: str = Cookie(None)):
 			document.getElementById('update-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
 		}
 		
+		function updateInterestedStocks() {
+			const timestamp = new Date().getTime();
+			fetch('./api/interested-stocks?t=' + timestamp)
+				.then(response => response.json())
+				.then(result => {
+					if (result.status === 'success') {
+						const interestedStocksData = result.data || {};
+						const interestedStocksContainer = document.getElementById('interested-stocks-container');
+						const interestedStocksSection = document.getElementById('interested-stocks-section');
+						
+						// Always show interested stocks section
+						interestedStocksSection.style.display = 'block';
+						
+						// Get all stock codes
+						const stockCodes = Object.keys(interestedStocksData).sort();
+						
+						if (stockCodes.length === 0) {
+							interestedStocksContainer.innerHTML = `
+								<div class="account-group">
+									<div class="account-group-header">
+										<h2>Interested Stocks</h2>
+									</div>
+									<table>
+										<thead>
+											<tr>
+												<th>Stock Code</th>
+												<th>Stock Name</th>
+												<th>Action</th>
+											</tr>
+										</thead>
+										<tbody>
+											<tr>
+												<td colspan="6" style="text-align: center; padding: 20px; color: #7f8c8d;">
+													No interested stocks added yet
+												</td>
+											</tr>
+										</tbody>
+									</table>
+								</div>
+							`;
+							return;
+						}
+						
+						let htmlContent = `
+							<div class="account-group">
+								<div class="account-group-header">
+									<h2>Interested Stocks</h2>
+								</div>
+								<table>
+									<thead>
+										<tr>
+											<th>Stock Code</th>
+											<th>Stock Name</th>
+											<th>COLOR</th>
+											<th>BType</th>
+											<th>BAmount</th>
+											<th>Action</th>
+										</tr>
+									</thead>
+									<tbody>
+						`;
+						
+						// Color mapping: R=빨, O=주, Y=노, G=초, B=파, D=남, V=보
+						const colorMap = {
+							'R': '빨',
+							'O': '주',
+							'Y': '노',
+							'G': '초',
+							'B': '파',
+							'D': '남',
+							'V': '보'
+						};
+						
+						for (const stockCode of stockCodes) {
+							const stockInfo = interestedStocksData[stockCode];
+							const stockName = stockInfo.stock_name || '-';
+							const stockColor = stockInfo.color || '';
+							const stockBtype = stockInfo.btype || '';
+							const stockBamount = stockInfo.bamount || '';
+							const colorDisplay = stockColor && colorMap[stockColor] ? colorMap[stockColor] : '-';
+							
+							htmlContent += `
+								<tr data-stock-code="${stockCode}" data-stock-name="${stockName}" data-stock-color="${stockColor}" data-stock-btype="${stockBtype}" data-stock-bamount="${stockBamount}" onclick="selectInterestedStockRow(this)">
+									<td><strong>${stockCode}</strong></td>
+									<td>${stockName}</td>
+									<td>${colorDisplay}</td>
+									<td>${stockBtype || '-'}</td>
+									<td>${stockBamount || '-'}</td>
+									<td>
+										<button class="btn-remove-interested" onclick="event.stopPropagation(); removeInterestedStock('${stockCode}', '${stockName}')" title="Remove from interested list">
+											🗑️ Remove
+										</button>
+									</td>
+								</tr>
+							`;
+						}
+						
+						htmlContent += `
+									</tbody>
+								</table>
+							</div>
+						`;
+						
+						interestedStocksContainer.innerHTML = htmlContent;
+					} else {
+						// Show error state
+						const interestedStocksContainer = document.getElementById('interested-stocks-container');
+						const interestedStocksSection = document.getElementById('interested-stocks-section');
+						interestedStocksSection.style.display = 'block';
+						interestedStocksContainer.innerHTML = `
+							<div class="account-group">
+								<div class="account-group-header">
+									<h2>Interested Stocks</h2>
+								</div>
+								<table>
+									<thead>
+										<tr>
+											<th>Stock Code</th>
+											<th>Stock Name</th>
+											<th>Action</th>
+										</tr>
+									</thead>
+									<tbody>
+										<tr>
+											<td colspan="4" style="text-align: center; padding: 20px; color: #7f8c8d;">
+												Error loading interested stocks
+											</td>
+										</tr>
+									</tbody>
+								</table>
+							</div>
+						`;
+					}
+				})
+				.catch(error => {
+					console.error('Error updating interested stocks:', error);
+					const interestedStocksContainer = document.getElementById('interested-stocks-container');
+					const interestedStocksSection = document.getElementById('interested-stocks-section');
+					interestedStocksSection.style.display = 'block';
+					interestedStocksContainer.innerHTML = `
+						<div class="account-group">
+							<div class="account-group-header">
+								<h2>Interested Stocks</h2>
+							</div>
+							<table>
+								<thead>
+									<tr>
+										<th>Stock Code</th>
+										<th>Stock Name</th>
+										<th>COLOR</th>
+										<th>BType</th>
+										<th>BAmount</th>
+										<th>Action</th>
+									</tr>
+								</thead>
+								<tbody>
+									<tr>
+										<td colspan="6" style="text-align: center; padding: 20px; color: #7f8c8d;">
+											Error loading interested stocks
+										</td>
+									</tr>
+								</tbody>
+							</table>
+						</div>
+					`;
+				});
+		}
+		
+		function addInterestedStock() {
+			const stockCode = document.getElementById('interested-stock-code-input').value.trim();
+			const stockName = document.getElementById('interested-stock-name-input').value.trim();
+			const stockColor = document.getElementById('interested-stock-color-input').value.trim();
+			const stockBtype = document.getElementById('interested-stock-btype-input').value.trim();
+			const stockBamount = document.getElementById('interested-stock-bamount-input').value.trim();
+			
+			if (!stockCode) {
+				showMessage('Please enter a stock code', 'error');
+				return;
+			}
+			
+			const data = {
+				stock_code: stockCode,
+				stock_name: stockName || null,
+				color: stockColor || null,
+				btype: stockBtype || null,
+				bamount: stockBamount ? parseInt(stockBamount) : null
+			};
+			
+			fetch('./api/interested-stocks', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify(data)
+			})
+			.then(response => response.json())
+			.then(result => {
+				if (result.status === 'success') {
+					showMessage('Stock added/updated in interested list successfully!', 'success');
+					document.getElementById('interested-stock-code-input').value = '';
+					document.getElementById('interested-stock-name-input').value = '';
+					document.getElementById('interested-stock-color-input').value = '';
+					document.getElementById('interested-stock-btype-input').value = '';
+					document.getElementById('interested-stock-bamount-input').value = '';
+					// Update immediately
+					updateInterestedStocks();
+				} else {
+					showMessage('Error: ' + result.message, 'error');
+				}
+			})
+			.catch(error => {
+				showMessage('Error adding stock: ' + error, 'error');
+			});
+		}
+		
+		function deleteInterestedStockFromForm() {
+			const stockCode = document.getElementById('interested-stock-code-input').value.trim();
+			const stockName = document.getElementById('interested-stock-name-input').value.trim();
+			
+			if (!stockCode) {
+				showMessage('Please enter a stock code', 'error');
+				return;
+			}
+			
+			removeInterestedStock(stockCode, stockName);
+		}
+		
+		function updateInterestedStockColor(stockCode, color) {
+			if (!stockCode) {
+				return;
+			}
+			
+			const row = document.querySelector(`tr[data-stock-code="${stockCode}"]`);
+			const stockName = row?.getAttribute('data-stock-name') || '';
+			const stockBtype = row?.getAttribute('data-stock-btype') || '';
+			const stockBamount = row?.getAttribute('data-stock-bamount') || '';
+			
+			const data = {
+				stock_code: stockCode,
+				stock_name: stockName || null,
+				color: color || null,
+				btype: stockBtype || null,
+				bamount: stockBamount ? parseInt(stockBamount) : null
+			};
+			
+			fetch('./api/interested-stocks', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify(data)
+			})
+			.then(response => response.json())
+			.then(result => {
+				if (result.status === 'success') {
+					// Update immediately
+					updateInterestedStocks();
+				} else {
+					showMessage('Error updating color: ' + result.message, 'error');
+				}
+			})
+			.catch(error => {
+				showMessage('Error updating color: ' + error, 'error');
+			});
+		}
+		
+		function removeInterestedStock(stockCode, stockName) {
+			if (!stockCode) {
+				showMessage('Stock code is missing', 'error');
+				return;
+			}
+			
+			if (!confirm(`Remove ${stockName || stockCode} from interested list?`)) {
+				return;
+			}
+			
+			fetch('./api/interested-stocks/' + encodeURIComponent(stockCode), {
+				method: 'DELETE',
+				headers: {
+					'Content-Type': 'application/json',
+				}
+			})
+			.then(response => response.json())
+			.then(result => {
+				if (result.status === 'success') {
+					showMessage('Stock removed from interested list successfully!', 'success');
+					// Update immediately
+					updateInterestedStocks();
+				} else {
+					showMessage('Error: ' + result.message, 'error');
+				}
+			})
+			.catch(error => {
+				showMessage('Error removing stock: ' + error, 'error');
+			});
+		}
+		
+		function selectInterestedStockRow(rowElement) {
+			// Remove selected class from all rows
+			document.querySelectorAll('#interested-stocks-container tbody tr').forEach(tr => {
+				tr.classList.remove('selected');
+			});
+			
+			// Add selected class to clicked row
+			rowElement.classList.add('selected');
+			
+			// Get stock code, name, color, btype, and bamount from row
+			const stockCode = rowElement.getAttribute('data-stock-code');
+			const stockName = rowElement.getAttribute('data-stock-name') || '';
+			const stockColor = rowElement.getAttribute('data-stock-color') || '';
+			const stockBtype = rowElement.getAttribute('data-stock-btype') || '';
+			const stockBamount = rowElement.getAttribute('data-stock-bamount') || '';
+			
+			// Fill the interested stocks form fields
+			document.getElementById('interested-stock-code-input').value = stockCode;
+			document.getElementById('interested-stock-name-input').value = stockName;
+			document.getElementById('interested-stock-color-input').value = stockColor;
+			document.getElementById('interested-stock-btype-input').value = stockBtype;
+			document.getElementById('interested-stock-bamount-input').value = stockBamount;
+			
+			// Fill the sell price form fields
+			document.getElementById('stock-name-display').value = stockName;
+			document.getElementById('stock-code-input').value = stockCode;
+			document.getElementById('sell-price-input').value = '';
+			document.getElementById('profit-rate-input').value = '';
+			
+			// Scroll to interested stocks section
+			document.getElementById('interested-stocks-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
+		}
+		
+		function updateInterestedStockBtype(stockCode, btype) {
+			if (!stockCode) {
+				return;
+			}
+			
+			const row = document.querySelector(`tr[data-stock-code="${stockCode}"]`);
+			const stockName = row?.getAttribute('data-stock-name') || '';
+			const stockColor = row?.getAttribute('data-stock-color') || '';
+			const stockBamount = row?.getAttribute('data-stock-bamount') || '';
+			
+			const data = {
+				stock_code: stockCode,
+				stock_name: stockName || null,
+				color: stockColor || null,
+				btype: btype || null,
+				bamount: stockBamount ? parseInt(stockBamount) : null
+			};
+			
+			fetch('./api/interested-stocks', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify(data)
+			})
+			.then(response => response.json())
+			.then(result => {
+				if (result.status === 'success') {
+					// Update immediately
+					updateInterestedStocks();
+				} else {
+					showMessage('Error updating btype: ' + result.message, 'error');
+				}
+			})
+			.catch(error => {
+				showMessage('Error updating btype: ' + error, 'error');
+			});
+		}
+		
+		function updateInterestedStockBamount(stockCode, bamount) {
+			if (!stockCode) {
+				return;
+			}
+			
+			const row = document.querySelector(`tr[data-stock-code="${stockCode}"]`);
+			const stockName = row?.getAttribute('data-stock-name') || '';
+			const stockColor = row?.getAttribute('data-stock-color') || '';
+			const stockBtype = row?.getAttribute('data-stock-btype') || '';
+			
+			const data = {
+				stock_code: stockCode,
+				stock_name: stockName || null,
+				color: stockColor || null,
+				btype: stockBtype || null,
+				bamount: bamount ? parseInt(bamount) : null
+			};
+			
+			fetch('./api/interested-stocks', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify(data)
+			})
+			.then(response => response.json())
+			.then(result => {
+				if (result.status === 'success') {
+					// Update immediately
+					updateInterestedStocks();
+				} else {
+					showMessage('Error updating bamount: ' + result.message, 'error');
+				}
+			})
+			.catch(error => {
+				showMessage('Error updating bamount: ' + error, 'error');
+			});
+		}
+		
 		// Auto-update every 1 second
 		setInterval(function() {
 			updateTable();
 			updateMiche();
 			updateSellPrices();
+			updateInterestedStocks();
 		}, 1000);
 		
 		// Initial update after page load
 		updateTable();
 		updateMiche();
 		updateSellPrices();
+		updateInterestedStocks();
 		</script>
 	</body>
 	</html>
@@ -2924,6 +3537,114 @@ async def set_auto_sell_api(request: dict, proxy_path: str = "", token: str = Co
 	except Exception as e:
 		return {"status": "error", "message": str(e)}
 
+@app.get("/api/interested-stocks")
+@app.get("/{proxy_path:path}/api/interested-stocks")
+async def get_interested_stocks_api(proxy_path: str = "", token: str = Cookie(None)):
+	"""API endpoint to get interested stocks list"""
+	# Check authentication
+	if not token or not verify_token(token):
+		raise HTTPException(
+			status_code=status.HTTP_401_UNAUTHORIZED,
+			detail="Not authenticated"
+		)
+	global interested_stocks
+	current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+	return {"status": "success", "data": interested_stocks, "timestamp": current_time}
+
+@app.post("/api/interested-stocks")
+@app.post("/{proxy_path:path}/api/interested-stocks")
+async def add_interested_stock_api(request: dict, proxy_path: str = "", token: str = Cookie(None)):
+	"""API endpoint to add a stock to interested stocks list"""
+	# Check authentication
+	if not token or not verify_token(token):
+		raise HTTPException(
+			status_code=status.HTTP_401_UNAUTHORIZED,
+			detail="Not authenticated"
+		)
+	global interested_stocks
+	try:
+		stock_code = request.get('stock_code')
+		stock_name = request.get('stock_name')
+		color = request.get('color')
+		btype = request.get('btype')
+		bamount = request.get('bamount')
+		
+		if not stock_code:
+			return {"status": "error", "message": "stock_code is required"}
+		if not stock_name or stock_name == '':
+			stock_name = get_stockname(stock_code)
+
+		# Add or update the stock in interested list
+		if stock_code not in interested_stocks:
+			interested_stocks[stock_code] = {}
+		
+		if stock_name and stock_name.strip():
+			interested_stocks[stock_code]['stock_name'] = stock_name.strip()
+		
+		if color and color.strip():
+			interested_stocks[stock_code]['color'] = color.strip()
+		elif color is not None:
+			# Remove color if explicitly set to empty
+			if 'color' in interested_stocks[stock_code]:
+				del interested_stocks[stock_code]['color']
+		
+		if btype and btype.strip():
+			interested_stocks[stock_code]['btype'] = btype.strip()
+		elif btype is not None:
+			# Remove btype if explicitly set to empty
+			if 'btype' in interested_stocks[stock_code]:
+				del interested_stocks[stock_code]['btype']
+		
+		if bamount is not None:
+			try:
+				bamount_int = int(bamount)
+				if bamount_int > 0:
+					interested_stocks[stock_code]['bamount'] = bamount_int
+				else:
+					# Remove bamount if explicitly set to 0 or negative
+					if 'bamount' in interested_stocks[stock_code]:
+						del interested_stocks[stock_code]['bamount']
+			except (ValueError, TypeError):
+				# Remove bamount if invalid value
+				if 'bamount' in interested_stocks[stock_code]:
+					del interested_stocks[stock_code]['bamount']
+		
+		# Save to file
+		if save_interested_stocks_to_json():
+			return {"status": "success", "message": f"Stock {stock_code} added/updated in interested list", "data": interested_stocks}
+		else:
+			return {"status": "error", "message": "Failed to save to file"}
+	except Exception as e:
+		return {"status": "error", "message": str(e)}
+
+@app.delete("/api/interested-stocks/{stock_code}")
+@app.delete("/{proxy_path:path}/api/interested-stocks/{stock_code}")
+async def delete_interested_stock_api(stock_code: str, proxy_path: str = "", token: str = Cookie(None)):
+	"""API endpoint to remove a stock from interested stocks list"""
+	# Check authentication
+	if not token or not verify_token(token):
+		raise HTTPException(
+			status_code=status.HTTP_401_UNAUTHORIZED,
+			detail="Not authenticated"
+		)
+	global interested_stocks
+	try:
+		if not stock_code:
+			return {"status": "error", "message": "stock_code is required"}
+		
+		# Remove the stock from interested list
+		if stock_code in interested_stocks:
+			del interested_stocks[stock_code]
+			# Save to file
+			if save_interested_stocks_to_json():
+				return {"status": "success", "message": f"Stock {stock_code} removed from interested list"}
+			else:
+				return {"status": "error", "message": "Failed to save to file"}
+		else:
+			return {"status": "error", "message": f"Stock code {stock_code} not found in interested list"}
+	except Exception as e:
+		return {"status": "error", "message": str(e)}
+
 @app.get("/health")
 async def health():
 	return {"status": "healthy"}
@@ -2956,6 +3677,57 @@ async def cancel_nxt_trade_endpoint():
 		return {"status": "success", "message": "Cancel NXT trade executed"}
 	except Exception as e:
 		return {"status": "error", "message": str(e)}
+
+
+
+import requests
+import json
+
+# 종목정보 조회
+def fn_ka10100(token, data, cont_yn='N', next_key=''):
+	# 1. 요청할 API URL
+	#host = 'https://mockapi.kiwoom.com' # 모의투자
+	host = 'https://api.kiwoom.com' # 실전투자
+	endpoint = '/api/dostk/stkinfo'
+	url =  host + endpoint
+
+	# 2. header 데이터
+	headers = {
+		'Content-Type': 'application/json;charset=UTF-8', # 컨텐츠타입
+		'authorization': f'Bearer {token}', # 접근토큰
+		'cont-yn': cont_yn, # 연속조회여부
+		'next-key': next_key, # 연속조회키
+		'api-id': 'ka10100', # TR명
+	}
+
+	# 3. http POST 요청
+	response = requests.post(url, headers=headers, json=data)
+
+	# 4. 응답 상태 코드와 데이터 출력
+	print('Code:', response.status_code)
+	print('Header:', json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4, ensure_ascii=False))
+	print('Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON 응답을 파싱하여 출력
+	return response.json()
+
+
+# 실행 구간
+def get_stockname(stk_cd):
+	print('in get_stockname')
+	MY_ACCESS_TOKEN = get_one_token()
+	# 2. 요청 데이터
+	params = {
+		'stk_cd': stk_cd, # 종목코드
+	}
+
+	print('calling fn_ka10100')
+	# 3. API 실행
+	json = fn_ka10100(token=MY_ACCESS_TOKEN, data=params)
+	if 'name' in json:
+		return json['name']
+
+	print('No name field in fn_ka10100 result')
+	return ''
+
 
 # 실행 구간
 if __name__ == '__main__':
