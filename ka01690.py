@@ -835,9 +835,9 @@ def format_account_data():
 				prft_rt = stock.get('prft_rt', '0')
 				prft_rt_float = float(prft_rt) if prft_rt else 0.0
 				
-				# Get preset sell price from sell_prices dictionary
-				price_part = 'None'
-				rate_part = 'None'
+				# Get preset sell price and rate from sell_prices dictionary
+				price_part = '-'
+				rate_part = '-'
 				
 				if stk_cd_clean in sell_prices:
 					sell_cond = sell_prices[stk_cd_clean]
@@ -846,7 +846,7 @@ def format_account_data():
 						try:
 							price_val = sell_cond['price']
 							if price_val and str(price_val).strip() and str(price_val) != 'None':
-								price_part = f"{float(price_val):.0f}"
+								price_part = f"{float(price_val):,.0f}"
 						except (ValueError, TypeError):
 							pass
 					
@@ -866,7 +866,8 @@ def format_account_data():
 					if stk_nm and stk_nm.strip():
 						sell_prices[stk_cd_clean] = {'stock_name': stk_nm}
 				
-				preset_sell_price = f"{price_part} / {rate_part}"
+				# Combine price and rate
+				preset_prc_rate = f"{price_part} / {rate_part}"
 				
 				# Create unique key from account and stock_code
 				unique_key = f"{acct_no}_{stk_cd_clean}"
@@ -892,7 +893,7 @@ def format_account_data():
 						'rmnd_qty': rmnd_qty,
 						'avg_buy_price': avg_buy_price_display,
 						'profit_rate': f"{prft_rt_float:+.2f}%",
-						'preset_sell_price': preset_sell_price
+						'preset_prc_rate': preset_prc_rate
 					})
 		
 		return formatted_data
@@ -1446,6 +1447,16 @@ async def root(token: str = Cookie(None)):
 				margin-bottom: 20px;
 				font-size: 1.5em;
 			}
+			.sell-prices-section {
+				margin-top: 40px;
+				padding-top: 30px;
+				border-top: 2px solid #e0e0e0;
+			}
+			.sell-prices-section h2 {
+				color: #333;
+				margin-bottom: 20px;
+				font-size: 1.5em;
+			}
 			.btn-cancel {
 				background: #e74c3c;
 				color: white;
@@ -1464,6 +1475,19 @@ async def root(token: str = Cookie(None)):
 				background: #95a5a6;
 				cursor: not-allowed;
 			}
+			.btn-delete-row {
+				background: #e74c3c;
+				color: white;
+				border: none;
+				padding: 4px 8px;
+				border-radius: 4px;
+				cursor: pointer;
+				font-size: 14px;
+				transition: background-color 0.2s;
+			}
+			.btn-delete-row:hover {
+				background: #c0392b;
+			}
 			.miche-row:hover {
 				background-color: #f5f5f5;
 			}
@@ -1472,6 +1496,19 @@ async def root(token: str = Cookie(None)):
 				border-left: 4px solid #667eea;
 			}
 			.miche-row.selected:hover {
+				background-color: #bbdefb;
+			}
+			#sell-prices-container tbody tr {
+				cursor: pointer;
+			}
+			#sell-prices-container tbody tr:hover {
+				background-color: #f5f5f5;
+			}
+			#sell-prices-container tbody tr.selected {
+				background-color: #e3f2fd;
+				border-left: 4px solid #667eea;
+			}
+			#sell-prices-container tbody tr.selected:hover {
 				background-color: #bbdefb;
 			}
 		</style>
@@ -1512,6 +1549,34 @@ async def root(token: str = Cookie(None)):
 							<tbody>
 								<tr>
 									<td colspan="9" style="text-align: center; padding: 20px; color: #7f8c8d;">
+										Loading...
+									</td>
+								</tr>
+							</tbody>
+						</table>
+					</div>
+				</div>
+			</div>
+			<div class="sell-prices-section" id="sell-prices-section">
+				<h2>💰 All Sell Prices & Rates</h2>
+				<div id="sell-prices-container">
+					<div class="account-group">
+						<div class="account-group-header">
+							<h2>Sell Prices & Rates</h2>
+						</div>
+						<table>
+							<thead>
+								<tr>
+									<th>Stock Code</th>
+									<th>Stock Name</th>
+									<th>Sell Price</th>
+									<th>Sell Rate</th>
+									<th>Action</th>
+								</tr>
+							</thead>
+							<tbody>
+								<tr>
+									<td colspan="5" style="text-align: center; padding: 20px; color: #7f8c8d;">
 										Loading...
 									</td>
 								</tr>
@@ -1612,10 +1677,11 @@ async def root(token: str = Cookie(None)):
 			// Add selected class to clicked row
 			rowElement.classList.add('selected');
 			
-			// Get stock code, stock name, and preset price from row
+			// Get stock code, stock name, sell price, and sell rate from row
 			const stockCode = rowElement.getAttribute('data-stock-code');
 			const stockName = rowElement.getAttribute('data-stock-name') || '';
-			const presetPrice = rowElement.getAttribute('data-preset-price') || '-';
+			const sellPrice = rowElement.getAttribute('data-sell-price') || '';
+			const sellRate = rowElement.getAttribute('data-sell-rate') || '';
 			
 			// Fill stock name (read-only)
 			document.getElementById('stock-name-display').value = stockName;
@@ -1623,56 +1689,62 @@ async def root(token: str = Cookie(None)):
 			// Fill stock code input
 			document.getElementById('stock-code-input').value = stockCode;
 			
-			// Parse preset price (format: "price / rate%" or "None / rate%" or "price / None")
-			if (presetPrice === '-') {
-				// No preset price, clear inputs
-				document.getElementById('sell-price-input').value = '';
-				document.getElementById('profit-rate-input').value = '';
+			// Fill sell price and rate
+			if (sellPrice && sellPrice !== '-') {
+				// Remove commas and set price
+				const priceValue = sellPrice.replace(/,/g, '');
+				document.getElementById('sell-price-input').value = priceValue;
 			} else {
-				// Check if it contains a slash (has both price and rate)
-				const slashMatch = presetPrice.match(/^(.+?)\s*\/\s*(.+)$/);
-				if (slashMatch) {
-					// Format: "price / rate%" or "None / rate%" or "price / None"
-					const pricePart = slashMatch[1].trim();
-					const ratePart = slashMatch[2].trim();
-					
-					// Parse price
-					if (pricePart === 'None') {
-						document.getElementById('sell-price-input').value = '';
-					} else {
-						const priceValue = pricePart.replace(/[^\d.]/g, '');
-						document.getElementById('sell-price-input').value = priceValue;
-					}
-					
-					// Parse rate
-					if (ratePart === 'None') {
-						document.getElementById('profit-rate-input').value = '';
-					} else {
-						const rateMatch = ratePart.match(/([\d.+-]+)%/);
-						if (rateMatch) {
-							const ratePercent = parseFloat(rateMatch[1]);
-							document.getElementById('profit-rate-input').value = ratePercent.toFixed(2);
-						}
-					}
+				document.getElementById('sell-price-input').value = '';
+			}
+			
+			if (sellRate && sellRate !== '-') {
+				// Extract percentage value (remove % sign)
+				const rateMatch = sellRate.match(/([\d.+-]+)%/);
+				if (rateMatch) {
+					const ratePercent = parseFloat(rateMatch[1]);
+					document.getElementById('profit-rate-input').value = ratePercent.toFixed(2);
 				} else {
-					// Fallback: try to parse as single value (for backward compatibility)
-					const rateMatch = presetPrice.match(/([\d.+-]+)%/);
-					if (rateMatch) {
-						const ratePercent = parseFloat(rateMatch[1]);
-						document.getElementById('profit-rate-input').value = ratePercent.toFixed(2);
-						document.getElementById('sell-price-input').value = '';
-					} else {
-						const priceValue = presetPrice.replace(/[^\d.]/g, '');
-						if (priceValue) {
-							document.getElementById('sell-price-input').value = priceValue;
-							document.getElementById('profit-rate-input').value = '';
-						}
-					}
+					document.getElementById('profit-rate-input').value = '';
 				}
+			} else {
+				document.getElementById('profit-rate-input').value = '';
 			}
 			
 			// Scroll to update section
 			document.getElementById('update-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
+		}
+		
+		function deleteRowSellPrice(stockCode, stockName) {
+			if (!stockCode) {
+				showMessage('Stock code is missing', 'error');
+				return;
+			}
+			
+			if (!confirm(`Delete sell price/rate for ${stockName || stockCode}?`)) {
+				return;
+			}
+			
+			fetch('./api/sell-prices/' + encodeURIComponent(stockCode), {
+				method: 'DELETE',
+				headers: {
+					'Content-Type': 'application/json',
+				}
+			})
+			.then(response => response.json())
+			.then(result => {
+				if (result.status === 'success') {
+					showMessage('Sell price/rate deleted successfully!', 'success');
+					// Refresh the tables immediately
+					updateTable();
+					updateSellPrices();
+				} else {
+					showMessage('Error: ' + result.message, 'error');
+				}
+			})
+			.catch(error => {
+				showMessage('Error deleting sell price/rate: ' + error, 'error');
+			});
 		}
 		
 		function selectMicheRow(rowElement) {
@@ -1818,7 +1890,7 @@ async def root(token: str = Cookie(None)):
 												<th>Tradeable Qty</th>
 												<th>Avg Buy Price</th>
 												<th>Profit Rate</th>
-												<th>Preset Sell Price</th>
+												<th>PRESET PRC/RATE</th>
 											</tr>
 										</thead>
 										<tbody>
@@ -1828,15 +1900,29 @@ async def root(token: str = Cookie(None)):
 								const rowId = item.account + '_' + item.stock_code;
 								const profitClass = getProfitClass(item.profit_rate);
 								const rmndQty = item.rmnd_qty || '0';
+								const presetPrcRate = item.preset_prc_rate || '- / -';
+								
+								// Extract sell_price and sell_rate from preset_prc_rate for data attributes
+								let sellPrice = '';
+								let sellRate = '';
+								const parts = presetPrcRate.split(' / ');
+								if (parts.length === 2) {
+									sellPrice = parts[0].trim() !== '-' ? parts[0].trim().replace(/,/g, '') : '';
+									sellRate = parts[1].trim() !== '-' ? parts[1].trim().replace('%', '') : '';
+									if (sellRate) {
+										// Convert percentage back to decimal for data attribute
+										sellRate = (parseFloat(sellRate) / 100).toString();
+									}
+								}
 								
 								htmlContent += `
-									<tr data-row-id="${rowId}" data-stock-code="${item.stock_code}" data-stock-name="${item.stock_name}" data-preset-price="${item.preset_sell_price}" onclick="selectRow(this)">
+									<tr data-row-id="${rowId}" data-stock-code="${item.stock_code}" data-stock-name="${item.stock_name}" data-sell-price="${sellPrice}" data-sell-rate="${sellRate}" onclick="selectRow(this)">
 										<td><strong>${item.stock_code}</strong></td>
 										<td>${item.stock_name}</td>
 										<td>${item.tradeable_qty} / ${rmndQty}</td>
 										<td>${item.avg_buy_price}</td>
 										<td class="${profitClass}">${item.profit_rate}</td>
-										<td>${item.preset_sell_price}</td>
+										<td>${presetPrcRate}</td>
 									</tr>
 								`;
 							}
@@ -1951,7 +2037,9 @@ async def root(token: str = Cookie(None)):
 					document.getElementById('stock-code-input').value = '';
 					document.getElementById('sell-price-input').value = '';
 					document.getElementById('profit-rate-input').value = '';
-					setTimeout(updateTable, 500);
+					// Update immediately
+					updateTable();
+					updateSellPrices();
 				} else {
 					showMessage('Error: ' + result.message, 'error');
 				}
@@ -2032,19 +2120,15 @@ async def root(token: str = Cookie(None)):
 				return;
 			}
 			
-			const data = {
-				stock_code: stockCode,
-				stock_name: stockName || null,
-				price: null,
-				rate: null
-			};
+			if (!confirm(`Delete sell price/rate for ${stockName || stockCode}?`)) {
+				return;
+			}
 			
-			fetch('./api/sell-prices', {
-				method: 'POST',
+			fetch('./api/sell-prices/' + encodeURIComponent(stockCode), {
+				method: 'DELETE',
 				headers: {
 					'Content-Type': 'application/json',
-				},
-				body: JSON.stringify(data)
+				}
 			})
 			.then(response => response.json())
 			.then(result => {
@@ -2054,7 +2138,9 @@ async def root(token: str = Cookie(None)):
 					document.getElementById('stock-code-input').value = '';
 					document.getElementById('sell-price-input').value = '';
 					document.getElementById('profit-rate-input').value = '';
-					setTimeout(updateTable, 500);
+					// Update immediately
+					updateTable();
+					updateSellPrices();
 				} else {
 					showMessage('Error: ' + result.message, 'error');
 				}
@@ -2361,15 +2447,250 @@ async def root(token: str = Cookie(None)):
 		}
 		
 		
+		function updateSellPrices() {
+			// Add cache-busting parameter to ensure fresh data
+			const timestamp = new Date().getTime();
+			fetch('./api/sell-prices?t=' + timestamp)
+				.then(response => response.json())
+				.then(result => {
+					if (result.status === 'success') {
+						const sellPricesData = result.data || {};
+						const sellPricesContainer = document.getElementById('sell-prices-container');
+						const sellPricesSection = document.getElementById('sell-prices-section');
+						
+						// Always show sell prices section
+						sellPricesSection.style.display = 'block';
+						
+						// Get all stock codes and filter out entries without price/rate
+						const allStockCodes = Object.keys(sellPricesData).sort();
+						const validStockCodes = [];
+						
+						for (const stockCode of allStockCodes) {
+							const sellCond = sellPricesData[stockCode];
+							// Only include entries that have price or rate
+							if (sellCond.price || (sellCond.rate !== undefined && sellCond.rate !== null)) {
+								validStockCodes.push(stockCode);
+							}
+						}
+						
+						if (validStockCodes.length === 0) {
+							sellPricesContainer.innerHTML = `
+								<div class="account-group">
+									<div class="account-group-header">
+										<h2>Sell Prices & Rates</h2>
+									</div>
+									<table>
+										<thead>
+											<tr>
+												<th>Stock Code</th>
+												<th>Stock Name</th>
+												<th>Sell Price</th>
+												<th>Sell Rate</th>
+												<th>Action</th>
+											</tr>
+										</thead>
+										<tbody>
+											<tr>
+												<td colspan="5" style="text-align: center; padding: 20px; color: #7f8c8d;">
+													No sell prices/rates configured
+												</td>
+											</tr>
+										</tbody>
+									</table>
+								</div>
+							`;
+							return;
+						}
+						
+						let htmlContent = `
+							<div class="account-group">
+								<div class="account-group-header">
+									<h2>Sell Prices & Rates</h2>
+								</div>
+								<table>
+									<thead>
+										<tr>
+											<th>Stock Code</th>
+											<th>Stock Name</th>
+											<th>Sell Price</th>
+											<th>Sell Rate</th>
+											<th>Action</th>
+										</tr>
+									</thead>
+									<tbody>
+						`;
+						
+						for (const stockCode of validStockCodes) {
+							const sellCond = sellPricesData[stockCode];
+							
+							const stockName = sellCond.stock_name || '-';
+							
+							let sellPrice = '-';
+							if (sellCond.price) {
+								try {
+									sellPrice = parseFloat(sellCond.price).toLocaleString();
+								} catch (e) {
+									sellPrice = sellCond.price;
+								}
+							}
+							
+							let sellRate = '-';
+							if (sellCond.rate !== undefined && sellCond.rate !== null) {
+								try {
+									sellRate = (parseFloat(sellCond.rate) * 100).toFixed(2) + '%';
+								} catch (e) {
+									sellRate = '-';
+								}
+							}
+							
+							htmlContent += `
+								<tr data-stock-code="${stockCode}" data-stock-name="${stockName}" data-sell-price="${sellCond.price || ''}" data-sell-rate="${sellCond.rate || ''}" onclick="selectSellPriceRow(this)">
+									<td><strong>${stockCode}</strong></td>
+									<td>${stockName}</td>
+									<td>${sellPrice}</td>
+									<td>${sellRate}</td>
+									<td>
+										<button class="btn-delete-row" onclick="event.stopPropagation(); deleteRowSellPrice('${stockCode}', '${stockName}')" title="Delete sell price/rate">
+											🗑️
+										</button>
+									</td>
+								</tr>
+							`;
+						}
+						
+						htmlContent += `
+									</tbody>
+								</table>
+							</div>
+						`;
+						
+						sellPricesContainer.innerHTML = htmlContent;
+					} else {
+						// Show error state
+						const sellPricesContainer = document.getElementById('sell-prices-container');
+						const sellPricesSection = document.getElementById('sell-prices-section');
+						sellPricesSection.style.display = 'block';
+						sellPricesContainer.innerHTML = `
+							<div class="account-group">
+								<div class="account-group-header">
+									<h2>Sell Prices & Rates</h2>
+								</div>
+								<table>
+									<thead>
+										<tr>
+											<th>Stock Code</th>
+											<th>Stock Name</th>
+											<th>Sell Price</th>
+											<th>Sell Rate</th>
+											<th>Action</th>
+										</tr>
+									</thead>
+									<tbody>
+										<tr>
+											<td colspan="5" style="text-align: center; padding: 20px; color: #7f8c8d;">
+												Error loading sell prices/rates
+											</td>
+										</tr>
+									</tbody>
+								</table>
+							</div>
+						`;
+					}
+				})
+				.catch(error => {
+					console.error('Error updating sell prices:', error);
+					const sellPricesContainer = document.getElementById('sell-prices-container');
+					const sellPricesSection = document.getElementById('sell-prices-section');
+					sellPricesSection.style.display = 'block';
+					sellPricesContainer.innerHTML = `
+						<div class="account-group">
+							<div class="account-group-header">
+								<h2>Sell Prices & Rates</h2>
+							</div>
+							<table>
+								<thead>
+									<tr>
+										<th>Stock Code</th>
+										<th>Stock Name</th>
+										<th>Sell Price</th>
+										<th>Sell Rate</th>
+										<th>Action</th>
+									</tr>
+								</thead>
+								<tbody>
+									<tr>
+										<td colspan="5" style="text-align: center; padding: 20px; color: #7f8c8d;">
+											Error loading sell prices/rates
+										</td>
+									</tr>
+								</tbody>
+							</table>
+						</div>
+					`;
+				});
+		}
+		
+		function selectSellPriceRow(rowElement) {
+			// Remove selected class from all rows
+			document.querySelectorAll('#sell-prices-container tbody tr').forEach(tr => {
+				tr.classList.remove('selected');
+			});
+			
+			// Add selected class to clicked row
+			rowElement.classList.add('selected');
+			
+			// Get stock code, stock name, sell price, and sell rate from row
+			const stockCode = rowElement.getAttribute('data-stock-code');
+			const stockName = rowElement.getAttribute('data-stock-name') || '';
+			const sellPrice = rowElement.getAttribute('data-sell-price') || '';
+			const sellRate = rowElement.getAttribute('data-sell-rate') || '';
+			
+			// Fill stock name (read-only)
+			document.getElementById('stock-name-display').value = stockName;
+			
+			// Fill stock code input
+			document.getElementById('stock-code-input').value = stockCode;
+			
+			// Fill sell price and rate
+			if (sellPrice && sellPrice !== '-') {
+				// Remove commas and set price
+				const priceValue = sellPrice.replace(/,/g, '');
+				document.getElementById('sell-price-input').value = priceValue;
+			} else {
+				document.getElementById('sell-price-input').value = '';
+			}
+			
+			if (sellRate && sellRate !== '-') {
+				// Convert rate from decimal to percentage
+				try {
+					const rateDecimal = parseFloat(sellRate);
+					if (!isNaN(rateDecimal)) {
+						document.getElementById('profit-rate-input').value = (rateDecimal * 100).toFixed(2);
+					} else {
+						document.getElementById('profit-rate-input').value = '';
+					}
+				} catch (e) {
+					document.getElementById('profit-rate-input').value = '';
+				}
+			} else {
+				document.getElementById('profit-rate-input').value = '';
+			}
+			
+			// Scroll to update section
+			document.getElementById('update-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
+		}
+		
 		// Auto-update every 1 second
 		setInterval(function() {
 			updateTable();
 			updateMiche();
+			updateSellPrices();
 		}, 1000);
 		
 		// Initial update after page load
 		updateTable();
 		updateMiche();
+		updateSellPrices();
 		</script>
 	</body>
 	</html>
@@ -2469,6 +2790,37 @@ async def get_sell_prices_api(proxy_path: str = "", token: str = Cookie(None)):
 	global sell_prices
 	current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 	return {"status": "success", "data": sell_prices, "timestamp": current_time}
+
+@app.delete("/api/sell-prices/{stock_code}")
+@app.delete("/{proxy_path:path}/api/sell-prices/{stock_code}")
+async def delete_sell_prices_api(stock_code: str, proxy_path: str = "", token: str = Cookie(None)):
+	"""API endpoint to delete sell price/rate entry completely"""
+	# Check authentication
+	if not token or not verify_token(token):
+		raise HTTPException(
+			status_code=status.HTTP_401_UNAUTHORIZED,
+			detail="Not authenticated"
+		)
+	global sell_prices
+	print('2797')
+	try:
+		if not stock_code:
+			return {"status": "error", "message": "stock_code is required"}
+
+		print('2802')
+		# Delete the entire entry regardless of its contents
+		if stock_code in sell_prices:
+			del sell_prices[stock_code]
+			# Save to file
+			if save_dictionaries_to_json():
+				return {"status": "success", "message": f"Sell price/rate deleted for {stock_code}"}
+			else:
+				return {"status": "error", "message": "Failed to save to file"}
+		else:
+			return {"status": "error", "message": f"Stock code {stock_code} not found"}
+	except Exception as e:
+		print('2814')
+		return {"status": "error", "message": str(e)}
 
 @app.post("/api/sell-prices")
 @app.post("/{proxy_path:path}/api/sell-prices")
