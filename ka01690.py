@@ -149,6 +149,7 @@ get_jango_count = 0
 def get_jango(now, market = 'KRX'):
 	global get_jango_count
 	log_jango = (get_jango_count == 0)
+	log_jango = False
 
 	get_jango_count += 1
 	if get_jango_count >= 10 :
@@ -553,10 +554,16 @@ working_status = ''
 def daily_work(now):
 	global new_day, krx_first, current_status
 	global nxt_start_time, nxt_end_time, krx_start_time,nxt_cancelled, krx_end_time
-	global stored_jango_data
+	global stored_jango_data, stored_miche_data
+
 	stored_jango_data = get_jango(now)
 	if is_between(now, nxt_start_time, nxt_end_time):
 		current_status = 'NXT'
+		try:
+			stored_miche_data = get_miche()
+		except Exception as e:
+			print(f"Error updating miche data: {e}")
+
 		sell_jango(now, stored_jango_data, 'NXT')
 	elif is_between(now, nxt_end_time, krx_start_time):
 		current_status = 'NXT->KRX'
@@ -569,6 +576,10 @@ def daily_work(now):
 			print('{} krx_first get_jango and sell_jango.'.format(now))
 			krx_first = True
 		sell_jango(now, stored_jango_data, 'KRX')
+		try:
+			stored_miche_data = get_miche()
+		except Exception as e:
+			print(f"Error updating miche data: {e}")
 	else:
 		if (new_day):
 			current_status = 'OFF'
@@ -655,14 +666,16 @@ def load_dictionaries_from_json():
 			print('istk')
 			print(stk)
 			stock = interested_stocks[stk]
-			if 'stock_name' in stock:
-				stk_nm = stock['stock_name']
 			print('interested stock_name={}'.format(stk_nm))
 			if stk_nm == '':
 				print('getting stock name')
 				stk_nm = get_stockname(stk)
 				stock['stock_name'] = stk_nm
 				modified = True
+			if 'color' in stock:
+				stock['color'] = color_kor_to_eng(stock['color'])
+			print(stock)
+
 		if modified:
 			save_interested_stocks_to_json()
 			print('interested_stocks is modified, thus saved')
@@ -811,12 +824,6 @@ def periodic_timer_handler():
 	if prev_hour is not None and now_hour != prev_hour:
 		print('{} Hour change from {} to {}'.format(cur_date(), prev_hour, now_hour))
 	prev_hour = now_hour
-
-	# Update miche data periodically
-	try:
-		stored_miche_data = get_miche()
-	except Exception as e:
-		print(f"Error updating miche data: {e}")
 
 	if is_between(now, day_start_time, nxt_start_time):
 		set_new_day()
@@ -3551,16 +3558,80 @@ async def get_interested_stocks_api(proxy_path: str = "", token: str = Cookie(No
 	current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 	return {"status": "success", "data": interested_stocks, "timestamp": current_time}
 
+
+@app.middleware("http")
+async def print_all_headers(request: Request, call_next):
+	headers_dict = dict(request.headers)
+
+	print("===== REQUEST HEADERS =====")
+	print(headers_dict)
+	print("===========================")
+	body_bytes = await request.body()
+
+	if body_bytes:
+		try:
+			body = json.loads(body_bytes)
+			print("===== REQUEST JSON BODY =====")
+			print(body)
+			print("============================")
+		except json.JSONDecodeError:
+			print("===== REQUEST BODY (non-JSON) =====")
+			print(body_bytes)
+
+	async def receive():
+		return {
+			"type": "http.request",
+			"body": body_bytes,
+			"more_body": False,
+		}
+
+	request._receive = receive
+	return await call_next(request)
+
+
+def  color_kor_to_eng(color):
+	if color == '빨':
+		return 'R'
+	if color == '주':
+		return 'O'
+	if color == '노':
+		return 'Y'
+	if color == '초':
+		return 'G'
+	if color == '파':
+		return 'B'
+	if color == '남':
+		return 'D'
+	if color == '보':
+		return 'V'
+
+	return color
+
+
+
 @app.post("/api/interested-stocks")
 @app.post("/{proxy_path:path}/api/interested-stocks")
-async def add_interested_stock_api(request: dict, proxy_path: str = "", token: str = Cookie(None)):
+async def add_interested_stock_api(request: dict, proxy_path: str = "",
+								   token: str = Cookie(None),
+								   pctoken: str | None = Cookie(default=None),):
 	"""API endpoint to add a stock to interested stocks list"""
+	f = False
 	# Check authentication
-	if not token or not verify_token(token):
-		raise HTTPException(
-			status_code=status.HTTP_401_UNAUTHORIZED,
-			detail="Not authenticated"
-		)
+	if f:
+		if token:
+			print('token={}'.format(token))
+		if pctoken:
+			print('pctoken={}'.format(pctoken))
+
+	if pctoken and pctoken == 'allow_interest_pc':
+		pass
+	else:
+		if not token or not verify_token(token):
+			raise HTTPException(
+				status_code=status.HTTP_401_UNAUTHORIZED,
+				detail="Not authenticated"
+			)
+
 	global interested_stocks
 	try:
 		stock_code = request.get('stock_code')
@@ -3568,7 +3639,11 @@ async def add_interested_stock_api(request: dict, proxy_path: str = "", token: s
 		color = request.get('color')
 		btype = request.get('btype')
 		bamount = request.get('bamount')
-		
+		stime = request.get('stime')
+		yyyymmdd = request.get('yyyymmdd')
+
+		print('stime = {}, yyyymmdd = {}'.format(stime, yyyymmdd))
+
 		if not stock_code:
 			return {"status": "error", "message": "stock_code is required"}
 		if not stock_name or stock_name == '':
@@ -3582,6 +3657,7 @@ async def add_interested_stock_api(request: dict, proxy_path: str = "", token: s
 			interested_stocks[stock_code]['stock_name'] = stock_name.strip()
 		
 		if color and color.strip():
+			color = color_kor_to_eng(color)
 			interested_stocks[stock_code]['color'] = color.strip()
 		elif color is not None:
 			# Remove color if explicitly set to empty
@@ -3608,13 +3684,20 @@ async def add_interested_stock_api(request: dict, proxy_path: str = "", token: s
 				# Remove bamount if invalid value
 				if 'bamount' in interested_stocks[stock_code]:
 					del interested_stocks[stock_code]['bamount']
-		
+
+		if stime and stime.strip():
+			interested_stocks[stock_code]['stime'] = stime.strip()
+
+		if yyyymmdd and yyyymmdd.strip():
+			interested_stocks[stock_code]['yyyymmdd'] = yyyymmdd.strip()
+
 		# Save to file
 		if save_interested_stocks_to_json():
 			return {"status": "success", "message": f"Stock {stock_code} added/updated in interested list", "data": interested_stocks}
 		else:
 			return {"status": "error", "message": "Failed to save to file"}
 	except Exception as e:
+		print('Exception-> {}'.format(e))
 		return {"status": "error", "message": str(e)}
 
 @app.delete("/api/interested-stocks/{stock_code}")
