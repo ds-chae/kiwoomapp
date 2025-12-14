@@ -1604,6 +1604,24 @@ async def root(token: str = Cookie(None)):
 			#interested-stocks-container tbody tr.selected:hover {
 				background-color: #bbdefb;
 			}
+			#interested-stocks-container {
+				overflow-x: auto;
+				-webkit-overflow-scrolling: touch;
+			}
+			#interested-stocks-container table {
+				min-width: 600px;
+			}
+			@media screen and (max-width: 768px) {
+				#interested-stocks-container {
+					overflow-x: auto;
+					width: 100%;
+					-webkit-overflow-scrolling: touch;
+				}
+				#interested-stocks-container table {
+					min-width: 600px;
+					width: 100%;
+				}
+			}
 			.btn-cancel {
 				background: #e74c3c;
 				color: white;
