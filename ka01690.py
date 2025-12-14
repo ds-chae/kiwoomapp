@@ -3611,6 +3611,7 @@ async def get_interested_stocks_api(proxy_path: str = "", token: str = Cookie(No
 	return {"status": "success", "data": interested_stocks, "timestamp": current_time}
 
 
+'''
 @app.middleware("http")
 async def print_all_headers(request: Request, call_next):
 	headers_dict = dict(request.headers)
@@ -3639,6 +3640,7 @@ async def print_all_headers(request: Request, call_next):
 
 	request._receive = receive
 	return await call_next(request)
+'''
 
 
 def  color_kor_to_eng(color):
