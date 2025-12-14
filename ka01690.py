@@ -1676,6 +1676,40 @@ async def root(token: str = Cookie(None)):
 			#sell-prices-container tbody tr.selected:hover {
 				background-color: #bbdefb;
 			}
+			#miche-container {
+				overflow-x: auto;
+				-webkit-overflow-scrolling: touch;
+			}
+			#miche-container table {
+				min-width: 600px;
+			}
+			#sell-prices-container {
+				overflow-x: auto;
+				-webkit-overflow-scrolling: touch;
+			}
+			#sell-prices-container table {
+				min-width: 600px;
+			}
+			@media screen and (max-width: 768px) {
+				#miche-container {
+					overflow-x: auto;
+					width: 100%;
+					-webkit-overflow-scrolling: touch;
+				}
+				#miche-container table {
+					min-width: 600px;
+					width: 100%;
+				}
+				#sell-prices-container {
+					overflow-x: auto;
+					width: 100%;
+					-webkit-overflow-scrolling: touch;
+				}
+				#sell-prices-container table {
+					min-width: 600px;
+					width: 100%;
+				}
+			}
 		</style>
 	</head>
 	<body>
