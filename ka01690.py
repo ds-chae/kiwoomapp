@@ -176,7 +176,7 @@ def call_fn_kt00018(log_jango, market, ACCT, MY_ACCESS_TOKEN):
 	# fn_kt00018(token=MY_ACCESS_TOKEN, data=params, cont_yn='Y', next_key='nextkey..')
 
 
-from fn_kt10000 import sell_order
+from fn_kt10000 import sell_order, buy_order
 
 def print_j(j):
 	#print(j)
@@ -1567,6 +1567,20 @@ async def root(token: str = Cookie(None)):
 			.btn-add-interested:hover {
 				background: #2980b9;
 			}
+			.btn-buy-interested {
+				background: #27ae60;
+				color: white;
+				border: none;
+				padding: 6px 12px;
+				border-radius: 4px;
+				cursor: pointer;
+				font-size: 12px;
+				font-weight: 600;
+				transition: background-color 0.2s;
+			}
+			.btn-buy-interested:hover {
+				background: #229954;
+			}
 			.btn-remove-interested {
 				background: #e74c3c;
 				color: white;
@@ -1846,6 +1860,30 @@ async def root(token: str = Cookie(None)):
 						</table>
 					</div>
 				</div>
+				<div class="buy-section" id="buy-section" style="margin-top: 20px; padding: 20px; background: #f8f9fa; border-radius: 8px;">
+					<h3>Buy Order</h3>
+					<div class="add-interested-form-content">
+						<div class="form-group">
+							<label for="buy-stock-code-input">Stock Code</label>
+							<input type="text" id="buy-stock-code-input" placeholder="e.g., 005930" />
+						</div>
+						<div class="form-group">
+							<label for="buy-stock-name-input">Stock Name</label>
+							<input type="text" id="buy-stock-name-input" placeholder="e.g., Samsung Electronics" />
+						</div>
+						<div class="form-group">
+							<label for="buy-price-input">Price</label>
+							<input type="number" id="buy-price-input" placeholder="Price" step="0.01" min="0" />
+						</div>
+						<div class="form-group">
+							<label for="buy-amount-input">Amount</label>
+							<input type="number" id="buy-amount-input" placeholder="amount" step="1" min="1" />
+						</div>
+						<button class="btn-buy-interested" onclick="buyStock()" title="Buy stock">
+							Buy
+						</button>
+					</div>
+				</div>
 			</div>
 	"""
 	
@@ -1951,6 +1989,12 @@ async def root(token: str = Cookie(None)):
 			// Fill stock code input
 			document.getElementById('stock-code-input').value = stockCode;
 			
+			// Fill buy section
+			document.getElementById('buy-stock-code-input').value = stockCode;
+			document.getElementById('buy-stock-name-input').value = stockName;
+			document.getElementById('buy-price-input').value = '';
+			document.getElementById('buy-amount-input').value = '';
+			
 			// Fill sell price and rate
 			if (sellPrice && sellPrice !== '-') {
 				// Remove commas and set price
@@ -2033,6 +2077,16 @@ async def root(token: str = Cookie(None)):
 			
 			// Fill stock code input
 			document.getElementById('stock-code-input').value = stockCode;
+			
+			// Fill buy section
+			document.getElementById('buy-stock-code-input').value = stockCode;
+			document.getElementById('buy-stock-name-input').value = stockName;
+			if (orderPrice && orderPrice !== '0' && orderPrice !== '') {
+				document.getElementById('buy-price-input').value = orderPrice;
+			} else {
+				document.getElementById('buy-price-input').value = '';
+			}
+			document.getElementById('buy-amount-input').value = '';
 			
 			// Preassign order price if available, otherwise check for preset price/rate
 			if (orderPrice && orderPrice !== '0' && orderPrice !== '') {
@@ -2969,6 +3023,10 @@ async def root(token: str = Cookie(None)):
 											<tr>
 												<th>Stock Code</th>
 												<th>Stock Name</th>
+												<th>COLOR</th>
+												<th>BType</th>
+												<th>BAmount</th>
+												<th>Buy</th>
 												<th>Action</th>
 											</tr>
 										</thead>
@@ -3061,12 +3119,15 @@ async def root(token: str = Cookie(None)):
 										<tr>
 											<th>Stock Code</th>
 											<th>Stock Name</th>
+											<th>COLOR</th>
+											<th>BType</th>
+											<th>BAmount</th>
 											<th>Action</th>
 										</tr>
 									</thead>
 									<tbody>
 										<tr>
-											<td colspan="4" style="text-align: center; padding: 20px; color: #7f8c8d;">
+											<td colspan="6" style="text-align: center; padding: 20px; color: #7f8c8d;">
 												Error loading interested stocks
 											</td>
 										</tr>
@@ -3094,12 +3155,13 @@ async def root(token: str = Cookie(None)):
 										<th>COLOR</th>
 										<th>BType</th>
 										<th>BAmount</th>
+										<th>Buy</th>
 										<th>Action</th>
 									</tr>
 								</thead>
 								<tbody>
 									<tr>
-										<td colspan="6" style="text-align: center; padding: 20px; color: #7f8c8d;">
+										<td colspan="7" style="text-align: center; padding: 20px; color: #7f8c8d;">
 											Error loading interested stocks
 										</td>
 									</tr>
@@ -3268,6 +3330,12 @@ async def root(token: str = Cookie(None)):
 			document.getElementById('sell-price-input').value = '';
 			document.getElementById('profit-rate-input').value = '';
 			
+			// Fill buy section
+			document.getElementById('buy-stock-code-input').value = stockCode;
+			document.getElementById('buy-stock-name-input').value = stockName;
+			document.getElementById('buy-price-input').value = '';
+			document.getElementById('buy-amount-input').value = '';
+			
 			// Scroll to interested stocks section
 			document.getElementById('interested-stocks-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
 		}
@@ -3308,6 +3376,58 @@ async def root(token: str = Cookie(None)):
 			})
 			.catch(error => {
 				showMessage('Error updating btype: ' + error, 'error');
+			});
+		}
+		
+		function buyStock() {
+			const stockCode = document.getElementById('buy-stock-code-input').value.trim();
+			const stockName = document.getElementById('buy-stock-name-input').value.trim();
+			const price = document.getElementById('buy-price-input').value.trim();
+			const amount = document.getElementById('buy-amount-input').value.trim();
+			
+			if (!stockCode) {
+				showMessage('Please enter a stock code', 'error');
+				return;
+			}
+			
+			if (!amount || amount === '' || parseInt(amount) <= 0) {
+				showMessage('Please enter a valid amount', 'error');
+				return;
+			}
+			
+			if (!price || price === '' || parseFloat(price) <= 0) {
+				showMessage('Please enter a valid price', 'error');
+				return;
+			}
+			
+			// Call buy order API
+			const buyData = {
+				stock_code: stockCode,
+				stock_name: stockName,
+				price: price,
+				amount: amount
+			};
+			
+			fetch('./api/buy-order', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify(buyData)
+			})
+			.then(response => response.json())
+			.then(result => {
+				if (result.status === 'success') {
+					showMessage(result.message || `Buy order placed: ${amount} shares of ${stockName || stockCode} at ${price}`, 'success');
+					// Clear the inputs after successful buy
+					document.getElementById('buy-price-input').value = '';
+					document.getElementById('buy-amount-input').value = '';
+				} else {
+					showMessage('Error: ' + result.message, 'error');
+				}
+			})
+			.catch(error => {
+				showMessage('Error placing buy order: ' + error, 'error');
 			});
 		}
 		
@@ -3448,6 +3568,90 @@ async def cancel_order_api(request: dict, proxy_path: str = "", token: str = Coo
 		return {"status": "success", "message": "Order cancellation requested"}
 	except Exception as e:
 		return {"status": "error", "message": str(e)}
+
+
+def issue_buy_order(stk_cd, ord_uv, ord_qty, stex, trde_tp):
+	key_list = get_key_list()
+	access_token = None
+	for key in key_list:
+		access_token = get_token(key['AK'], key['SK'])
+
+		if not access_token:
+			return {"status": "error", "message": "Unable to retrieve token"}
+
+		# Convert price and amount to strings (as expected by buy_order)
+		ord_uv_str = str(ord_uv)
+		ord_qty_str = str(ord_qty)
+
+		print('issue buy order ', ord_uv_str, ord_uv, ord_qty, stex, trde_tp)
+
+		# Place buy order
+		ret_status = buy_order(
+			MY_ACCESS_TOKEN=access_token,
+			dmst_stex_tp=stex,
+			stk_cd=stk_cd,
+			ord_qty=ord_qty_str,
+			ord_uv=ord_uv_str,
+			trde_tp=trde_tp,
+			cond_uv=''
+		)
+
+		print('buy_order_result: {}'.format(ret_status))
+
+		# Check return status
+		if isinstance(ret_status, dict):
+			rcde = ret_status.get('return_code')
+			rmsg = ret_status.get('return_msg', '')
+			if rcde and rcde != '0000':
+				return {"status": "error", "message": f"Buy order failed: {rmsg}", "return_code": rcde}
+	return ret_status
+
+
+@app.post("/api/buy-order")
+@app.post("/stock/api/buy-order")
+async def buy_order_api(request: dict, proxy_path: str = "", token: str = Cookie(None)):
+	"""API endpoint to place a buy order"""
+	# Check authentication
+	if not token or not verify_token(token):
+		raise HTTPException(
+			status_code=status.HTTP_401_UNAUTHORIZED,
+			detail="Not authenticated"
+		)
+	try:
+		stk_cd = request.get('stock_code')
+		stk_nm = request.get('stock_name')
+		ord_uv = int(request.get('price'))  # Order price
+		ord_amount = int(request.get('amount'))
+		ord_qty = ord_amount // ord_uv
+
+		print('buy_order_api: stk_cd={}, stk_nm={}, ord_uv={}, amount={}'.format(
+			stk_cd, stk_nm, ord_uv, ord_amount))
+		
+		if not all([stk_cd, ord_uv, ord_qty]):
+			return {"status": "error", "message": "Missing required parameters: stock_code, price, amount"}
+		
+		# Validate price and amount
+		if ord_uv <= 0:
+				return {"status": "error", "message": "Price must be greater than 0"}
+		if ord_qty <= 0:
+				return {"status": "error", "message": "Amount must be greater than 0"}
+
+		# Remove 'A' prefix from stock code if present
+		if stk_cd and stk_cd[0] == 'A':
+			stk_cd = stk_cd[1:]
+		
+		# Retrieve token from first account in key_list
+		stex = 'KRX'
+		trde_tp = '0'
+
+		ret_status = issue_buy_order(stk_cd, ord_uv, ord_qty, stex, trde_tp)
+
+	except Exception as e:
+		print('buy_order_api exception: {}'.format(e))
+		return {"status": "error", "message": str(e)}
+
+	return {"status": "success", "message": f"Buy order placed: {ord_qty} shares of {stk_nm or stk_cd} at {ord_uv}", "data": ret_status}
+
 
 @app.get("/api/sell-prices")
 @app.get("/{proxy_path:path}/api/sell-prices")

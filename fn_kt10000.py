@@ -28,6 +28,8 @@ def fn_kt10000(token, data, cont_yn='N', next_key=''):
 	print('Code:', response.status_code)
 	print('Header:', json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4, ensure_ascii=False))
 	print('Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON 응답을 파싱하여 출력
+	
+	return response.json()
 
 
 import requests
@@ -106,7 +108,8 @@ def buy_order(MY_ACCESS_TOKEN, dmst_stex_tp='KRX', stk_cd='', ord_qty='0', ord_u
 	}
 
 	# 3. API 실행
-	fn_kt10000(token=MY_ACCESS_TOKEN, data=params)
+	ret_status = fn_kt10000(token=MY_ACCESS_TOKEN, data=params)
+	return ret_status
 
 
 def buy_example(ACCT, AK, SK):
