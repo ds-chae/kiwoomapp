@@ -531,7 +531,7 @@ def cancel_order_main(now, access_token, stex, ord_no, stk_cd):
 day_start_time = time(6, 0)  # 07:00
 nxt_start_time = time(7, 59)  # 07:00
 nxt_end_time = time(8, 49)  # 07:00
-krx_start_time = time(8,55)
+krx_start_time = time(8,52)
 krx_end_time = time(15,30)
 new_day = False
 nxt_cancelled = False
