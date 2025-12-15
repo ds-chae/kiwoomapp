@@ -12,7 +12,7 @@ import uvicorn
 from contextlib import asynccontextmanager
 import secrets
 import socket
-from ka10080 import get_bun_chart
+from ka10080 import get_bun_chart, get_bun_price
 
 
 # Load environment variables from .env file
@@ -687,11 +687,11 @@ def load_dictionaries_from_json():
 
 
 bun_charts = {}
-
+bun_prices = {}
 
 # fill minutes chart if btype is 'CL'
 def fill_charts_for_CL(MY_ACCESS_TOKEN):
-	global bun_charts
+	global bun_charts, interested_stocks
 	try:
 		for stk_cd in interested_stocks:
 			stock = interested_stocks[stk_cd]
@@ -708,6 +708,15 @@ def fill_charts_for_CL(MY_ACCESS_TOKEN):
 		exit(0)
 
 
+def calculate_bun_prices(MY_ACCESS_TOKEN):
+	global bun_prices, bun_charts, interested_stocks
+	for stk_cd in interested_stocks:
+		if stk_cd in bun_prices:
+			continue
+		if not stk_cd in bun_charts:
+			continue
+		chart = bun_charts[stk_cd]
+		bun_prices[stk_cd] = get_bun_price(chart)
 
 
 def save_dictionaries_to_json():

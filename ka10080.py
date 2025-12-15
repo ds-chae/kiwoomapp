@@ -4,6 +4,54 @@ import pandas as pd
 
 from au1001 import get_one_token
 
+
+def get_bun_price(chart):
+	bun_price = {}
+	high_index = 0
+	low_index = 0
+	high_price = 0
+	low_price = 0
+	chartlen = len(chart)
+	if chartlen < 416:
+		bun_price['high_price'] = 0
+		bun_price['low_price'] = 0
+		return bun_price
+	prd = 416
+	i = 0
+	# find high
+	while i < prd :
+		buntick = chart[i]
+		hpc = int(buntick['high_pric'])
+		if hpc < 0 :
+			hpc = -hpc
+		if hpc > high_price:
+			high_index = i
+			high_price = hpc
+		i += 1
+	i = high_index
+	if (i + prd) >= chartlen:
+		bun_price['high_price'] = 0
+		bun_price['low_price'] = 0
+		return bun_price
+	index_386 = i + prd
+	low_price = high_price
+	while i < index_386:
+		buntick = chart[i]
+		lpc = int(buntick['low_pric'])
+		if lpc < 0 :
+			lpc = -lpc
+		if lpc < low_price:
+			low_price = lpc
+			low_time = buntick['cntr_tm']
+		i += 1
+	bun_price['high_price'] = high_price
+	bun_price['low_price'] = low_price
+	gap = (high_price - low_price) / 10
+	bun_price['gap'] = gap
+	bun_price['price'] = [high_price - gap * i for i in range(10)]
+	return bun_price
+	# [2] -> R, [3] -> O
+
 # 주식분봉차트조회요청
 def fn_ka10080(token, data, cont_yn='N', next_key=''):
 	# 1. 요청할 API URL
@@ -52,7 +100,7 @@ if __name__ == '__main__':
 
 	# 2. 요청 데이터
 	params = {
-		'stk_cd': '005930', # 종목코드 거래소별 종목코드 (KRX:039490,NXT:039490_NX,SOR:039490_AL)
+		'stk_cd': '105840', # 종목코드 거래소별 종목코드 (KRX:039490,NXT:039490_NX,SOR:039490_AL)
 		'tic_scope': '15', # 틱범위 1:1분, 3:3분, 5:5분, 10:10분, 15:15분, 30:30분, 45:45분, 60:60분
 		'upd_stkpc_tp': '1', # 수정주가구분 0 or 1
 	}
@@ -60,5 +108,9 @@ if __name__ == '__main__':
 	# 3. API 실행
 	bun_chart = fn_ka10080(token=MY_ACCESS_TOKEN, data=params)
 	print(bun_chart)
+
+	bun_price = get_bun_price(bun_chart)
+	print(bun_price)
+
 	# next-key, cont-yn 값이 있을 경우
 	# fn_ka10080(token=MY_ACCESS_TOKEN, data=params, cont_yn='Y', next_key='nextkey..')
