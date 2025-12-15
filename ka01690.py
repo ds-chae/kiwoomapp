@@ -2951,22 +2951,28 @@ async def root(token: str = Cookie(None)):
 			document.querySelectorAll('#sell-prices-container tbody tr').forEach(tr => {
 				tr.classList.remove('selected');
 			});
-			
+
 			// Add selected class to clicked row
 			rowElement.classList.add('selected');
-			
+
 			// Get stock code, stock name, sell price, and sell rate from row
 			const stockCode = rowElement.getAttribute('data-stock-code');
 			const stockName = rowElement.getAttribute('data-stock-name') || '';
 			const sellPrice = rowElement.getAttribute('data-sell-price') || '';
 			const sellRate = rowElement.getAttribute('data-sell-rate') || '';
-			
+
 			// Fill stock name (read-only)
 			document.getElementById('stock-name-display').value = stockName;
-			
+
 			// Fill stock code input
 			document.getElementById('stock-code-input').value = stockCode;
-			
+
+			// Fill buy section
+			document.getElementById('buy-stock-code-input').value = stockCode;
+			document.getElementById('buy-stock-name-input').value = stockName;
+			document.getElementById('buy-price-input').value = '';
+			document.getElementById('buy-amount-input').value = '';
+
 			// Fill sell price and rate
 			if (sellPrice && sellPrice !== '-') {
 				// Remove commas and set price
