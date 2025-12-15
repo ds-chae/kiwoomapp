@@ -12,6 +12,8 @@ import uvicorn
 from contextlib import asynccontextmanager
 import secrets
 import socket
+from ka10080 import get_bun_chart
+
 
 # Load environment variables from .env file
 load_dotenv()
@@ -684,6 +686,30 @@ def load_dictionaries_from_json():
 		exit(0)
 
 
+bun_charts = {}
+
+
+# fill minutes chart if btype is 'CL'
+def fill_charts_for_CL(MY_ACCESS_TOKEN):
+	global bun_charts
+	try:
+		for stk_cd in interested_stocks:
+			stock = interested_stocks[stk_cd]
+			btype = ''
+			if 'btype' in stock:
+				btype = stock['btype']
+			if btype != 'CL':
+				continue
+			if stk_cd in bun_charts:
+				continue
+			bun_charts[stk_cd] = get_bun_chart(MY_ACCESS_TOKEN, stk_cd)
+	except Exception as ex:
+		print(ex)
+		exit(0)
+
+
+
+
 def save_dictionaries_to_json():
 	"""Save sell_prices to JSON file"""
 	global sell_prices
@@ -759,6 +785,8 @@ async def lifespan(app: FastAPI):
 		print("Dictionaries loaded successfully")
 	except Exception as e:
 		print(f"Error loading dictionaries: {e}")
+
+	fill_charts_for_CL(get_one_token())
 
 	# Initialize stored jango data by calling once immediately (non-blocking, allow failure)
 	print("Initializing jango data...")

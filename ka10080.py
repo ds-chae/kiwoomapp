@@ -24,10 +24,26 @@ def fn_ka10080(token, data, cont_yn='N', next_key=''):
 	# 3. http POST 요청
 	response = requests.post(url, headers=headers, json=data)
 
-	# 4. 응답 상태 코드와 데이터 출력
-	print('Code:', response.status_code)
-	print('Header:', json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4, ensure_ascii=False))
-	print('Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON 응답을 파싱하여 출력
+	dump_chart = False
+	if dump_chart:
+		# 4. 응답 상태 코드와 데이터 출력
+		print('Code:', response.status_code)
+		print('Header:', json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4, ensure_ascii=False))
+		print('Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON 응답을 파싱하여 출력
+
+	return response.json()['stk_min_pole_chart_qry']
+
+
+def get_bun_chart(MY_ACCESS_TOKEN, stk_cd):
+	params = {
+		'stk_cd': stk_cd, # 종목코드 거래소별 종목코드 (KRX:039490,NXT:039490_NX,SOR:039490_AL)
+		'tic_scope': '15', # 틱범위 1:1분, 3:3분, 5:5분, 10:10분, 15:15분, 30:30분, 45:45분, 60:60분
+		'upd_stkpc_tp': '1', # 수정주가구분 0 or 1
+	}
+	print('get_bun_chart:{}'.format(stk_cd))
+	# 3. API 실행
+	return fn_ka10080(token=MY_ACCESS_TOKEN, data=params)
+
 
 # 실행 구간
 if __name__ == '__main__':
@@ -42,7 +58,7 @@ if __name__ == '__main__':
 	}
 
 	# 3. API 실행
-	fn_ka10080(token=MY_ACCESS_TOKEN, data=params)
-
+	bun_chart = fn_ka10080(token=MY_ACCESS_TOKEN, data=params)
+	print(bun_chart)
 	# next-key, cont-yn 값이 있을 경우
 	# fn_ka10080(token=MY_ACCESS_TOKEN, data=params, cont_yn='Y', next_key='nextkey..')
