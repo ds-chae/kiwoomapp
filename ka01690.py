@@ -14,6 +14,10 @@ import secrets
 import socket
 from ka10080 import get_bun_chart, get_bun_price
 
+# Interested stocks list
+INTERESTED_STOCKS_FILE = 'interested_stocks.json'
+interested_stocks = {}
+
 
 # Load environment variables from .env file
 load_dotenv()
@@ -608,15 +612,10 @@ def set_new_day():
 	updown_list = {}
 
 SELL_PRICES_FILE = 'sell_price_rate.json'
-sell_prices = {}
 
 # Global flag for auto sell - dictionary keyed by account
 AUTO_SELL_FILE = 'auto_sell_enabled.json'
 auto_sell_enabled = {}
-
-# Interested stocks list
-INTERESTED_STOCKS_FILE = 'interested_stocks.json'
-interested_stocks = {}
 
 def load_dictionaries_from_json():
 	"""Load sell_prices, auto_sell_enabled, and interested_stocks from JSON files"""
@@ -626,15 +625,14 @@ def load_dictionaries_from_json():
 	if os.path.exists(SELL_PRICES_FILE):
 		try:
 			with open(SELL_PRICES_FILE, 'r', encoding='utf-8') as f:
-				sell_prices = json.load(f)
+				sp = json.load(f)
 			print(f"Loaded sell_prices from {SELL_PRICES_FILE}: {sell_prices}")
+			for stk_cd in sp:
+				if 'rate' in p[stk_cd]:
+					set_interested_rate(stk_cd, '', p, p[stk_cd]['rate'])
 		except Exception as e:
 			print(f"Error loading sell_prices: {e}")
-			sell_prices = {}
-	else:
-		sell_prices = {}
-		print(f"Created new sell_prices dictionary")
-	
+
 	# Load auto_sell_enabled
 	if os.path.exists(AUTO_SELL_FILE):
 		try:
@@ -684,6 +682,9 @@ def load_dictionaries_from_json():
 	except Exception as ex:
 		print(ex)
 		exit(0)
+
+
+def set_interested_rate(stk_cd, p[stk_cd]['rate']):
 
 
 bun_charts = {}
@@ -1319,10 +1320,23 @@ async def root(token: str = Cookie(None)):
 				text-transform: uppercase;
 				letter-spacing: 0.5px;
 				font-size: 12px;
+				border-right: 1px solid rgba(255, 255, 255, 0.3);
+			}
+			th:last-child {
+				border-right: none;
+			}
+			th:first-child,
+			td:first-child {
+				width: 110px;
+				white-space: nowrap;
 			}
 			td {
 				padding: 15px;
 				border-bottom: 1px solid #e0e0e0;
+				border-right: 1px solid #e0e0e0;
+			}
+			td:last-child {
+				border-right: none;
 			}
 			tbody tr {
 				transition: background-color 0.2s;
@@ -1785,12 +1799,12 @@ async def root(token: str = Cookie(None)):
 						<table>
 							<thead>
 								<tr>
-									<th>Stock Code</th>
-									<th>Stock Name</th>
+									<th>Code</th>
+									<th>Name</th>
 									<th>Order Type</th>
 									<th>Order Qty</th>
 									<th>Order / Current</th>
-									<th>Unexecuted Qty</th>
+									<th>REMAIN</th>
 									<th>Exchange</th>
 									<th>Time</th>
 									<th>Action</th>
@@ -1817,8 +1831,8 @@ async def root(token: str = Cookie(None)):
 						<table>
 							<thead>
 								<tr>
-									<th>Stock Code</th>
-									<th>Stock Name</th>
+									<th>Code</th>
+									<th>Name</th>
 									<th>Sell Price</th>
 									<th>Sell Rate</th>
 									<th>Action</th>
@@ -1836,11 +1850,11 @@ async def root(token: str = Cookie(None)):
 				</div>
 			</div>
 			<div class="interested-stocks-section" id="interested-stocks-section">
-				<h2>⭐ Interested Stocks List</h2>
+				<h2>⭐ Int Stocks</h2>
 				<div class="add-interested-form">
 					<div class="add-interested-form-content">
 						<div class="form-group">
-							<label for="interested-stock-code-input">Stock Code</label>
+							<label for="interested-stock-code-input">Code</label>
 							<input type="text" id="interested-stock-code-input" placeholder="e.g., 005930" />
 						</div>
 						<div class="form-group">
@@ -1876,14 +1890,11 @@ async def root(token: str = Cookie(None)):
 				</div>
 				<div id="interested-stocks-container">
 					<div class="account-group">
-						<div class="account-group-header">
-							<h2>Interested Stocks</h2>
-						</div>
 						<table>
 							<thead>
 								<tr>
-									<th>Stock Code</th>
-									<th>Stock Name</th>
+									<th>Code</th>
+									<th>Name</th>
 									<th>Action</th>
 								</tr>
 							</thead>
@@ -1901,11 +1912,11 @@ async def root(token: str = Cookie(None)):
 					<h3>Buy Order</h3>
 					<div class="add-interested-form-content">
 						<div class="form-group">
-							<label for="buy-stock-code-input">Stock Code</label>
+							<label for="buy-stock-code-input">Code</label>
 							<input type="text" id="buy-stock-code-input" placeholder="e.g., 005930" />
 						</div>
 						<div class="form-group">
-							<label for="buy-stock-name-input">Stock Name</label>
+							<label for="buy-stock-name-input">Name</label>
 							<input type="text" id="buy-stock-name-input" placeholder="e.g., Samsung Electronics" />
 						</div>
 						<div class="form-group">
@@ -1931,11 +1942,11 @@ async def root(token: str = Cookie(None)):
 					<div class="update-form-header">
 						<div class="update-form-content">
 							<div class="form-group">
-								<label for="stock-name-display">Stock Name</label>
+								<label for="stock-name-display">Name</label>
 								<input type="text" id="stock-name-display" readonly style="background-color: #f5f5f5; cursor: not-allowed;" />
 							</div>
 							<div class="form-group">
-								<label for="stock-code-input">Stock Code</label>
+								<label for="stock-code-input">Code</label>
 								<input type="text" id="stock-code-input" placeholder="e.g., 005930" />
 							</div>
 							<div class="form-group">
@@ -2238,9 +2249,9 @@ async def root(token: str = Cookie(None)):
 									<table>
 										<thead>
 											<tr>
-												<th>Stock Code</th>
-												<th>Stock Name</th>
-												<th>Tradeable Qty</th>
+												<th>Code</th>
+												<th>Name</th>
+												<th>Qty</th>
 												<th>Avg Buy Price</th>
 												<th>Profit Rate</th>
 												<th>PRESET PRC/RATE</th>
@@ -2522,13 +2533,10 @@ async def root(token: str = Cookie(None)):
 						const micheContainer = document.getElementById('miche-container');
 						const micheSection = document.getElementById('miche-section');
 						
-						// Group miche data by account
-						const accountGroups = {};
+						// Group miche data by stock code
+						const stockGroups = {};
 						for (const item of micheData) {
 							const acctNo = item.ACCT || '';
-							if (!accountGroups[acctNo]) {
-								accountGroups[acctNo] = [];
-							}
 							// Extract oso (unexecuted orders) from each account
 							if (item.oso && Array.isArray(item.oso)) {
 								for (const order of item.oso) {
@@ -2537,14 +2545,19 @@ async def root(token: str = Cookie(None)):
 										...order,
 										ACCT: acctNo
 									};
-									accountGroups[acctNo].push(orderWithAcct);
+									const stkCd = order.stk_cd || '';
+									const stkCdClean = stkCd && stkCd[0] === 'A' ? stkCd.substring(1) : stkCd;
+									if (!stockGroups[stkCdClean]) {
+										stockGroups[stkCdClean] = [];
+									}
+									stockGroups[stkCdClean].push(orderWithAcct);
 								}
 							}
 						}
 						
 						// Check if we have any data
-						const hasData = Object.keys(accountGroups).length > 0 && 
-							Object.values(accountGroups).some(orders => orders && orders.length > 0);
+						const hasData = Object.keys(stockGroups).length > 0 && 
+							Object.values(stockGroups).some(orders => orders && orders.length > 0);
 						
 						// Always show miche section
 						micheSection.style.display = 'block';
@@ -2562,20 +2575,19 @@ async def root(token: str = Cookie(None)):
 									<table>
 										<thead>
 											<tr>
-												<th>Stock Code</th>
-												<th>Stock Name</th>
+												<th>Code</th>
+												<th>Name</th>
 												<th>Order Type</th>
 												<th>Order Qty</th>
 												<th>Order / Current</th>
-												<th>Unexecuted Qty</th>
-												<th>Exchange</th>
+												<th>REMAIN</th>
 												<th>Time</th>
 												<th>Action</th>
 											</tr>
 										</thead>
 										<tbody>
 											<tr>
-												<td colspan="9" style="text-align: center; padding: 20px; color: #7f8c8d;">
+												<td colspan="8" style="text-align: center; padding: 20px; color: #7f8c8d;">
 													No unexecuted orders available
 												</td>
 											</tr>
@@ -2584,33 +2596,44 @@ async def root(token: str = Cookie(None)):
 								</div>
 							`;
 						} else {
-							const sortedAccounts = Object.keys(accountGroups).sort();
+							// Sort stock codes
+							const sortedStockCodes = Object.keys(stockGroups).sort();
 							
-							for (const acctNo of sortedAccounts) {
-								const orders = accountGroups[acctNo] || [];
+							// Single table with one header
+							htmlContent += `
+								<div class="account-group">
+									<div class="account-group-header">
+										<h2>Unexecuted Orders</h2>
+									</div>
+									<table>
+										<thead>
+											<tr>
+												<th>Code</th>
+												<th>Name</th>
+												<th>Order Type</th>
+												<th>Order Qty</th>
+												<th>Order / Current</th>
+												<th>REMAIN</th>
+												<th>Time</th>
+												<th>Action</th>
+											</tr>
+										</thead>
+										<tbody>
+							`;
+							
+							// Render orders grouped by stock code (no visible boundaries)
+							for (const stockCode of sortedStockCodes) {
+								const orders = stockGroups[stockCode] || [];
 								if (orders.length === 0) continue;
 								
-								htmlContent += `
-									<div class="account-group">
-										<div class="account-group-header">
-											<h2>Account: ${acctNo}</h2>
-										</div>
-										<table>
-											<thead>
-												<tr>
-													<th>Stock Code</th>
-													<th>Stock Name</th>
-													<th>Order Type</th>
-													<th>Order Qty</th>
-													<th>Order / Current</th>
-													<th>Unexecuted Qty</th>
-													<th>Exchange</th>
-													<th>Time</th>
-													<th>Action</th>
-												</tr>
-											</thead>
-											<tbody>
-								`;
+								// Sort orders: buy orders first, then sell orders
+								orders.sort((a, b) => {
+									const aType = a.io_tp_nm || '';
+									const bType = b.io_tp_nm || '';
+									if (aType.includes('매수') && !bType.includes('매수')) return -1;
+									if (!aType.includes('매수') && bType.includes('매수')) return 1;
+									return 0;
+								});
 								
 								for (const order of orders) {
 									const stkCd = order.stk_cd || '';
@@ -2650,11 +2673,10 @@ async def root(token: str = Cookie(None)):
 											<td>${ordQty.toLocaleString()}</td>
 											<td>${priceDisplay}</td>
 											<td><strong>${osoQty.toLocaleString()}</strong></td>
-											<td>${order.stex_tp_txt || order.stex_tp || '-'}</td>
 											<td>${order.tm || '-'}</td>
 											<td>
 												<button class="btn-cancel" 
-													data-acct="${order.ACCT || acctNo}"
+													data-acct="${order.ACCT || ''}"
 													data-stex-tp="${stexTp}"
 													data-ord-no="${ordNo}"
 													data-stk-cd="${stkCd}"
@@ -2665,13 +2687,13 @@ async def root(token: str = Cookie(None)):
 										</tr>
 									`;
 								}
-								
-								htmlContent += `
-											</tbody>
-										</table>
-									</div>
-								`;
 							}
+							
+							htmlContent += `
+										</tbody>
+									</table>
+								</div>
+							`;
 						}
 						
 						micheContainer.innerHTML = htmlContent;
@@ -2688,20 +2710,19 @@ async def root(token: str = Cookie(None)):
 								<table>
 									<thead>
 									<tr>
-										<th>Stock Code</th>
-										<th>Stock Name</th>
+										<th>Code</th>
+										<th>Name</th>
 										<th>Order Type</th>
 										<th>Order Qty</th>
 										<th>Order / Current</th>
-										<th>Unexecuted Qty</th>
-										<th>Exchange</th>
+										<th>REMAIN</th>
 										<th>Time</th>
 										<th>Action</th>
 									</tr>
 								</thead>
 								<tbody>
 									<tr>
-										<td colspan="9" style="text-align: center; padding: 20px; color: #7f8c8d;">
+										<td colspan="8" style="text-align: center; padding: 20px; color: #7f8c8d;">
 											Error loading unexecuted orders
 										</td>
 									</tr>
@@ -2724,20 +2745,19 @@ async def root(token: str = Cookie(None)):
 							<table>
 								<thead>
 									<tr>
-										<th>Stock Code</th>
-										<th>Stock Name</th>
+										<th>Code</th>
+										<th>Name</th>
 										<th>Order Type</th>
 										<th>Order Qty</th>
 										<th>Order / Current</th>
-										<th>Unexecuted Qty</th>
-										<th>Exchange</th>
+										<th>REMAIN</th>
 										<th>Time</th>
 										<th>Action</th>
 									</tr>
 								</thead>
 								<tbody>
 									<tr>
-										<td colspan="9" style="text-align: center; padding: 20px; color: #7f8c8d;">
+										<td colspan="8" style="text-align: center; padding: 20px; color: #7f8c8d;">
 											Error loading unexecuted orders
 										</td>
 									</tr>
@@ -2835,8 +2855,8 @@ async def root(token: str = Cookie(None)):
 									<table>
 										<thead>
 											<tr>
-												<th>Stock Code</th>
-												<th>Stock Name</th>
+												<th>Code</th>
+												<th>Name</th>
 												<th>Sell Price</th>
 												<th>Sell Rate</th>
 												<th>Action</th>
@@ -2863,8 +2883,8 @@ async def root(token: str = Cookie(None)):
 								<table>
 									<thead>
 										<tr>
-											<th>Stock Code</th>
-											<th>Stock Name</th>
+											<th>Code</th>
+											<th>Name</th>
 											<th>Sell Price</th>
 											<th>Sell Rate</th>
 											<th>Action</th>
@@ -2931,8 +2951,8 @@ async def root(token: str = Cookie(None)):
 								<table>
 									<thead>
 										<tr>
-											<th>Stock Code</th>
-											<th>Stock Name</th>
+											<th>Code</th>
+											<th>Name</th>
 											<th>Sell Price</th>
 											<th>Sell Rate</th>
 											<th>Action</th>
@@ -2963,8 +2983,8 @@ async def root(token: str = Cookie(None)):
 							<table>
 								<thead>
 									<tr>
-										<th>Stock Code</th>
-										<th>Stock Name</th>
+										<th>Code</th>
+										<th>Name</th>
 										<th>Sell Price</th>
 										<th>Sell Rate</th>
 										<th>Action</th>
@@ -3058,14 +3078,11 @@ async def root(token: str = Cookie(None)):
 						if (stockCodes.length === 0) {
 							interestedStocksContainer.innerHTML = `
 								<div class="account-group">
-									<div class="account-group-header">
-										<h2>Interested Stocks</h2>
-									</div>
 									<table>
 										<thead>
 											<tr>
-												<th>Stock Code</th>
-												<th>Stock Name</th>
+												<th>Code</th>
+												<th>Name</th>
 												<th>COLOR</th>
 												<th>BType</th>
 												<th>BAmount</th>
@@ -3088,14 +3105,11 @@ async def root(token: str = Cookie(None)):
 						
 						let htmlContent = `
 							<div class="account-group">
-								<div class="account-group-header">
-									<h2>Interested Stocks</h2>
-								</div>
 								<table>
 									<thead>
 										<tr>
-											<th>Stock Code</th>
-											<th>Stock Name</th>
+											<th>Code</th>
+											<th>Name</th>
 											<th>COLOR</th>
 											<th>BType</th>
 											<th>BAmount</th>
@@ -3154,14 +3168,11 @@ async def root(token: str = Cookie(None)):
 						interestedStocksSection.style.display = 'block';
 						interestedStocksContainer.innerHTML = `
 							<div class="account-group">
-								<div class="account-group-header">
-									<h2>Interested Stocks</h2>
-								</div>
 								<table>
 									<thead>
 										<tr>
-											<th>Stock Code</th>
-											<th>Stock Name</th>
+											<th>Code</th>
+											<th>Name</th>
 											<th>COLOR</th>
 											<th>BType</th>
 											<th>BAmount</th>
@@ -3187,14 +3198,11 @@ async def root(token: str = Cookie(None)):
 					interestedStocksSection.style.display = 'block';
 					interestedStocksContainer.innerHTML = `
 						<div class="account-group">
-							<div class="account-group-header">
-								<h2>Interested Stocks</h2>
-							</div>
 							<table>
 								<thead>
 									<tr>
-										<th>Stock Code</th>
-										<th>Stock Name</th>
+										<th>Code</th>
+										<th>Name</th>
 										<th>COLOR</th>
 										<th>BType</th>
 										<th>BAmount</th>
@@ -3909,6 +3917,72 @@ def  color_kor_to_eng(color):
 	return color
 
 
+def set_interested_rate(stock_code, stock_name='', color=None,
+                    btype='', bamount='0',
+                    stime='', yyyymmdd='', sellprice='0',
+                    sellrate='0', sellgap='0'):
+	global interested_stocks
+
+	if not stock_name or stock_name == '':
+		stock_name = get_stockname(stock_code)
+
+	# Add or update the stock in interested list
+	if stock_code not in interested_stocks:
+		stock = {}
+	else:
+		stock = interested_stocks[stock_code]
+
+	stock['stock_name'] = stock_name.strip()
+	if color and color.strip():
+		color = color_kor_to_eng(color)
+		stock['color'] = color.strip()
+	elif color is not None:
+		# Remove color if explicitly set to empty
+		if 'color' in stock:
+			del stock['color']
+
+	if btype and btype.strip():
+		stock['btype'] = btype.strip()
+	elif btype is not None:
+		# Remove btype if explicitly set to empty
+		if 'btype' in stock:
+			del stock['btype']
+
+	if bamount is not None:
+		try:
+			bamount_int = int(bamount)
+			if bamount_int > 0:
+				stock['bamount'] = bamount_int
+			else:
+				# Remove bamount if explicitly set to 0 or negative
+				if 'bamount' in stock:
+					del stock['bamount']
+		except (ValueError, TypeError):
+			# Remove bamount if invalid value
+			if 'bamount' in stock:
+				del stock['bamount']
+
+	if stime and stime.strip():
+		stock['stime'] = stime.strip()
+
+	if yyyymmdd and yyyymmdd.strip():
+		stock['yyyymmdd'] = yyyymmdd.strip()
+
+	stock['sellprice'] = sellprice
+	stock['sellrate'] = sellrate
+	stock['sellgap'] = sellgap
+	if not 'clprice' in stock:
+		stock['clprice'] = '0'
+
+	interested_stocks[stock_code] = stock
+	# Save to file
+	if save_interested_stocks_to_json():
+		return {"status": "success", "message": f"Stock {stock_code} added/updated in interested list",
+	        "data": interested_stocks}
+	else:
+		return {"status": "error", "message": "Failed to save to file"}
+
+
 
 @app.post("/api/interested-stocks")
 @app.post("/{proxy_path:path}/api/interested-stocks")
@@ -3942,61 +4016,19 @@ async def add_interested_stock_api(request: dict, proxy_path: str = "",
 		bamount = request.get('bamount')
 		stime = request.get('stime')
 		yyyymmdd = request.get('yyyymmdd')
+		sellprice = request.get('sellprice', '0')
+		sellrate = request.get('sellrate', '0')
+		sellgap = request.get('sellgap', '0')
 
 		print('stime = {}, yyyymmdd = {}'.format(stime, yyyymmdd))
 
 		if not stock_code:
 			return {"status": "error", "message": "stock_code is required"}
-		if not stock_name or stock_name == '':
-			stock_name = get_stockname(stock_code)
 
-		# Add or update the stock in interested list
-		if stock_code not in interested_stocks:
-			interested_stocks[stock_code] = {}
-		
-		if stock_name and stock_name.strip():
-			interested_stocks[stock_code]['stock_name'] = stock_name.strip()
-		
-		if color and color.strip():
-			color = color_kor_to_eng(color)
-			interested_stocks[stock_code]['color'] = color.strip()
-		elif color is not None:
-			# Remove color if explicitly set to empty
-			if 'color' in interested_stocks[stock_code]:
-				del interested_stocks[stock_code]['color']
-		
-		if btype and btype.strip():
-			interested_stocks[stock_code]['btype'] = btype.strip()
-		elif btype is not None:
-			# Remove btype if explicitly set to empty
-			if 'btype' in interested_stocks[stock_code]:
-				del interested_stocks[stock_code]['btype']
-		
-		if bamount is not None:
-			try:
-				bamount_int = int(bamount)
-				if bamount_int > 0:
-					interested_stocks[stock_code]['bamount'] = bamount_int
-				else:
-					# Remove bamount if explicitly set to 0 or negative
-					if 'bamount' in interested_stocks[stock_code]:
-						del interested_stocks[stock_code]['bamount']
-			except (ValueError, TypeError):
-				# Remove bamount if invalid value
-				if 'bamount' in interested_stocks[stock_code]:
-					del interested_stocks[stock_code]['bamount']
-
-		if stime and stime.strip():
-			interested_stocks[stock_code]['stime'] = stime.strip()
-
-		if yyyymmdd and yyyymmdd.strip():
-			interested_stocks[stock_code]['yyyymmdd'] = yyyymmdd.strip()
-
-		# Save to file
-		if save_interested_stocks_to_json():
-			return {"status": "success", "message": f"Stock {stock_code} added/updated in interested list", "data": interested_stocks}
-		else:
-			return {"status": "error", "message": "Failed to save to file"}
+		return set_interested_rate(stock_code, stock_name, color=None,
+		                    btype = '', bamount = '0',
+		                    stime = '', yyyymmdd = '', sellprice = '0',
+		                    sellrate = '0', sellgap = '0')
 	except Exception as e:
 		print('Exception-> {}'.format(e))
 		return {"status": "error", "message": str(e)}
