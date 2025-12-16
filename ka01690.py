@@ -309,17 +309,17 @@ def call_sell_order(MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond):
 	if isinstance(trde_able_qty, str) and len(trde_able_qty) > 4:
 		trde_able_qty = trde_able_qty[4:]
 
-	ord_uv = 'None'
-	if 'price' in sell_cond:
-		ord_uv = str(sell_cond['price'])
-	if ord_uv == 'None':
-		if 'rate' in sell_cond:
-			s_rate = sell_cond['rate']
+	ord_uv = '0'
+	if 'sellprice' in sell_cond:
+		ord_uv = sell_cond['sellprice']
+	if ord_uv == '0':
+		if 'sellrate' in sell_cond:
+			s_rate = float(sell_cond['sellrate'])
 			s_price = pur_pric * (1.0 + s_rate)
 			s_price = round_trunc(s_price)
 			ord_uv = str(s_price)
 
-	if ord_uv == 'None': # price is not calculated
+	if ord_uv == '0': # price is not calculated
 		return
 	upperlimit = get_upper_limit(MY_ACCESS_TOKEN, stk_cd)
 	if int(ord_uv) > upperlimit :
@@ -366,10 +366,10 @@ def sell_jango(now, jango, market):
 				if stk_cd in not_nxt_cd and market == 'NXT':
 					continue
 					
-				if stk_cd not in sell_prices:
+				if stk_cd not in interested_stocks:
 					continue
 
-				sell_cond = sell_prices[stk_cd]
+				sell_cond = interested_stocks[stk_cd]
 				working_status = 'before call_sell_order {} {} {}'.format(market, stk_cd, stk_nm)
 				call_sell_order(MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond)
 		except Exception as ex:
@@ -611,27 +611,13 @@ def set_new_day():
 	not_nxt_cd = {}
 	updown_list = {}
 
-SELL_PRICES_FILE = 'sell_price_rate.json'
-
 # Global flag for auto sell - dictionary keyed by account
 AUTO_SELL_FILE = 'auto_sell_enabled.json'
 auto_sell_enabled = {}
 
 def load_dictionaries_from_json():
-	"""Load sell_prices, auto_sell_enabled, and interested_stocks from JSON files"""
-	global sell_prices, auto_sell_enabled, interested_stocks
-
-	# Load sell_prices
-	if os.path.exists(SELL_PRICES_FILE):
-		try:
-			with open(SELL_PRICES_FILE, 'r', encoding='utf-8') as f:
-				sp = json.load(f)
-			print(f"Loaded sell_prices from {SELL_PRICES_FILE}: {sell_prices}")
-			for stk_cd in sp:
-				if 'rate' in p[stk_cd]:
-					set_interested_rate(stk_cd, '', p, p[stk_cd]['rate'])
-		except Exception as e:
-			print(f"Error loading sell_prices: {e}")
+	"""Load auto_sell_enabled, and interested_stocks from JSON files"""
+	global auto_sell_enabled, interested_stocks
 
 	# Load auto_sell_enabled
 	if os.path.exists(AUTO_SELL_FILE):
@@ -684,8 +670,6 @@ def load_dictionaries_from_json():
 		exit(0)
 
 
-def set_interested_rate(stk_cd, p[stk_cd]['rate']):
-
 
 bun_charts = {}
 bun_prices = {}
@@ -719,18 +703,6 @@ def calculate_bun_prices(MY_ACCESS_TOKEN):
 		chart = bun_charts[stk_cd]
 		bun_prices[stk_cd] = get_bun_price(chart)
 
-
-def save_dictionaries_to_json():
-	"""Save sell_prices to JSON file"""
-	global sell_prices
-	try:
-		with open(SELL_PRICES_FILE, 'w', encoding='utf-8') as f:
-			json.dump(sell_prices, f, indent=2, ensure_ascii=False)
-		print(f"Saved sell_prices to {SELL_PRICES_FILE}")
-		return True
-	except Exception as e:
-		print(f"Error saving sell_prices: {e}")
-		return False
 
 def save_auto_sell_to_json():
 	"""Save auto_sell_enabled to JSON file"""
@@ -936,33 +908,23 @@ def format_account_data():
 				price_part = '-'
 				rate_part = '-'
 				
-				if stk_cd_clean in sell_prices:
-					sell_cond = sell_prices[stk_cd_clean]
+				if stk_cd_clean in interested_stocks:
+					sell_cond = interested_stocks[stk_cd_clean]
 					
-					if 'price' in sell_cond:
+					if 'sellprice' in sell_cond:
 						try:
-							price_val = sell_cond['price']
-							if price_val and str(price_val).strip() and str(price_val) != 'None':
-								price_part = f"{float(price_val):,.0f}"
+							price_val = int(sell_cond['sellprice'])
+							price_part = f"{price_val}"
 						except (ValueError, TypeError):
 							pass
 					
-					if 'rate' in sell_cond:
+					if 'sellrate' in sell_cond:
 						try:
-							rate_val = sell_cond['rate']
-							if rate_val is not None and str(rate_val).strip() and str(rate_val) != 'None':
-								rate_part = f"{float(rate_val)*100:+.2f}%"
+							rate_val = float(sell_cond['sellrate'])
+							rate_part = f"{rate_val*100:+.2f}%"
 						except (ValueError, TypeError):
 							pass
-					
-					# Update stock name in sell_prices if available
-					if stk_nm and stk_nm.strip():
-						sell_prices[stk_cd_clean]['stock_name'] = stk_nm
-				else:
-					# Create entry with stock name if stock exists but no sell price entry
-					if stk_nm and stk_nm.strip():
-						sell_prices[stk_cd_clean] = {'stock_name': stk_nm}
-				
+
 				# Combine price and rate
 				preset_prc_rate = f"{price_part} / {rate_part}"
 				
@@ -3714,7 +3676,7 @@ async def get_sell_prices_api(proxy_path: str = "", token: str = Cookie(None)):
 			status_code=status.HTTP_401_UNAUTHORIZED,
 			detail="Not authenticated"
 		)
-	global sell_prices
+	sell_prices = {}
 	current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 	return {"status": "success", "data": sell_prices, "timestamp": current_time}
 
@@ -3728,7 +3690,7 @@ async def delete_sell_prices_api(stock_code: str, proxy_path: str = "", token: s
 			status_code=status.HTTP_401_UNAUTHORIZED,
 			detail="Not authenticated"
 		)
-	global sell_prices
+	global interested_stocks
 	print('2797')
 	try:
 		if not stock_code:
@@ -3736,10 +3698,12 @@ async def delete_sell_prices_api(stock_code: str, proxy_path: str = "", token: s
 
 		print('2802')
 		# Delete the entire entry regardless of its contents
-		if stock_code in sell_prices:
-			del sell_prices[stock_code]
+		if stock_code in interested_stocks:
+			interested_stocks[stock_code]['sellprice'] = '0'
+			interested_stocks[stock_code]['sellrate'] = '0'
+
 			# Save to file
-			if save_dictionaries_to_json():
+			if save_interested_stocks_to_json():
 				return {"status": "success", "message": f"Sell price/rate deleted for {stock_code}"}
 			else:
 				return {"status": "error", "message": "Failed to save to file"}
@@ -3759,7 +3723,7 @@ async def update_sell_prices_api(request: dict, proxy_path: str = "", token: str
 			status_code=status.HTTP_401_UNAUTHORIZED,
 			detail="Not authenticated"
 		)
-	global sell_prices
+
 	try:
 		stock_code = request.get('stock_code')
 		stock_name = request.get('stock_name')
@@ -3768,44 +3732,8 @@ async def update_sell_prices_api(request: dict, proxy_path: str = "", token: str
 		
 		if not stock_code:
 			return {"status": "error", "message": "stock_code is required"}
-		
-		if stock_code not in sell_prices:
-			sell_prices[stock_code] = {}
-		
-		# Store stock name if provided
-		if stock_name and stock_name.strip():
-			sell_prices[stock_code]['stock_name'] = stock_name.strip()
-		
-		# Mutual exclusivity: if price is set, clear rate; if rate is set, clear price
-		if price is not None and price != '':
-			# Set fixed price and clear rate
-			sell_prices[stock_code]['price'] = str(price)
-			if 'rate' in sell_prices[stock_code]:
-				del sell_prices[stock_code]['rate']
-		elif 'price' in sell_prices[stock_code]:
-			# Remove price if explicitly set to None/empty
-			del sell_prices[stock_code]['price']
-		
-		if rate is not None and rate != '':
-			# Set profit rate and clear price
-			sell_prices[stock_code]['rate'] = float(rate)
-			if 'price' in sell_prices[stock_code]:
-				del sell_prices[stock_code]['price']
-		elif 'rate' in sell_prices[stock_code]:
-			# Remove rate if explicitly set to None/empty
-			del sell_prices[stock_code]['rate']
-		
-		# Remove entry if both price and rate are missing (but keep stock_name)
-		if 'price' not in sell_prices[stock_code] and 'rate' not in sell_prices[stock_code]:
-			# Only remove if stock_name is also not present
-			if 'stock_name' not in sell_prices[stock_code]:
-				del sell_prices[stock_code]
-		
-		# Save to file
-		if save_dictionaries_to_json():
-			return {"status": "success", "message": "Sell price updated", "data": sell_prices}
-		else:
-			return {"status": "error", "message": "Failed to save to file"}
+
+		return set_interested_rate(stock_code, stock_name=stock_name, sellprice=price, sellrate=rate)
 	except Exception as e:
 		return {"status": "error", "message": str(e)}
 
@@ -3933,39 +3861,24 @@ def set_interested_rate(stock_code, stock_name='', color=None,
 		stock = interested_stocks[stock_code]
 
 	stock['stock_name'] = stock_name.strip()
-	if color and color.strip():
+	if color :
 		color = color_kor_to_eng(color)
 		stock['color'] = color.strip()
-	elif color is not None:
-		# Remove color if explicitly set to empty
-		if 'color' in stock:
-			del stock['color']
 
-	if btype and btype.strip():
+	if btype :
 		stock['btype'] = btype.strip()
-	elif btype is not None:
-		# Remove btype if explicitly set to empty
-		if 'btype' in stock:
-			del stock['btype']
 
 	if bamount is not None:
 		try:
 			bamount_int = int(bamount)
-			if bamount_int > 0:
-				stock['bamount'] = bamount_int
-			else:
-				# Remove bamount if explicitly set to 0 or negative
-				if 'bamount' in stock:
-					del stock['bamount']
+			stock['bamount'] = bamount_int
 		except (ValueError, TypeError):
-			# Remove bamount if invalid value
-			if 'bamount' in stock:
-				del stock['bamount']
+			pass
 
-	if stime and stime.strip():
+	if stime:
 		stock['stime'] = stime.strip()
 
-	if yyyymmdd and yyyymmdd.strip():
+	if yyyymmdd:
 		stock['yyyymmdd'] = yyyymmdd.strip()
 
 	stock['sellprice'] = sellprice
@@ -4025,10 +3938,10 @@ async def add_interested_stock_api(request: dict, proxy_path: str = "",
 		if not stock_code:
 			return {"status": "error", "message": "stock_code is required"}
 
-		return set_interested_rate(stock_code, stock_name, color=None,
-		                    btype = '', bamount = '0',
-		                    stime = '', yyyymmdd = '', sellprice = '0',
-		                    sellrate = '0', sellgap = '0')
+		return set_interested_rate(stock_code, stock_name, color=color,
+		                    btype = btype, bamount = bamount,
+		                    stime = stime, yyyymmdd = yyyymmdd, sellprice = sellprice,
+		                    sellrate = sellrate, sellgap = sellgap)
 	except Exception as e:
 		print('Exception-> {}'.format(e))
 		return {"status": "error", "message": str(e)}
