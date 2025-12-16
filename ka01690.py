@@ -1388,6 +1388,39 @@ async def root(token: str = Cookie(None)):
 				border-radius: 4px;
 				font-size: 14px;
 			}
+			#interested-stock-code-input {
+				width: 120px;
+			}
+			#interested-stock-bamount-input {
+				width: 120px;
+			}
+			#interested-stock-price-input {
+				width: 120px;
+			}
+			#interested-stock-rate-input {
+				width: 120px;
+			}
+			#interested-stock-gaprate-input {
+				width: 120px;
+			}
+			/* Remove spinner arrows from number inputs */
+			#interested-stock-bamount-input::-webkit-outer-spin-button,
+			#interested-stock-bamount-input::-webkit-inner-spin-button,
+			#interested-stock-price-input::-webkit-outer-spin-button,
+			#interested-stock-price-input::-webkit-inner-spin-button,
+			#interested-stock-rate-input::-webkit-outer-spin-button,
+			#interested-stock-rate-input::-webkit-inner-spin-button,
+			#interested-stock-gaprate-input::-webkit-outer-spin-button,
+			#interested-stock-gaprate-input::-webkit-inner-spin-button {
+				-webkit-appearance: none;
+				margin: 0;
+			}
+			#interested-stock-bamount-input[type=number],
+			#interested-stock-price-input[type=number],
+			#interested-stock-rate-input[type=number],
+			#interested-stock-gaprate-input[type=number] {
+				-moz-appearance: textfield;
+			}
 			.form-group input:focus {
 				outline: none;
 				border-color: #667eea;
@@ -1526,16 +1559,6 @@ async def root(token: str = Cookie(None)):
 				border-top: 2px solid #e0e0e0;
 			}
 			.miche-section h2 {
-				color: #333;
-				margin-bottom: 20px;
-				font-size: 1.5em;
-			}
-			.sell-prices-section {
-				margin-top: 40px;
-				padding-top: 30px;
-				border-top: 2px solid #e0e0e0;
-			}
-			.sell-prices-section h2 {
 				color: #333;
 				margin-bottom: 20px;
 				font-size: 1.5em;
@@ -1690,31 +1713,11 @@ async def root(token: str = Cookie(None)):
 			.miche-row.selected:hover {
 				background-color: #bbdefb;
 			}
-			#sell-prices-container tbody tr {
-				cursor: pointer;
-			}
-			#sell-prices-container tbody tr:hover {
-				background-color: #f5f5f5;
-			}
-			#sell-prices-container tbody tr.selected {
-				background-color: #e3f2fd;
-				border-left: 4px solid #667eea;
-			}
-			#sell-prices-container tbody tr.selected:hover {
-				background-color: #bbdefb;
-			}
 			#miche-container {
 				overflow-x: auto;
 				-webkit-overflow-scrolling: touch;
 			}
 			#miche-container table {
-				min-width: 600px;
-			}
-			#sell-prices-container {
-				overflow-x: auto;
-				-webkit-overflow-scrolling: touch;
-			}
-			#sell-prices-container table {
 				min-width: 600px;
 			}
 			@media screen and (max-width: 768px) {
@@ -1727,23 +1730,19 @@ async def root(token: str = Cookie(None)):
 					min-width: 600px;
 					width: 100%;
 				}
-				#sell-prices-container {
-					overflow-x: auto;
-					width: 100%;
-					-webkit-overflow-scrolling: touch;
-				}
-				#sell-prices-container table {
-					min-width: 600px;
-					width: 100%;
-				}
 			}
 		</style>
 	</head>
 	<body>
 		<div class="container">
 			<div class="header">
-				<h1 id="headline-time">📊 Account -</h1>
-				<p>Stock Holdings and Trading Information</p>
+				<div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+					<div>
+						<h1 id="headline-time">📊 Account -</h1>
+						<p>Stock Holdings and Trading Information</p>
+					</div>
+					<button class="btn-logout" onclick="logout()">🚪 Logout</button>
+				</div>
 			</div>
 			<div class="table-container" id="table-container">
 				<div class="empty-state">
@@ -1775,34 +1774,6 @@ async def root(token: str = Cookie(None)):
 							<tbody>
 								<tr>
 									<td colspan="9" style="text-align: center; padding: 20px; color: #7f8c8d;">
-										Loading...
-									</td>
-								</tr>
-							</tbody>
-						</table>
-					</div>
-				</div>
-			</div>
-			<div class="sell-prices-section" id="sell-prices-section">
-				<h2>💰 All Sell Prices & Rates</h2>
-				<div id="sell-prices-container">
-					<div class="account-group">
-						<div class="account-group-header">
-							<h2>Sell Prices & Rates</h2>
-						</div>
-						<table>
-							<thead>
-								<tr>
-									<th>Code</th>
-									<th>Name</th>
-									<th>Sell Price</th>
-									<th>Sell Rate</th>
-									<th>Action</th>
-								</tr>
-							</thead>
-							<tbody>
-								<tr>
-									<td colspan="5" style="text-align: center; padding: 20px; color: #7f8c8d;">
 										Loading...
 									</td>
 								</tr>
@@ -1845,6 +1816,15 @@ async def root(token: str = Cookie(None)):
 						</div>
 						<div class="form-group">
 							<input type="number" id="interested-stock-bamount-input" placeholder="BAmount" step="1" />
+						</div>
+						<div class="form-group">
+							<input type="number" id="interested-stock-price-input" placeholder="Price" step="0.01" />
+						</div>
+						<div class="form-group">
+							<input type="number" id="interested-stock-rate-input" placeholder="Rate (%)" step="0.01" />
+						</div>
+						<div class="form-group">
+							<input type="number" id="interested-stock-gaprate-input" placeholder="GapRate" step="0.01" />
 						</div>
 						<button class="btn-add-interested" onclick="addInterestedStock()">Add/Update</button>
 						<button class="btn-delete" onclick="deleteInterestedStockFromForm()">Delete</button>
@@ -1899,60 +1879,9 @@ async def root(token: str = Cookie(None)):
 	
 	html_content += """
 			</div>
-			<div class="update-section" id="update-section">
-				<div class="update-form">
-					<div class="update-form-header">
-						<div class="update-form-content">
-							<div class="form-group">
-								<label for="stock-name-display">Name</label>
-								<input type="text" id="stock-name-display" readonly style="background-color: #f5f5f5; cursor: not-allowed;" />
-							</div>
-							<div class="form-group">
-								<label for="stock-code-input">Code</label>
-								<input type="text" id="stock-code-input" placeholder="e.g., 005930" />
-							</div>
-							<div class="form-group">
-								<label for="sell-price-input">Sell Price (Fixed)</label>
-								<input type="number" id="sell-price-input" placeholder="Leave empty for rate" />
-							</div>
-							<div class="form-group">
-								<label for="profit-rate-input">Profit Rate (%)</label>
-								<input type="number" step="0.01" id="profit-rate-input" placeholder="e.g., 5.5 for 5.5%" />
-							</div>
-							<button class="btn-update" onclick="updateSellPrice()">Update</button>
-							<button class="btn-delete" onclick="deleteSellPrice()">Delete</button>
-						</div>
-						<button class="btn-logout" onclick="logout()">🚪 Logout</button>
-					</div>
-				</div>
-				<div id="update-message" class="message"></div>
-			</div>
 		</div>
 		<button class="refresh-btn" onclick="updateTable()">🔄 Refresh</button>
 		<script>
-		// Add event listeners for mutual exclusivity between price and rate
-		document.addEventListener('DOMContentLoaded', function() {
-			const sellPriceInput = document.getElementById('sell-price-input');
-			const profitRateInput = document.getElementById('profit-rate-input');
-			
-			// When price is entered, clear rate
-			if (sellPriceInput) {
-				sellPriceInput.addEventListener('input', function() {
-					if (this.value.trim() !== '') {
-						profitRateInput.value = '';
-					}
-				});
-			}
-			
-			// When rate is entered, clear price
-			if (profitRateInput) {
-				profitRateInput.addEventListener('input', function() {
-					if (this.value.trim() !== '') {
-						sellPriceInput.value = '';
-					}
-				});
-			}
-		});
 		
 		function getProfitClass(profitRate) {
 			const profitValue = parseFloat(profitRate.replace('%', '').replace('+', ''));
@@ -1993,42 +1922,47 @@ async def root(token: str = Cookie(None)):
 			const sellPrice = rowElement.getAttribute('data-sell-price') || '';
 			const sellRate = rowElement.getAttribute('data-sell-rate') || '';
 			
-			// Fill stock name (read-only)
-			document.getElementById('stock-name-display').value = stockName;
-			
-			// Fill stock code input
-			document.getElementById('stock-code-input').value = stockCode;
-			
 			// Fill buy section
 			document.getElementById('buy-stock-code-input').value = stockCode;
 			document.getElementById('buy-stock-name-input').value = stockName;
 			document.getElementById('buy-price-input').value = '';
 			document.getElementById('buy-amount-input').value = '';
 			
-			// Fill sell price and rate
+			// Fill int stocks section
+			document.getElementById('interested-stock-code-input').value = stockCode;
+			document.getElementById('interested-stock-name-input').value = stockName;
 			if (sellPrice && sellPrice !== '-') {
-				// Remove commas and set price
 				const priceValue = sellPrice.replace(/,/g, '');
-				document.getElementById('sell-price-input').value = priceValue;
+				document.getElementById('interested-stock-price-input').value = priceValue;
 			} else {
-				document.getElementById('sell-price-input').value = '';
+				document.getElementById('interested-stock-price-input').value = '';
 			}
-			
+			// Fill int stocks section
+			document.getElementById('interested-stock-code-input').value = stockCode;
+			document.getElementById('interested-stock-name-input').value = stockName;
+			if (sellPrice && sellPrice !== '-') {
+				const priceValue = sellPrice.replace(/,/g, '');
+				document.getElementById('interested-stock-price-input').value = priceValue;
+			} else {
+				document.getElementById('interested-stock-price-input').value = '';
+			}
 			if (sellRate && sellRate !== '-') {
-				// Extract percentage value (remove % sign)
+				// Extract percentage value (from Account Holdings table format like "5.5%")
 				const rateMatch = sellRate.match(/([\d.+-]+)%/);
 				if (rateMatch) {
 					const ratePercent = parseFloat(rateMatch[1]);
-					document.getElementById('profit-rate-input').value = ratePercent.toFixed(2);
+					// Display as percentage in the input (user enters percentage)
+					document.getElementById('interested-stock-rate-input').value = ratePercent.toFixed(2);
 				} else {
-					document.getElementById('profit-rate-input').value = '';
+					document.getElementById('interested-stock-rate-input').value = '';
 				}
 			} else {
-				document.getElementById('profit-rate-input').value = '';
+				document.getElementById('interested-stock-rate-input').value = '';
 			}
+			document.getElementById('interested-stock-gaprate-input').value = '';
+			document.getElementById('interested-stock-gaprate-input').value = '';
 			
 			// Scroll to update section
-			document.getElementById('update-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
 		}
 		
 		function deleteRowSellPrice(stockCode, stockName) {
@@ -2082,12 +2016,6 @@ async def root(token: str = Cookie(None)):
 			const stockName = rowElement.getAttribute('data-stock-name') || '';
 			const orderPrice = rowElement.getAttribute('data-order-price') || '';
 			
-			// Fill stock name (read-only)
-			document.getElementById('stock-name-display').value = stockName;
-			
-			// Fill stock code input
-			document.getElementById('stock-code-input').value = stockCode;
-			
 			// Fill buy section
 			document.getElementById('buy-stock-code-input').value = stockCode;
 			document.getElementById('buy-stock-name-input').value = stockName;
@@ -2098,44 +2026,16 @@ async def root(token: str = Cookie(None)):
 			}
 			document.getElementById('buy-amount-input').value = '';
 			
-			// Preassign order price if available, otherwise check for preset price/rate
+			// Fill int stocks section
+			document.getElementById('interested-stock-code-input').value = stockCode;
+			document.getElementById('interested-stock-name-input').value = stockName;
 			if (orderPrice && orderPrice !== '0' && orderPrice !== '') {
-				// Use order price from the miche table
-				document.getElementById('sell-price-input').value = orderPrice;
-				document.getElementById('profit-rate-input').value = '';
+				document.getElementById('interested-stock-price-input').value = orderPrice;
 			} else {
-				// No order price, check if there's a preset price/rate for this stock code
-				fetch('./api/sell-prices')
-					.then(response => response.json())
-					.then(result => {
-						if (result.status === 'success' && result.data && result.data[stockCode]) {
-							const sellCond = result.data[stockCode];
-							if (sellCond.price) {
-								document.getElementById('sell-price-input').value = sellCond.price;
-								document.getElementById('profit-rate-input').value = '';
-							} else if (sellCond.rate !== undefined && sellCond.rate !== null) {
-								document.getElementById('profit-rate-input').value = (parseFloat(sellCond.rate) * 100).toFixed(2);
-								document.getElementById('sell-price-input').value = '';
-							} else {
-								document.getElementById('sell-price-input').value = '';
-								document.getElementById('profit-rate-input').value = '';
-							}
-						} else {
-							// No preset, clear inputs
-							document.getElementById('sell-price-input').value = '';
-							document.getElementById('profit-rate-input').value = '';
-						}
-					})
-					.catch(error => {
-						console.error('Error fetching sell prices:', error);
-						// On error, clear inputs
-						document.getElementById('sell-price-input').value = '';
-						document.getElementById('profit-rate-input').value = '';
-					});
+				document.getElementById('interested-stock-price-input').value = '';
 			}
-			
-			// Scroll to update section
-			document.getElementById('update-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
+			document.getElementById('interested-stock-rate-input').value = '';
+			document.getElementById('interested-stock-gaprate-input').value = '';
 		}
 		
 		function updateTable() {
@@ -2330,50 +2230,6 @@ async def root(token: str = Cookie(None)):
 			});
 		}
 		
-		function updateSellPrice() {
-			const stockCode = document.getElementById('stock-code-input').value.trim();
-			const stockName = document.getElementById('stock-name-display').value.trim();
-			const sellPrice = document.getElementById('sell-price-input').value.trim();
-			const profitRate = document.getElementById('profit-rate-input').value.trim();
-			
-			if (!stockCode) {
-				showMessage('Please enter a stock code', 'error');
-				return;
-			}
-			
-			const data = {
-				stock_code: stockCode,
-				stock_name: stockName || null,
-				price: sellPrice || null,
-				rate: profitRate ? (parseFloat(profitRate) / 100) : null
-			};
-			
-			fetch('./api/sell-prices', {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-				},
-				body: JSON.stringify(data)
-			})
-			.then(response => response.json())
-			.then(result => {
-				if (result.status === 'success') {
-					showMessage('Sell price updated successfully!', 'success');
-					document.getElementById('stock-name-display').value = '';
-					document.getElementById('stock-code-input').value = '';
-					document.getElementById('sell-price-input').value = '';
-					document.getElementById('profit-rate-input').value = '';
-					// Update immediately
-					updateTable();
-					updateSellPrices();
-				} else {
-					showMessage('Error: ' + result.message, 'error');
-				}
-			})
-			.catch(error => {
-				showMessage('Error updating sell price: ' + error, 'error');
-			});
-		}
 		
 		function logout() {
 			fetch('./api/logout', {
@@ -2434,56 +2290,12 @@ async def root(token: str = Cookie(None)):
 				} else {
 					window.location.href = '/login';
 				}
-			});
-		}
-		
-		function deleteSellPrice() {
-			const stockCode = document.getElementById('stock-code-input').value.trim();
-			const stockName = document.getElementById('stock-name-display').value.trim();
-			
-			if (!stockCode) {
-				showMessage('Please enter a stock code', 'error');
-				return;
-			}
-			
-			if (!confirm(`Delete sell price/rate for ${stockName || stockCode}?`)) {
-				return;
-			}
-			
-			fetch('./api/sell-prices/' + encodeURIComponent(stockCode), {
-				method: 'DELETE',
-				headers: {
-					'Content-Type': 'application/json',
-				}
-			})
-			.then(response => response.json())
-			.then(result => {
-				if (result.status === 'success') {
-					showMessage('Sell price deleted successfully!', 'success');
-					document.getElementById('stock-name-display').value = '';
-					document.getElementById('stock-code-input').value = '';
-					document.getElementById('sell-price-input').value = '';
-					document.getElementById('profit-rate-input').value = '';
-					// Update immediately
-					updateTable();
-					updateSellPrices();
-				} else {
-					showMessage('Error: ' + result.message, 'error');
-				}
-			})
-			.catch(error => {
-				showMessage('Error deleting sell price: ' + error, 'error');
 			});
 		}
 		
 		function showMessage(message, type) {
-			const messageDiv = document.getElementById('update-message');
-			messageDiv.textContent = message;
-			messageDiv.className = 'message ' + type;
-			messageDiv.style.display = 'block';
-			setTimeout(() => {
-				messageDiv.style.display = 'none';
-			}, 3000);
+			// Simple alert for now since update-message div is removed
+			alert(message);
 		}
 		
 		function updateMiche() {
@@ -2783,6 +2595,8 @@ async def root(token: str = Cookie(None)):
 		
 		
 		function updateSellPrices() {
+			// Function disabled - All Sell Prices & Rates section removed
+			return;
 			// Add cache-busting parameter to ensure fresh data
 			const timestamp = new Date().getTime();
 			fetch('./api/sell-prices?t=' + timestamp)
@@ -2980,45 +2794,39 @@ async def root(token: str = Cookie(None)):
 			const sellPrice = rowElement.getAttribute('data-sell-price') || '';
 			const sellRate = rowElement.getAttribute('data-sell-rate') || '';
 
-			// Fill stock name (read-only)
-			document.getElementById('stock-name-display').value = stockName;
-
-			// Fill stock code input
-			document.getElementById('stock-code-input').value = stockCode;
-
 			// Fill buy section
 			document.getElementById('buy-stock-code-input').value = stockCode;
 			document.getElementById('buy-stock-name-input').value = stockName;
 			document.getElementById('buy-price-input').value = '';
 			document.getElementById('buy-amount-input').value = '';
 
-			// Fill sell price and rate
+			// Fill int stocks section
+			document.getElementById('interested-stock-code-input').value = stockCode;
+			document.getElementById('interested-stock-name-input').value = stockName;
 			if (sellPrice && sellPrice !== '-') {
-				// Remove commas and set price
 				const priceValue = sellPrice.replace(/,/g, '');
-				document.getElementById('sell-price-input').value = priceValue;
+				document.getElementById('interested-stock-price-input').value = priceValue;
 			} else {
-				document.getElementById('sell-price-input').value = '';
+				document.getElementById('interested-stock-price-input').value = '';
 			}
-			
 			if (sellRate && sellRate !== '-') {
-				// Convert rate from decimal to percentage
+				// sellRate is in decimal format (stored), convert to percentage for display
 				try {
 					const rateDecimal = parseFloat(sellRate);
 					if (!isNaN(rateDecimal)) {
-						document.getElementById('profit-rate-input').value = (rateDecimal * 100).toFixed(2);
+						document.getElementById('interested-stock-rate-input').value = (rateDecimal * 100).toFixed(2);
 					} else {
-						document.getElementById('profit-rate-input').value = '';
+						document.getElementById('interested-stock-rate-input').value = '';
 					}
 				} catch (e) {
-					document.getElementById('profit-rate-input').value = '';
+					document.getElementById('interested-stock-rate-input').value = '';
 				}
 			} else {
-				document.getElementById('profit-rate-input').value = '';
+				document.getElementById('interested-stock-rate-input').value = '';
 			}
+			document.getElementById('interested-stock-gaprate-input').value = '';
 			
 			// Scroll to update section
-			document.getElementById('update-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
 		}
 		
 		function updateInterestedStocks() {
@@ -3048,13 +2856,15 @@ async def root(token: str = Cookie(None)):
 												<th>COLOR</th>
 												<th>BType</th>
 												<th>BAmount</th>
-												<th>Buy</th>
+												<th>SellPrice</th>
+												<th>SellRate</th>
+												<th>SellGap</th>
 												<th>Action</th>
 											</tr>
 										</thead>
 										<tbody>
 											<tr>
-												<td colspan="6" style="text-align: center; padding: 20px; color: #7f8c8d;">
+												<td colspan="9" style="text-align: center; padding: 20px; color: #7f8c8d;">
 													No interested stocks added yet
 												</td>
 											</tr>
@@ -3075,6 +2885,9 @@ async def root(token: str = Cookie(None)):
 											<th>COLOR</th>
 											<th>BType</th>
 											<th>BAmount</th>
+											<th>SellPrice</th>
+											<th>SellRate</th>
+											<th>SellGap</th>
 											<th>Action</th>
 										</tr>
 									</thead>
@@ -3098,15 +2911,33 @@ async def root(token: str = Cookie(None)):
 							const stockColor = stockInfo.color || '';
 							const stockBtype = stockInfo.btype || '';
 							const stockBamount = stockInfo.bamount || '';
+							const stockPrice = stockInfo.sellprice || '0';
+							const stockRate = stockInfo.sellrate || '0';
+							const stockGaprate = stockInfo.sellgap || '0';
 							const colorDisplay = stockColor && colorMap[stockColor] ? colorMap[stockColor] : '-';
 							
+							// Format values for display
+							const priceDisplay = stockPrice && stockPrice !== '0' ? parseFloat(stockPrice).toLocaleString() : '-';
+							// Convert sellrate from decimal to percentage for display
+							let rateDisplay = '-';
+							if (stockRate && stockRate !== '0') {
+								const rateDecimal = parseFloat(stockRate);
+								if (!isNaN(rateDecimal)) {
+									rateDisplay = (rateDecimal * 100).toFixed(2) + '%';
+								}
+							}
+							const gaprateDisplay = stockGaprate && stockGaprate !== '0' ? parseFloat(stockGaprate).toLocaleString() : '-';
+							
 							htmlContent += `
-								<tr data-stock-code="${stockCode}" data-stock-name="${stockName}" data-stock-color="${stockColor}" data-stock-btype="${stockBtype}" data-stock-bamount="${stockBamount}" onclick="selectInterestedStockRow(this)">
+								<tr data-stock-code="${stockCode}" data-stock-name="${stockName}" data-stock-color="${stockColor}" data-stock-btype="${stockBtype}" data-stock-bamount="${stockBamount}" data-stock-price="${stockPrice}" data-stock-rate="${stockRate}" data-stock-gaprate="${stockGaprate}" onclick="selectInterestedStockRow(this)">
 									<td><strong>${stockCode}</strong></td>
 									<td>${stockName}</td>
 									<td>${colorDisplay}</td>
 									<td>${stockBtype || '-'}</td>
 									<td>${stockBamount || '-'}</td>
+									<td>${priceDisplay}</td>
+									<td>${rateDisplay}</td>
+									<td>${gaprateDisplay}</td>
 									<td>
 										<button class="btn-remove-interested" onclick="event.stopPropagation(); removeInterestedStock('${stockCode}', '${stockName}')" title="Remove from interested list">
 											🗑️ Remove
@@ -3138,12 +2969,15 @@ async def root(token: str = Cookie(None)):
 											<th>COLOR</th>
 											<th>BType</th>
 											<th>BAmount</th>
+											<th>SellPrice</th>
+											<th>SellRate</th>
+											<th>SellGap</th>
 											<th>Action</th>
 										</tr>
 									</thead>
 									<tbody>
 										<tr>
-											<td colspan="6" style="text-align: center; padding: 20px; color: #7f8c8d;">
+											<td colspan="9" style="text-align: center; padding: 20px; color: #7f8c8d;">
 												Error loading interested stocks
 											</td>
 										</tr>
@@ -3168,13 +3002,15 @@ async def root(token: str = Cookie(None)):
 										<th>COLOR</th>
 										<th>BType</th>
 										<th>BAmount</th>
-										<th>Buy</th>
+										<th>SellPrice</th>
+										<th>SellRate</th>
+										<th>SellGap</th>
 										<th>Action</th>
 									</tr>
 								</thead>
 								<tbody>
 									<tr>
-										<td colspan="7" style="text-align: center; padding: 20px; color: #7f8c8d;">
+										<td colspan="9" style="text-align: center; padding: 20px; color: #7f8c8d;">
 											Error loading interested stocks
 										</td>
 									</tr>
@@ -3191,10 +3027,22 @@ async def root(token: str = Cookie(None)):
 			const stockColor = document.getElementById('interested-stock-color-input').value.trim();
 			const stockBtype = document.getElementById('interested-stock-btype-input').value.trim();
 			const stockBamount = document.getElementById('interested-stock-bamount-input').value.trim();
+			const stockPrice = document.getElementById('interested-stock-price-input').value.trim();
+			const stockRate = document.getElementById('interested-stock-rate-input').value.trim();
+			const stockGaprate = document.getElementById('interested-stock-gaprate-input').value.trim();
 			
 			if (!stockCode) {
 				showMessage('Please enter a stock code', 'error');
 				return;
+			}
+			
+			// Convert sellrate from percentage to decimal for storage
+			let sellrateDecimal = '0';
+			if (stockRate && stockRate !== '') {
+				const ratePercent = parseFloat(stockRate);
+				if (!isNaN(ratePercent)) {
+					sellrateDecimal = (ratePercent / 100).toString();
+				}
 			}
 			
 			const data = {
@@ -3202,7 +3050,10 @@ async def root(token: str = Cookie(None)):
 				stock_name: stockName || null,
 				color: stockColor || null,
 				btype: stockBtype || null,
-				bamount: stockBamount ? parseInt(stockBamount) : null
+				bamount: stockBamount ? parseInt(stockBamount) : null,
+				sellprice: stockPrice || '0',
+				sellrate: sellrateDecimal,
+				sellgap: stockGaprate || '0'
 			};
 			
 			fetch('./api/interested-stocks', {
@@ -3221,6 +3072,9 @@ async def root(token: str = Cookie(None)):
 					document.getElementById('interested-stock-color-input').value = '';
 					document.getElementById('interested-stock-btype-input').value = '';
 					document.getElementById('interested-stock-bamount-input').value = '';
+					document.getElementById('interested-stock-price-input').value = '';
+					document.getElementById('interested-stock-rate-input').value = '';
+					document.getElementById('interested-stock-gaprate-input').value = '';
 					// Update immediately
 					updateInterestedStocks();
 				} else {
@@ -3329,6 +3183,9 @@ async def root(token: str = Cookie(None)):
 			const stockColor = rowElement.getAttribute('data-stock-color') || '';
 			const stockBtype = rowElement.getAttribute('data-stock-btype') || '';
 			const stockBamount = rowElement.getAttribute('data-stock-bamount') || '';
+			const stockPrice = rowElement.getAttribute('data-stock-price') || '';
+			const stockRate = rowElement.getAttribute('data-stock-rate') || '';
+			const stockGaprate = rowElement.getAttribute('data-stock-gaprate') || '';
 			
 			// Fill the interested stocks form fields
 			document.getElementById('interested-stock-code-input').value = stockCode;
@@ -3336,12 +3193,19 @@ async def root(token: str = Cookie(None)):
 			document.getElementById('interested-stock-color-input').value = stockColor;
 			document.getElementById('interested-stock-btype-input').value = stockBtype;
 			document.getElementById('interested-stock-bamount-input').value = stockBamount;
-			
-			// Fill the sell price form fields
-			document.getElementById('stock-name-display').value = stockName;
-			document.getElementById('stock-code-input').value = stockCode;
-			document.getElementById('sell-price-input').value = '';
-			document.getElementById('profit-rate-input').value = '';
+			document.getElementById('interested-stock-price-input').value = stockPrice !== '0' ? stockPrice : '';
+			// Convert sellrate from decimal (stored) to percentage (display)
+			if (stockRate && stockRate !== '0') {
+				const rateDecimal = parseFloat(stockRate);
+				if (!isNaN(rateDecimal)) {
+					document.getElementById('interested-stock-rate-input').value = (rateDecimal * 100).toFixed(2);
+				} else {
+					document.getElementById('interested-stock-rate-input').value = '';
+				}
+			} else {
+				document.getElementById('interested-stock-rate-input').value = '';
+			}
+			document.getElementById('interested-stock-gaprate-input').value = stockGaprate !== '0' ? stockGaprate : '';
 			
 			// Fill buy section
 			document.getElementById('buy-stock-code-input').value = stockCode;
