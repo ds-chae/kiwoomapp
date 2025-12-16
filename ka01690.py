@@ -314,7 +314,9 @@ def call_sell_order(MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond):
 		ord_uv = sell_cond['sellprice']
 	if ord_uv == '0':
 		if 'sellrate' in sell_cond:
-			s_rate = float(sell_cond['sellrate'])
+			# sellrate is stored as-is (percentage), divide by 100 for calculation
+			s_rate_percent = float(sell_cond['sellrate'])
+			s_rate = s_rate_percent / 100.0
 			s_price = pur_pric * (1.0 + s_rate)
 			s_price = round_trunc(s_price)
 			ord_uv = str(s_price)
@@ -920,8 +922,9 @@ def format_account_data():
 					
 					if 'sellrate' in sell_cond:
 						try:
+							# sellrate is stored as-is (percentage), display directly
 							rate_val = float(sell_cond['sellrate'])
-							rate_part = f"{rate_val*100:+.2f}%"
+							rate_part = f"{rate_val:+.2f}%"
 						except (ValueError, TypeError):
 							pass
 
@@ -1950,16 +1953,14 @@ async def root(token: str = Cookie(None)):
 				// Extract percentage value (from Account Holdings table format like "5.5%")
 				const rateMatch = sellRate.match(/([\d.+-]+)%/);
 				if (rateMatch) {
-					const ratePercent = parseFloat(rateMatch[1]);
-					// Display as percentage in the input (user enters percentage)
-					document.getElementById('interested-stock-rate-input').value = ratePercent.toFixed(2);
+					// Store percentage as-is (no conversion)
+					document.getElementById('interested-stock-rate-input').value = rateMatch[1];
 				} else {
 					document.getElementById('interested-stock-rate-input').value = '';
 				}
 			} else {
 				document.getElementById('interested-stock-rate-input').value = '';
 			}
-			document.getElementById('interested-stock-gaprate-input').value = '';
 			document.getElementById('interested-stock-gaprate-input').value = '';
 			
 			// Scroll to update section
@@ -2135,10 +2136,7 @@ async def root(token: str = Cookie(None)):
 								if (parts.length === 2) {
 									sellPrice = parts[0].trim() !== '-' ? parts[0].trim().replace(/,/g, '') : '';
 									sellRate = parts[1].trim() !== '-' ? parts[1].trim().replace('%', '') : '';
-									if (sellRate) {
-										// Convert percentage back to decimal for data attribute
-										sellRate = (parseFloat(sellRate) / 100).toString();
-									}
+									// Keep sellRate as percentage (remove % sign but keep percentage value)
 								}
 								
 								htmlContent += `
@@ -2810,16 +2808,14 @@ async def root(token: str = Cookie(None)):
 				document.getElementById('interested-stock-price-input').value = '';
 			}
 			if (sellRate && sellRate !== '-') {
-				// sellRate is in decimal format (stored), convert to percentage for display
-				try {
-					const rateDecimal = parseFloat(sellRate);
-					if (!isNaN(rateDecimal)) {
-						document.getElementById('interested-stock-rate-input').value = (rateDecimal * 100).toFixed(2);
-					} else {
-						document.getElementById('interested-stock-rate-input').value = '';
-					}
-				} catch (e) {
-					document.getElementById('interested-stock-rate-input').value = '';
+				// Extract percentage value from "5.5%" format or use as-is
+				const rateMatch = sellRate.match(/([\d.+-]+)%/);
+				if (rateMatch) {
+					// Store percentage as-is (no conversion)
+					document.getElementById('interested-stock-rate-input').value = rateMatch[1];
+				} else {
+					// Use as-is (no conversion)
+					document.getElementById('interested-stock-rate-input').value = sellRate;
 				}
 			} else {
 				document.getElementById('interested-stock-rate-input').value = '';
@@ -2918,14 +2914,8 @@ async def root(token: str = Cookie(None)):
 							
 							// Format values for display
 							const priceDisplay = stockPrice && stockPrice !== '0' ? parseFloat(stockPrice).toLocaleString() : '-';
-							// Convert sellrate from decimal to percentage for display
-							let rateDisplay = '-';
-							if (stockRate && stockRate !== '0') {
-								const rateDecimal = parseFloat(stockRate);
-								if (!isNaN(rateDecimal)) {
-									rateDisplay = (rateDecimal * 100).toFixed(2) + '%';
-								}
-							}
+							// Display sellrate as-is from backend (no conversion)
+							const rateDisplay = stockRate && stockRate !== '0' ? stockRate : '-';
 							const gaprateDisplay = stockGaprate && stockGaprate !== '0' ? parseFloat(stockGaprate).toLocaleString() : '-';
 							
 							htmlContent += `
@@ -3036,15 +3026,7 @@ async def root(token: str = Cookie(None)):
 				return;
 			}
 			
-			// Convert sellrate from percentage to decimal for storage
-			let sellrateDecimal = '0';
-			if (stockRate && stockRate !== '') {
-				const ratePercent = parseFloat(stockRate);
-				if (!isNaN(ratePercent)) {
-					sellrateDecimal = (ratePercent / 100).toString();
-				}
-			}
-			
+			// Store sellrate as decimal (user enters decimal, store as-is)
 			const data = {
 				stock_code: stockCode,
 				stock_name: stockName || null,
@@ -3052,7 +3034,7 @@ async def root(token: str = Cookie(None)):
 				btype: stockBtype || null,
 				bamount: stockBamount ? parseInt(stockBamount) : null,
 				sellprice: stockPrice || '0',
-				sellrate: sellrateDecimal,
+				sellrate: stockRate || '0',
 				sellgap: stockGaprate || '0'
 			};
 			
@@ -3194,17 +3176,8 @@ async def root(token: str = Cookie(None)):
 			document.getElementById('interested-stock-btype-input').value = stockBtype;
 			document.getElementById('interested-stock-bamount-input').value = stockBamount;
 			document.getElementById('interested-stock-price-input').value = stockPrice !== '0' ? stockPrice : '';
-			// Convert sellrate from decimal (stored) to percentage (display)
-			if (stockRate && stockRate !== '0') {
-				const rateDecimal = parseFloat(stockRate);
-				if (!isNaN(rateDecimal)) {
-					document.getElementById('interested-stock-rate-input').value = (rateDecimal * 100).toFixed(2);
-				} else {
-					document.getElementById('interested-stock-rate-input').value = '';
-				}
-			} else {
-				document.getElementById('interested-stock-rate-input').value = '';
-			}
+			// Display sellrate as-is from backend (no conversion)
+			document.getElementById('interested-stock-rate-input').value = stockRate && stockRate !== '0' ? stockRate : '';
 			document.getElementById('interested-stock-gaprate-input').value = stockGaprate !== '0' ? stockGaprate : '';
 			
 			// Fill buy section
