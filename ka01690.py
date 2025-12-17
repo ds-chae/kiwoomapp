@@ -752,19 +752,18 @@ def load_dictionaries_from_json():
 	try:
 		modified = False
 		for stk in interested_stocks:
-			stk_nm = ''
-			print('istk')
-			print(stk)
+			print('istk, stk={}'.format(stk))
 			stock = interested_stocks[stk]
+			stk_nm = stock.get('stock_name', '')
 			print('interested stock_name={}'.format(stk_nm))
 			if stk_nm == '':
-				print('getting stock name')
+				print('getting stock name for {}'.format(stk))
 				stk_nm = get_stockname(stk)
 				stock['stock_name'] = stk_nm
 				modified = True
 			if 'color' in stock:
 				stock['color'] = color_kor_to_eng(stock['color'])
-			print(stock)
+			print('in istk', stock)
 
 		if modified:
 			save_interested_stocks_to_json()
