@@ -18,7 +18,6 @@ from ka10080 import get_bun_chart, get_bun_price
 INTERESTED_STOCKS_FILE = 'interested_stocks.json'
 interested_stocks = {}
 
-
 # Load environment variables from .env file
 load_dotenv()
 
@@ -39,6 +38,13 @@ TOKEN_EXPIRY_HOURS = 24
 active_tokens = {}
 updown_list = {}
 
+order_count = {}
+
+key_list = get_key_list()
+for key in key_list:
+	ACCT = key['ACCT']
+	MY_ACCESS_TOKEN = get_token(key['AK'], key['SK'])  # 접근토큰
+	order_count[ACCT] = {}
 
 # Get server IP address last digit for title
 def get_server_ip_last_digit():
@@ -105,7 +111,7 @@ def print_acnt(ACCT, AK, SK):
 	# fn_ka01690(token=MY_ACCESS_TOKEN, data=params, cont_yn='Y', next_key='nextkey..')
 
 def old_get_jango():
-	key_list = get_key_list()
+	global key_list
 	jango = []
 	for key in key_list:
 		j = print_acnt(key['ACCT'], key['AK'], key['SK'])
@@ -152,8 +158,35 @@ def fn_kt00018(log_jango, token, data, cont_yn='N', next_key=''):
 get_jango_count = 0
 
 
+'''
+	{
+			"stk_cd": "A005930",
+			"stk_nm": "삼성전자",
+			"evltv_prft": "-00000000196888",
+			"prft_rt": "-52.71",
+			"pur_pric": "000000000124500",
+			"pred_close_pric": "000000045400",
+			"rmnd_qty": "000000000000003",
+			"trde_able_qty": "000000000000003",
+			"cur_prc": "000000059000",
+			"pred_buyq": "000000000000000",
+			"pred_sellq": "000000000000000",
+			"tdy_buyq": "000000000000000",
+			"tdy_sellq": "000000000000000",
+			"pur_amt": "000000000373500",
+			"pur_cmsn": "000000000000050",
+			"evlt_amt": "000000000177000",
+			"sell_cmsn": "000000000000020",
+			"tax": "000000000000318",
+			"sum_cmsn": "000000000000070",
+			"poss_rt": "2.12",
+			"crd_tp": "00",
+			"crd_tp_nm": "",
+			"crd_loan_dt": ""
+		},
+'''
 def get_jango(now, market = 'KRX'):
-	global get_jango_count, current_price_map
+	global get_jango_count, key_list
 	log_jango = (get_jango_count == 0)
 	log_jango = False
 
@@ -161,7 +194,6 @@ def get_jango(now, market = 'KRX'):
 	if get_jango_count >= 10 :
 		get_jango_count = 0
 
-	key_list = get_key_list()
 	jango = []
 	for key in key_list:
 		MY_ACCESS_TOKEN = get_token(key['AK'], key['SK'])  # 접근토큰
@@ -416,12 +448,9 @@ def fn_ka10075(token, data, cont_yn='N', next_key=''):
 
 # 실행 구간
 def get_miche():
-	global get_miche_failed
+	global get_miche_failed, key_list
 
-	key_list = get_key_list()
 	miche = []
-	price_cache = {}
-
 	for key in key_list:
 		ACCT = key['ACCT']
 		MY_ACCESS_TOKEN = get_token(key['AK'], key['SK'])  # 접근토큰
@@ -555,7 +584,8 @@ nxt_start_time = time(7, 59)  # 07:00
 nxt_end_time = time(8, 49)  # 07:00
 krx_start_time = time(8,52)
 krx_end_time = time(15,30)
-nxt_fin_time = time(20, 0)  # 07:00
+nxt_fin_time = time(20, 0)
+
 new_day = False
 nxt_cancelled = False
 krx_first = False
@@ -570,6 +600,56 @@ def cur_date():
 
 	# Print the formatted date
 	return formatted_date
+
+
+
+
+def buy_cl(now, MY_ACCESS_TOKEN):
+	global order_count, interested_stocks, bun_prices, bun_charts
+	global stored_jango_data, stored_miche_data, key_list
+
+	miche = []
+	for key in key_list:
+		ACCT = key['ACCT']
+		MY_ACCESS_TOKEN = get_token(key['AK'], key['SK'])  # 접근토큰
+		buy_cl_by_account(ACCT)
+
+def buy_cl_by_account(ACCT):
+	global order_count
+
+	for stk_cd in interested_stocks:
+		int_stock = interested_stocks[stk_cd]
+		if int_stock['btype'] == 'CL':
+			buy_cl_stk_cd(ACCT, int_stock)
+
+
+def buy_cl_stk_cd(ACCT):
+	ordered = order_count[ACCT]
+	if stk_cd in ordered and ordered[stk_cd] >= 2:
+		return
+	bamount = int(int_stock['bamount'])
+	bsum = 0
+	if stk_cd in stored_jango_data:
+		jango = stored_jango_data[stk_cd]
+		bsum += int(jango['pur_amt'])
+	for miche in stored_miche_data:
+		if miche['ACCT'] == ACCT:
+			for m in miche:
+				print('io_tp_nm=', m['io_tp_nm'])
+				if m['stk_cd'] == stk_cd and m['io_tp_nm']  == '매수' :
+					bsum += int(m['ord_qty'])*int(['ord_pric'])
+	if bsum >= bamount * 2 * 0.85:
+		ordered[stk_cd] = 2
+	elif bsum >= bamount * 1 * 0.85:
+		ordered[stk_cd] = 1
+	if ordered[stk_cd] >= 2:
+		return
+	if not stk_cd in bun_charts:
+		bun_charts[stk_cd] = get_bun_chart(MY_ACCESS_TOKEN, stk_cd)
+	if not stk_cd in bun_prices:
+		bun_prices[stk_cd] = get_bun_price(bun_charts[stk_cd])
+	pass
+
 
 current_status = ''
 working_status = ''
@@ -607,6 +687,7 @@ def daily_work(now):
 				print('{} krx_first get_jango and sell_jango.'.format(now))
 				krx_first = True
 			sell_jango(now, stored_jango_data, 'KRX')
+			buy_cl(now)
 		else:
 			current_status = 'NXT'
 	else:
@@ -721,7 +802,7 @@ def calculate_bun_prices(MY_ACCESS_TOKEN):
 	for stk_cd in interested_stocks:
 		if stk_cd in bun_prices:
 			continue
-		if not stk_cd in bun_charts:
+		if stk_cd in bun_charts:
 			continue
 		chart = bun_charts[stk_cd]
 		bun_prices[stk_cd] = get_bun_price(chart)
@@ -1137,7 +1218,7 @@ async def login_page():
 	</head>
 	<body>
 		<div class="login-container">
-			<h1>🔐 Login</h1>
+			<h1>�� Login</h1>
 			<div id="error-message" class="error-message"></div>
 			<form id="login-form">
 				<div class="form-group">
@@ -1801,10 +1882,10 @@ async def root(token: str = Cookie(None)):
 			<div class="header">
 				<div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
 					<div>
-						<h1 id="headline-time">📊 Account -</h1>
+						<h1 id="headline-time">�� Account -</h1>
 						<p>Stock Holdings and Trading Information</p>
 					</div>
-					<button class="btn-logout" onclick="logout()">🚪 Logout</button>
+					<button class="btn-logout" onclick="logout()">�� Logout</button>
 				</div>
 			</div>
 			<div class="table-container" id="table-container">
@@ -1942,7 +2023,7 @@ async def root(token: str = Cookie(None)):
 	html_content += """
 			</div>
 		</div>
-		<button class="refresh-btn" onclick="updateTable()">🔄 Refresh</button>
+		<button class="refresh-btn" onclick="updateTable()">�� Refresh</button>
 		<script>
 		
 		function getProfitClass(profitRate) {
@@ -2110,7 +2191,7 @@ async def root(token: str = Cookie(None)):
 						if (accountResult.timestamp) {
 							const headlineTime = document.getElementById('headline-time');
 							if (headlineTime) {
-								let headlineText = '📊 Account ' + accountResult.timestamp;
+								let headlineText = '�� Account ' + accountResult.timestamp;
 								if (accountResult.current_status) {
 									headlineText += ' (' + accountResult.current_status + ')';
 								}
@@ -2780,7 +2861,7 @@ async def root(token: str = Cookie(None)):
 									<td>${sellRate}</td>
 									<td>
 										<button class="btn-delete-row" onclick="event.stopPropagation(); deleteRowSellPrice('${stockCode}', '${stockName}')" title="Delete sell price/rate">
-											🗑️
+											��️
 										</button>
 									</td>
 								</tr>
@@ -3024,7 +3105,7 @@ async def root(token: str = Cookie(None)):
 									<td>${gaprateDisplay}</td>
 									<td>
 										<button class="btn-remove-interested" onclick="event.stopPropagation(); removeInterestedStock('${stockCode}', '${stockName}')" title="Remove from interested list">
-											🗑️ Remove
+											��️ Remove
 										</button>
 									</td>
 								</tr>
@@ -3465,6 +3546,7 @@ async def get_miche_data_api(proxy_path: str = "", token: str = Cookie(None)):
 @app.post("/api/cancel-order")
 @app.post("/stock/api/cancel-order")
 async def cancel_order_api(request: dict, proxy_path: str = "", token: str = Cookie(None)):
+	global key_list
 	"""API endpoint to cancel an order"""
 	# Check authentication
 	if not token or not verify_token(token):
@@ -3487,7 +3569,6 @@ async def cancel_order_api(request: dict, proxy_path: str = "", token: str = Coo
 			return {"status": "error", "message": "Invalid order number (empty or zeros)"}
 		
 		# Retrieve token from backend using account number
-		key_list = get_key_list()
 		access_token = None
 		for key in key_list:
 			if key['ACCT'] == acct:
@@ -3515,7 +3596,7 @@ async def cancel_order_api(request: dict, proxy_path: str = "", token: str = Coo
 
 
 def issue_buy_order(stk_cd, ord_uv, ord_qty, stex, trde_tp):
-	key_list = get_key_list()
+	global key_list
 	access_token = None
 	for key in key_list:
 		access_token = get_token(key['AK'], key['SK'])
