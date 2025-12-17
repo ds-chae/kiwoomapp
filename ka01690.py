@@ -416,6 +416,8 @@ def fn_ka10075(token, data, cont_yn='N', next_key=''):
 
 # 실행 구간
 def get_miche():
+	global get_miche_failed
+
 	key_list = get_key_list()
 	miche = []
 	for key in key_list:
@@ -434,6 +436,10 @@ def get_miche():
 		m['ACCT'] = ACCT
 		m['TOKEN'] = MY_ACCESS_TOKEN
 		miche.append(m)
+
+	if get_miche_failed:
+		get_miche_failed = False
+		print(f"get_miche recovered.")
 
 	return miche
 
@@ -558,11 +564,12 @@ def cur_date():
 
 current_status = ''
 working_status = ''
+get_miche_failed = True
 
 def daily_work(now):
 	global new_day, krx_first, current_status
 	global nxt_start_time, nxt_end_time, krx_start_time,nxt_cancelled, krx_end_time
-	global stored_jango_data, stored_miche_data
+	global stored_jango_data, stored_miche_data, get_miche_failed
 
 	stored_jango_data = get_jango(now)
 	if is_between(now, nxt_start_time, nxt_end_time):
@@ -570,6 +577,7 @@ def daily_work(now):
 		try:
 			stored_miche_data = get_miche()
 		except Exception as e:
+			get_miche_failed = True
 			print(f"Error updating miche data: {e}")
 
 		sell_jango(now, stored_jango_data, 'NXT')
@@ -587,6 +595,7 @@ def daily_work(now):
 		try:
 			stored_miche_data = get_miche()
 		except Exception as e:
+			get_miche_failed = True
 			print(f"Error updating miche data: {e}")
 	else:
 		if (new_day):
@@ -788,6 +797,7 @@ async def lifespan(app: FastAPI):
 		stored_miche_data = get_miche()
 		print("Miche data initialized")
 	except Exception as e:
+		get_miche_failed = True
 		print(f"Error initializing miche data: {e}")
 		stored_miche_data = []
 
@@ -843,9 +853,7 @@ def periodic_timer_handler():
 		try:
 			daily_work(now)
 		except Exception as ex:
-			new_day = False
 			print(ex)
-			print('{} {} Setting new_day False due to Exception.'.format(cur_date(), now))
 			print('currrent status={}'.format(working_status))
 
 def format_account_data():
