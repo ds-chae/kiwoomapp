@@ -560,7 +560,7 @@ new_day = False
 nxt_cancelled = False
 krx_first = False
 not_nxt_cd = {}
-
+hell
 def cur_date():
 	# Get today's date
 	today = date.today()
