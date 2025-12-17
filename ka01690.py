@@ -153,7 +153,7 @@ get_jango_count = 0
 
 
 def get_jango(now, market = 'KRX'):
-	global get_jango_count
+	global get_jango_count, current_price_map
 	log_jango = (get_jango_count == 0)
 	log_jango = False
 
@@ -420,6 +420,8 @@ def get_miche():
 
 	key_list = get_key_list()
 	miche = []
+	price_cache = {}
+
 	for key in key_list:
 		ACCT = key['ACCT']
 		MY_ACCESS_TOKEN = get_token(key['AK'], key['SK'])  # 접근토큰
@@ -435,6 +437,12 @@ def get_miche():
 		m = fn_ka10075(token=MY_ACCESS_TOKEN, data=params)
 		m['ACCT'] = ACCT
 		m['TOKEN'] = MY_ACCESS_TOKEN
+
+		if 'oso' in m:
+			for order in m['oso']:
+				cur_prc = order.get('cur_prc', '0')
+				if cur_prc[0] == '-':
+					order['cur_prc'] = cur_prc[1:]
 		miche.append(m)
 
 	if get_miche_failed:
@@ -547,6 +555,7 @@ nxt_start_time = time(7, 59)  # 07:00
 nxt_end_time = time(8, 49)  # 07:00
 krx_start_time = time(8,52)
 krx_end_time = time(15,30)
+nxt_fin_time = time(20, 0)  # 07:00
 new_day = False
 nxt_cancelled = False
 krx_first = False
@@ -568,7 +577,7 @@ get_miche_failed = True
 
 def daily_work(now):
 	global new_day, krx_first, current_status
-	global nxt_start_time, nxt_end_time, krx_start_time,nxt_cancelled, krx_end_time
+	global nxt_start_time, nxt_end_time, krx_start_time,nxt_cancelled, krx_end_time, nxt_fin_time
 	global stored_jango_data, stored_miche_data, get_miche_failed
 
 	stored_jango_data = get_jango(now)
@@ -586,17 +595,20 @@ def daily_work(now):
 		if not nxt_cancelled:
 			nxt_cancelled = True
 			cancel_nxt_trade(now)
-	elif is_between(now, krx_start_time, krx_end_time):
-		current_status = 'KRX'
-		if not krx_first:
-			print('{} krx_first get_jango and sell_jango.'.format(now))
-			krx_first = True
-		sell_jango(now, stored_jango_data, 'KRX')
+	elif is_between(now, krx_start_time, nxt_fin_time):
 		try:
 			stored_miche_data = get_miche()
 		except Exception as e:
 			get_miche_failed = True
 			print(f"Error updating miche data: {e}")
+		if is_between(now, krx_start_time, krx_end_time):
+			current_status = 'KRX'
+			if not krx_first:
+				print('{} krx_first get_jango and sell_jango.'.format(now))
+				krx_first = True
+			sell_jango(now, stored_jango_data, 'KRX')
+		else:
+			current_status = 'NXT'
 	else:
 		if (new_day):
 			current_status = 'OFF'
@@ -909,6 +921,8 @@ def format_account_data():
 				pur_pric_float = float(pur_pric) if pur_pric else 0.0
 				
 				cur_prc = stock.get('cur_prc', '0')
+				if cur_prc[0] == '-':
+					cur_prc = cur_prc[1:]
 				cur_prc_float = float(cur_prc) if cur_prc else 0.0
 				
 				prft_rt = stock.get('prft_rt', '0')
@@ -1409,10 +1423,16 @@ async def root(token: str = Cookie(None)):
 				width: 120px;
 			}
 			#interested-stock-rate-input {
-				width: 120px;
+				width: 80px;
 			}
 			#interested-stock-gaprate-input {
-				width: 120px;
+				width: 80px;
+			}
+			#interested-stock-btype-input {
+				width: 80px;
+			}
+			#interested-stock-color-input {
+				width: 80px;
 			}
 			/* Remove spinner arrows from number inputs */
 			#interested-stock-bamount-input::-webkit-outer-spin-button,
@@ -1729,7 +1749,39 @@ async def root(token: str = Cookie(None)):
 				-webkit-overflow-scrolling: touch;
 			}
 			#miche-container table {
-				min-width: 600px;
+				width: auto !important;
+			}
+			#miche-container table th:nth-child(1),
+			#miche-container table td:nth-child(1) {
+				width: 80px;
+			}
+			#miche-container table th:nth-child(2),
+			#miche-container table td:nth-child(2) {
+				width: 80px;
+			}
+			#miche-container table th:nth-child(4),
+			#miche-container table td:nth-child(4) {
+				width: 80px;
+			}
+			#miche-container table th:nth-child(5),
+			#miche-container table td:nth-child(5) {
+				width: 160px;
+			}
+			#miche-container table th:nth-child(7),
+			#miche-container table td:nth-child(7) {
+				width: 80px;
+			}
+			#miche-container table th:nth-child(6),
+			#miche-container table td:nth-child(6) {
+				width: 150px;
+			}
+			#miche-container table th:nth-child(8),
+			#miche-container table td:nth-child(8) {
+				width: 60px;
+			}
+			#miche-container table th:nth-child(9),
+			#miche-container table td:nth-child(9) {
+				width: 60px;
 			}
 			@media screen and (max-width: 768px) {
 				#miche-container {
@@ -1762,7 +1814,6 @@ async def root(token: str = Cookie(None)):
 				</div>
 			</div>
 			<div class="miche-section" id="miche-section">
-				<h2>📋 Unexecuted Orders (미체결)</h2>
 				<div id="miche-container">
 					<div class="account-group">
 						<div class="account-group-header">
@@ -1806,7 +1857,7 @@ async def root(token: str = Cookie(None)):
 						</div>
 						<div class="form-group">
 							<select id="interested-stock-btype-input">
-								<option value="">Select BType</option>
+								<option value="">Btype</option>
 								<option value="CL">CL</option>
 								<option value="PCL">PCL</option>
 								<option value="HCL">HCL</option>
@@ -1815,7 +1866,7 @@ async def root(token: str = Cookie(None)):
 						</div>
 						<div class="form-group">
 							<select id="interested-stock-color-input">
-								<option value="">Select Color</option>
+								<option value="">Color</option>
 								<option value="R">빨 (Red)</option>
 								<option value="O">주 (Orange)</option>
 								<option value="Y">노 (Yellow)</option>
@@ -2313,8 +2364,8 @@ async def root(token: str = Cookie(None)):
 						const micheContainer = document.getElementById('miche-container');
 						const micheSection = document.getElementById('miche-section');
 						
-						// Group miche data by stock code
-						const stockGroups = {};
+						// Collect all orders into a single list
+						const allOrders = [];
 						for (const item of micheData) {
 							const acctNo = item.ACCT || '';
 							// Extract oso (unexecuted orders) from each account
@@ -2325,19 +2376,13 @@ async def root(token: str = Cookie(None)):
 										...order,
 										ACCT: acctNo
 									};
-									const stkCd = order.stk_cd || '';
-									const stkCdClean = stkCd && stkCd[0] === 'A' ? stkCd.substring(1) : stkCd;
-									if (!stockGroups[stkCdClean]) {
-										stockGroups[stkCdClean] = [];
-									}
-									stockGroups[stkCdClean].push(orderWithAcct);
+									allOrders.push(orderWithAcct);
 								}
 							}
 						}
 						
 						// Check if we have any data
-						const hasData = Object.keys(stockGroups).length > 0 && 
-							Object.values(stockGroups).some(orders => orders && orders.length > 0);
+						const hasData = allOrders.length > 0;
 						
 						// Always show miche section
 						micheSection.style.display = 'block';
@@ -2350,11 +2395,12 @@ async def root(token: str = Cookie(None)):
 							htmlContent += `
 								<div class="account-group">
 									<div class="account-group-header">
-										<h2>Unexecuted Orders</h2>
+										<h2>Orders</h2>
 									</div>
 									<table>
 										<thead>
 											<tr>
+												<th>Account</th>
 												<th>Code</th>
 												<th>Name</th>
 												<th>Order Type</th>
@@ -2367,7 +2413,7 @@ async def root(token: str = Cookie(None)):
 										</thead>
 										<tbody>
 											<tr>
-												<td colspan="8" style="text-align: center; padding: 20px; color: #7f8c8d;">
+												<td colspan="9" style="text-align: center; padding: 20px; color: #7f8c8d;">
 													No unexecuted orders available
 												</td>
 											</tr>
@@ -2376,18 +2422,41 @@ async def root(token: str = Cookie(None)):
 								</div>
 							`;
 						} else {
-							// Sort stock codes
-							const sortedStockCodes = Object.keys(stockGroups).sort();
+							// Sort orders: Account -> Stock Code -> Order Type
+							allOrders.sort((a, b) => {
+								// Sort by Account
+								const acctA = a.ACCT || '';
+								const acctB = b.ACCT || '';
+								if (acctA < acctB) return -1;
+								if (acctA > acctB) return 1;
+								
+								// Sort by Stock Code
+								const codeA = a.stk_cd || '';
+								const codeB = b.stk_cd || '';
+								// Remove 'A' for comparison if present
+								const cleanCodeA = codeA.startsWith('A') ? codeA.substring(1) : codeA;
+								const cleanCodeB = codeB.startsWith('A') ? codeB.substring(1) : codeB;
+								if (cleanCodeA < cleanCodeB) return -1;
+								if (cleanCodeA > cleanCodeB) return 1;
+								
+								// Sort by Order Type (Buy first, then Sell)
+								const typeA = a.io_tp_nm || '';
+								const typeB = b.io_tp_nm || '';
+								if (typeA.includes('매수') && !typeB.includes('매수')) return -1;
+								if (!typeA.includes('매수') && typeB.includes('매수')) return 1;
+								return 0;
+							});
 							
 							// Single table with one header
 							htmlContent += `
 								<div class="account-group">
 									<div class="account-group-header">
-										<h2>Unexecuted Orders</h2>
+										<h2>Orders</h2>
 									</div>
 									<table>
 										<thead>
 											<tr>
+												<th>Account</th>
 												<th>Code</th>
 												<th>Name</th>
 												<th>Order Type</th>
@@ -2401,72 +2470,74 @@ async def root(token: str = Cookie(None)):
 										<tbody>
 							`;
 							
-							// Render orders grouped by stock code (no visible boundaries)
-							for (const stockCode of sortedStockCodes) {
-								const orders = stockGroups[stockCode] || [];
-								if (orders.length === 0) continue;
-								
-								// Sort orders: buy orders first, then sell orders
-								orders.sort((a, b) => {
-									const aType = a.io_tp_nm || '';
-									const bType = b.io_tp_nm || '';
-									if (aType.includes('매수') && !bType.includes('매수')) return -1;
-									if (!aType.includes('매수') && bType.includes('매수')) return 1;
-									return 0;
-								});
-								
-								for (const order of orders) {
-									const stkCd = order.stk_cd || '';
-									const stkCdClean = stkCd && stkCd[0] === 'A' ? stkCd.substring(1) : stkCd;
-									const ordQty = order.ord_qty ? parseInt(order.ord_qty.replace(/^0+/, '') || '0') : 0;
-									const osoQty = order.oso_qty ? parseInt(order.oso_qty.replace(/^0+/, '') || '0') : 0;
-									// Parse ord_pric field - handle zero-padded strings
-									let ordPric = 0;
-									if (order.ord_pric) {
-										const ordPricStr = order.ord_pric.toString().replace(/^0+/, '') || '0';
-										ordPric = parseInt(ordPricStr) || 0;
-									}
-									const curPrc = order.cur_prc ? parseInt(order.cur_prc.replace(/^0+/, '') || '0') : 0;
-									const ordNo = order.ord_no || '';
-									const stexTp = order.stex_tp || '0';
-									
-									// Format order price / current price
-									let priceDisplay = '-';
-									if (ordPric > 0 && curPrc > 0) {
-										priceDisplay = ordPric.toLocaleString() + ' / ' + curPrc.toLocaleString();
-									} else if (ordPric > 0) {
-										priceDisplay = ordPric.toLocaleString() + ' / -';
-									} else if (curPrc > 0) {
-										priceDisplay = '- / ' + curPrc.toLocaleString();
-									}
-									
-									htmlContent += `
-										<tr class="miche-row" 
-											data-stock-code="${stkCdClean}" 
-											data-stock-name="${order.stk_nm || ''}" 
-											data-order-price="${ordPric || ''}"
-											onclick="selectMicheRow(this)"
-											style="cursor: pointer;">
-											<td><strong>${stkCdClean}</strong></td>
-											<td>${order.stk_nm || '-'}</td>
-											<td>${order.io_tp_nm || '-'}</td>
-											<td>${ordQty.toLocaleString()}</td>
-											<td>${priceDisplay}</td>
-											<td><strong>${osoQty.toLocaleString()}</strong></td>
-											<td>${order.tm || '-'}</td>
-											<td>
-												<button class="btn-cancel" 
-													data-acct="${order.ACCT || ''}"
-													data-stex-tp="${stexTp}"
-													data-ord-no="${ordNo}"
-													data-stk-cd="${stkCd}"
-													onclick="event.stopPropagation(); cancelOrder(this)">
-													Cancel
-												</button>
-											</td>
-										</tr>
-									`;
+							for (const order of allOrders) {
+								const stkCd = order.stk_cd || '';
+								const stkCdClean = stkCd && stkCd[0] === 'A' ? stkCd.substring(1) : stkCd;
+								let ordQty = 0;
+								if (order.ord_qty) {
+									const ordQtyStr = order.ord_qty.toString().replace(/^0+/, '') || '0';
+									ordQty = parseInt(ordQtyStr) || 0;
+									if (isNaN(ordQty)) ordQty = 0;
 								}
+								let osoQty = 0;
+								if (order.oso_qty) {
+									const osoQtyStr = order.oso_qty.toString().replace(/^0+/, '') || '0';
+									osoQty = parseInt(osoQtyStr) || 0;
+									if (isNaN(osoQty)) osoQty = 0;
+								}
+								// Parse ord_pric field - handle zero-padded strings
+								let ordPric = 0;
+								if (order.ord_pric) {
+									const ordPricStr = order.ord_pric.toString().replace(/^0+/, '') || '0';
+									ordPric = parseInt(ordPricStr) || 0;
+									if (isNaN(ordPric)) ordPric = 0;
+								}
+								let curPrc = 0;
+								if (order.cur_prc) {
+									const curPrcStr = order.cur_prc.toString().replace(/^0+/, '') || '0';
+									curPrc = parseInt(curPrcStr) || 0;
+									if (isNaN(curPrc)) curPrc = 0;
+								}
+								const ordNo = order.ord_no || '';
+								const stexTp = order.stex_tp || '0';
+								
+								// Format order price / current price
+								let priceDisplay = '-';
+								if (ordPric > 0 && curPrc > 0) {
+									priceDisplay = ordPric.toLocaleString() + ' / ' + curPrc.toLocaleString();
+								} else if (ordPric > 0) {
+									priceDisplay = ordPric.toLocaleString() + ' / -';
+								} else if (curPrc > 0) {
+									priceDisplay = '- / ' + curPrc.toLocaleString();
+								}
+								
+								htmlContent += `
+									<tr class="miche-row" 
+										data-stock-code="${stkCdClean}" 
+										data-stock-name="${order.stk_nm || ''}" 
+										data-order-price="${ordPric || ''}"
+										onclick="selectMicheRow(this)"
+										style="cursor: pointer;">
+										<td>${order.ACCT}</td>
+										<td><strong>${stkCdClean}</strong></td>
+										<td>${order.stk_nm || '-'}</td>
+										<td>${order.io_tp_nm || '-'}</td>
+										<td>${ordQty > 0 ? ordQty.toLocaleString() : '0'}</td>
+										<td>${priceDisplay}</td>
+										<td><strong>${osoQty > 0 ? osoQty.toLocaleString() : '0'}</strong></td>
+										<td>${order.tm || '-'}</td>
+										<td>
+											<button class="btn-cancel" 
+												data-acct="${order.ACCT || ''}"
+												data-stex-tp="${stexTp}"
+												data-ord-no="${ordNo}"
+												data-stk-cd="${stkCd}"
+												onclick="event.stopPropagation(); cancelOrder(this)">
+												Cancel
+											</button>
+										</td>
+									</tr>
+								`;
 							}
 							
 							htmlContent += `
@@ -2485,7 +2556,7 @@ async def root(token: str = Cookie(None)):
 						micheContainer.innerHTML = `
 							<div class="account-group">
 								<div class="account-group-header">
-									<h2>Unexecuted Orders</h2>
+									<h2>Orders</h2>
 								</div>
 								<table>
 									<thead>
@@ -2683,7 +2754,10 @@ async def root(token: str = Cookie(None)):
 							let sellPrice = '-';
 							if (sellCond.price) {
 								try {
-									sellPrice = parseFloat(sellCond.price).toLocaleString();
+									const priceNum = parseFloat(sellCond.price);
+									if (!isNaN(priceNum) && priceNum > 0) {
+										sellPrice = priceNum.toLocaleString();
+									}
 								} catch (e) {
 									sellPrice = sellCond.price;
 								}
@@ -2921,10 +2995,22 @@ async def root(token: str = Cookie(None)):
 							const colorDisplay = stockColor && colorMap[stockColor] ? colorMap[stockColor] : '-';
 							
 							// Format values for display
-							const priceDisplay = stockPrice && stockPrice !== '0' ? parseFloat(stockPrice).toLocaleString() : '-';
+							let priceDisplay = '-';
+							if (stockPrice && stockPrice !== '0') {
+								const priceNum = parseFloat(stockPrice);
+								if (!isNaN(priceNum) && priceNum > 0) {
+									priceDisplay = priceNum.toLocaleString();
+								}
+							}
 							// Display sellrate as-is from backend (no conversion)
 							const rateDisplay = stockRate && stockRate !== '0' ? stockRate : '-';
-							const gaprateDisplay = stockGaprate && stockGaprate !== '0' ? parseFloat(stockGaprate).toLocaleString() : '-';
+							let gaprateDisplay = '-';
+							if (stockGaprate && stockGaprate !== '0') {
+								const gaprateNum = parseFloat(stockGaprate);
+								if (!isNaN(gaprateNum) && gaprateNum !== 0) {
+									gaprateDisplay = gaprateNum.toLocaleString();
+								}
+							}
 							
 							htmlContent += `
 								<tr data-stock-code="${stockCode}" data-stock-name="${stockName}" data-stock-color="${stockColor}" data-stock-btype="${stockBtype}" data-stock-bamount="${stockBamount}" data-stock-price="${stockPrice}" data-stock-rate="${stockRate}" data-stock-gaprate="${stockGaprate}" onclick="selectInterestedStockRow(this)">
