@@ -4,6 +4,25 @@ import pandas as pd
 
 from au1001 import get_one_token
 
+def get_price_index(color):
+	if color == 'R': # 빨 Red
+		return 2
+	if color == 'O': # 주 Orange
+		return 3
+	if color == 'Y': # 노 Yellow
+		return 4
+	if color == 'G': # 초 Green
+		return 5
+	if color == 'B': # 파 Blue
+		return 6
+	if color == 'D': # 남 Dark Blue
+		return 7
+	if color == 'V': # 보 Violet
+		return 8
+	return 9
+
+
+# [2] -> R, [3] -> O
 
 def get_bun_price(stk_cd, stk_nm, chart ):
 	bun_price = {}

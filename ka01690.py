@@ -14,7 +14,7 @@ import uvicorn
 from contextlib import asynccontextmanager
 import secrets
 import socket
-from ka10080 import get_bun_chart, get_bun_price
+from ka10080 import get_bun_chart, get_bun_price, get_price_index
 
 # Interested stocks list
 INTERESTED_STOCKS_FILE = 'interested_stocks.json'
@@ -694,11 +694,36 @@ def buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock):
 	print('ordered count for {} {} {} is {}, bsum={}'.format(ACCT, stk_cd, stk_nm, ordered[stk_cd], bsum))
 	if ordered[stk_cd] >= 2:
 		return
+
 	if not stk_cd in bun_charts:
 		bun_charts[stk_cd] = get_bun_chart(MY_ACCESS_TOKEN, stk_cd)
 	if not stk_cd in bun_prices:
 		bun_prices[stk_cd] = get_bun_price(stk_cd, stk_nm, bun_charts[stk_cd])
 	print(bun_prices)
+	if not stk_cd in bun_prices:
+		print('getting bun_chart or bun_price for {} {} failed'.format(stk_cd, stk_nm));
+		return
+
+	bun_price = bun_prices[stk_cd]
+	price_index = get_price_index(int_stock['color'])
+	stex = 'KRX'
+	trde_tp = '0'
+	if ordered[stk_cd] < 1 :
+		ord_price = round_trunc(bun_price[price_index])
+		ord_qty = bamount // ord_price
+		#ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trade_tp=trde_tp, cond_uv='')
+		ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, '1', str(ord_price), trade_tp=trde_tp, cond_uv='')
+		print('1_buy_order_result: {}'.format(ret_status))
+		ordered[stk_cd] += 1
+		print('price:{} current buy order for {} {} {} is {}'.format(ord_price, ACCT, stk_cd, stk_nm, ordered[stk_cd]))
+	if ordered[stk_cd] < 2:
+		ord_price = round_trunc(bun_price[price_index+1])
+		ord_qty = bamount // ord_price
+		#ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trade_tp=trde_tp, cond_uv='')
+		ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, '1', str(ord_price), trade_tp=trde_tp, cond_uv='')
+		print('2_buy_order_result: {}'.format(ret_status))
+		ordered[stk_cd] += 1
+		print('price:{} current buy order for {} {} {} is {}'.format(ord_price, ACCT, stk_cd, stk_nm, ordered[stk_cd]))
 
 	pass
 
