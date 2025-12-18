@@ -537,7 +537,7 @@ oso	미체결	LIST	N
 
 def cancel_nxt_trade(now):
 	miche = get_miche()
-	for m in miche:
+	for m in miche.values():
 		if 'oso' in m:
 			oso = m['oso']
 			for o in oso:
@@ -681,7 +681,7 @@ def buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock):
 		ordered[stk_cd] = 1
 	else:
 		ordered[stk_cd] = 0
-	print('ordered count for {} {} is {}'.format(stk_cd, stk_nm, ordered[stk_cd]))
+	print('ordered count for {} {} {} is {}, bsum={}'.format(ACCT, stk_cd, stk_nm, ordered[stk_cd], bsum))
 	if ordered[stk_cd] >= 2:
 		return
 	if not stk_cd in bun_charts:
@@ -997,11 +997,15 @@ def format_account_data():
 
 		# Get holdings from stored data for active market only
 		all_jango = stored_jango_data
-
+		if isinstance(all_jango, dict):
+			iterator = all_jango.values()
+		else:
+			iterator = all_jango
+			
 		formatted_data = []
 		seen_keys = set()  # Track unique combinations of account and stock_code
 		
-		for account in all_jango:
+		for account in iterator:
 			if account.get("return_code") != 0:
 				continue
 			
@@ -1257,7 +1261,7 @@ async def login_page():
 	</head>
 	<body>
 		<div class="login-container">
-			<h1>�� Login</h1>
+			<h1>Login</h1>
 			<div id="error-message" class="error-message"></div>
 			<form id="login-form">
 				<div class="form-group">
@@ -1921,10 +1925,10 @@ async def root(token: str = Cookie(None)):
 			<div class="header">
 				<div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
 					<div>
-						<h1 id="headline-time">�� Account -</h1>
+						<h1 id="headline-time">Account -</h1>
 						<p>Stock Holdings and Trading Information</p>
 					</div>
-					<button class="btn-logout" onclick="logout()">�� Logout</button>
+					<button class="btn-logout" onclick="logout()">Logout</button>
 				</div>
 			</div>
 			<div class="table-container" id="table-container">
@@ -1965,7 +1969,7 @@ async def root(token: str = Cookie(None)):
 				</div>
 			</div>
 			<div class="interested-stocks-section" id="interested-stocks-section">
-				<h2>⭐ Int Stocks</h2>
+				<h2>Int Stocks</h2>
 				<div class="add-interested-form">
 					<div class="add-interested-form-content">
 						<div class="form-group">
@@ -2062,7 +2066,7 @@ async def root(token: str = Cookie(None)):
 	html_content += """
 			</div>
 		</div>
-		<button class="refresh-btn" onclick="updateTable()">�� Refresh</button>
+		<button class="refresh-btn" onclick="updateTable()">Refresh</button>
 		<script>
 		
 		function getProfitClass(profitRate) {
@@ -2486,7 +2490,8 @@ async def root(token: str = Cookie(None)):
 						
 						// Collect all orders into a single list
 						const allOrders = [];
-						for (const item of micheData) {
+						const micheValues = Array.isArray(micheData) ? micheData : Object.values(micheData);
+						for (const item of micheValues) {
 							const acctNo = item.ACCT || '';
 							// Extract oso (unexecuted orders) from each account
 							if (item.oso && Array.isArray(item.oso)) {
@@ -2900,7 +2905,7 @@ async def root(token: str = Cookie(None)):
 									<td>${sellRate}</td>
 									<td>
 										<button class="btn-delete-row" onclick="event.stopPropagation(); deleteRowSellPrice('${stockCode}', '${stockName}')" title="Delete sell price/rate">
-											��️
+											Del️
 										</button>
 									</td>
 								</tr>
@@ -3144,7 +3149,7 @@ async def root(token: str = Cookie(None)):
 									<td>${gaprateDisplay}</td>
 									<td>
 										<button class="btn-remove-interested" onclick="event.stopPropagation(); removeInterestedStock('${stockCode}', '${stockName}')" title="Remove from interested list">
-											��️ Remove
+											Remove
 										</button>
 									</td>
 								</tr>
