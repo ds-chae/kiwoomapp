@@ -1,3 +1,5 @@
+import traceback
+
 import requests
 import json
 import os
@@ -38,13 +40,28 @@ TOKEN_EXPIRY_HOURS = 24
 active_tokens = {}
 updown_list = {}
 
+key_list = get_key_list()
 order_count = {}
 
-key_list = get_key_list()
-for key in key_list:
-	ACCT = key['ACCT']
-	MY_ACCESS_TOKEN = get_token(key['AK'], key['SK'])  # 접근토큰
-	order_count[ACCT] = {}
+# Global variable for tracking previous hour
+prev_hour = None
+# Global storage for jango data (updated by timer handler)
+stored_jango_data = {}
+
+# Global storage for miche data (updated by timer handler)
+stored_miche_data = {}
+
+def init_order_count():
+	global order_count, key_list
+
+	for key, value in key_list.items():
+		ACCT = value['ACCT']
+		order_count[ACCT] = {}
+
+
+init_order_count()
+
+
 
 # Get server IP address last digit for title
 def get_server_ip_last_digit():
@@ -113,10 +130,11 @@ def print_acnt(ACCT, AK, SK):
 def old_get_jango():
 	global key_list
 	jango = []
-	for key in key_list:
-		j = print_acnt(key['ACCT'], key['AK'], key['SK'])
-		j['ACCT'] = key['ACCT']
-		jango.append(j)
+	for k, key in key_list.items():
+		acct = key['ACCT']
+		j = print_acnt(acct, key['AK'], key['SK'])
+		j['ACCT'] = acct
+		jango[acct] = j
 
 	return jango
 
@@ -186,7 +204,8 @@ get_jango_count = 0
 		},
 '''
 def get_jango(now, market = 'KRX'):
-	global get_jango_count, key_list
+	global get_jango_count, key_list, jango_token
+
 	log_jango = (get_jango_count == 0)
 	log_jango = False
 
@@ -194,13 +213,14 @@ def get_jango(now, market = 'KRX'):
 	if get_jango_count >= 10 :
 		get_jango_count = 0
 
-	jango = []
-	for key in key_list:
+	jango = {}
+	for k, key in key_list.items():
+		acct = key['ACCT']
 		MY_ACCESS_TOKEN = get_token(key['AK'], key['SK'])  # 접근토큰
-		j = call_fn_kt00018(log_jango, market, key['ACCT'], MY_ACCESS_TOKEN)
-		j['ACCT'] = key['ACCT']
-		j['MY_ACCESS_TOKEN'] = MY_ACCESS_TOKEN
-		jango.append(j)
+		jango_token[acct] = MY_ACCESS_TOKEN
+		j = call_fn_kt00018(log_jango, market, acct, MY_ACCESS_TOKEN)
+		j['ACCT'] = acct
+		jango[acct] = j
 	return jango
 
 def call_fn_kt00018(log_jango, market, ACCT, MY_ACCESS_TOKEN):
@@ -377,17 +397,19 @@ def call_sell_order(MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond):
 		print('call_sell_order:{}'.format(stk_nm))
 
 
-def sell_jango(now, jango, market):
-	global auto_sell_enabled, current_status
+jango_token = {}
 
-	for j in jango:
+def sell_jango(now, jango, market):
+	global auto_sell_enabled, current_status, jango_token
+
+	for ACCT in jango:
 		try:
-			ACCT = j.get('ACCT', '')
+			j = jango[ACCT]
 			# Check auto sell enabled for this specific account
 			if ACCT not in auto_sell_enabled or not auto_sell_enabled[ACCT]:
 				continue
-			
-			MY_ACCESS_TOKEN = j.get('MY_ACCESS_TOKEN')
+
+			MY_ACCESS_TOKEN = jango_token[ACCT]
 
 			acnt_evlt_remn_indv_tot = j.get("acnt_evlt_remn_indv_tot", [])
 
@@ -450,8 +472,8 @@ def fn_ka10075(token, data, cont_yn='N', next_key=''):
 def get_miche():
 	global get_miche_failed, key_list
 
-	miche = []
-	for key in key_list:
+	miche = {}
+	for k, key in key_list.items():
 		ACCT = key['ACCT']
 		MY_ACCESS_TOKEN = get_token(key['AK'], key['SK'])  # 접근토큰
 		# 2. 요청 데이터
@@ -465,14 +487,13 @@ def get_miche():
 		# 3. API 실행
 		m = fn_ka10075(token=MY_ACCESS_TOKEN, data=params)
 		m['ACCT'] = ACCT
-		m['TOKEN'] = MY_ACCESS_TOKEN
 
 		if 'oso' in m:
 			for order in m['oso']:
 				cur_prc = order.get('cur_prc', '0')
 				if cur_prc[0] == '-':
 					order['cur_prc'] = cur_prc[1:]
-		miche.append(m)
+		miche[ACCT] = m
 
 	if get_miche_failed:
 		get_miche_failed = False
@@ -604,50 +625,71 @@ def cur_date():
 
 
 
-def buy_cl(now, MY_ACCESS_TOKEN):
+def buy_cl(now):
 	global order_count, interested_stocks, bun_prices, bun_charts
 	global stored_jango_data, stored_miche_data, key_list
 
-	miche = []
-	for key in key_list:
+	for k, key in key_list.items():
 		ACCT = key['ACCT']
 		MY_ACCESS_TOKEN = get_token(key['AK'], key['SK'])  # 접근토큰
-		buy_cl_by_account(ACCT)
+		buy_cl_by_account(ACCT, MY_ACCESS_TOKEN)
 
-def buy_cl_by_account(ACCT):
-	global order_count
 
+def buy_cl_by_account(ACCT, MY_ACCESS_TOKEN):
+	global order_count, working_status
+
+	working_status = 'in buy_cl_by_account'
 	for stk_cd in interested_stocks:
 		int_stock = interested_stocks[stk_cd]
-		if int_stock['btype'] == 'CL':
-			buy_cl_stk_cd(ACCT, int_stock)
+		btype = int_stock.get('btype', '')
+		if btype == 'CL':
+			buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock)
+	pass
 
 
-def buy_cl_stk_cd(ACCT):
+def buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock):
+	global working_status, order_count
+	working_status = 'in buy_cl_stk_cd'
 	ordered = order_count[ACCT]
 	if stk_cd in ordered and ordered[stk_cd] >= 2:
 		return
-	bamount = int(int_stock['bamount'])
+	stk_nm = int_stock['stock_name']
+	bamount = int(int_stock.get('bamount', '0'))
+	if bamount <= 0 :
+		return
+
 	bsum = 0
-	if stk_cd in stored_jango_data:
-		jango = stored_jango_data[stk_cd]
-		bsum += int(jango['pur_amt'])
-	for miche in stored_miche_data:
-		if miche['ACCT'] == ACCT:
-			for m in miche:
-				print('io_tp_nm=', m['io_tp_nm'])
-				if m['stk_cd'] == stk_cd and m['io_tp_nm']  == '매수' :
-					bsum += int(m['ord_qty'])*int(['ord_pric'])
+	myjango = stored_jango_data[ACCT] if (ACCT in stored_jango_data) else {}
+	acnt_evlt_remn_indv_tot = myjango['acnt_evlt_remn_indv_tot']
+	for eachjango in acnt_evlt_remn_indv_tot:
+		each_cd = eachjango['stk_cd']
+		if each_cd[0] == 'A':
+			each_cd = each_cd[1:]
+		if each_cd == stk_cd:
+			bsum += int(eachjango['pur_amt'])
+	miche = {}
+	if ACCT in stored_miche_data:
+		if 'oso' in stored_miche_data[ACCT]:
+			miche = stored_miche_data[ACCT]['oso']
+	for m in miche:
+		print('io_tp_nm=', m['io_tp_nm'])
+		if m['stk_cd'] == stk_cd and m['io_tp_nm']  == '+매수' :
+			bsum += int(m['ord_qty'])*int(['ord_pric'])
 	if bsum >= bamount * 2 * 0.85:
 		ordered[stk_cd] = 2
 	elif bsum >= bamount * 1 * 0.85:
 		ordered[stk_cd] = 1
+	else:
+		ordered[stk_cd] = 0
+	print('ordered count for {} {} is {}'.format(stk_cd, stk_nm, ordered[stk_cd]))
 	if ordered[stk_cd] >= 2:
 		return
 	if not stk_cd in bun_charts:
 		bun_charts[stk_cd] = get_bun_chart(MY_ACCESS_TOKEN, stk_cd)
 	if not stk_cd in bun_prices:
-		bun_prices[stk_cd] = get_bun_price(bun_charts[stk_cd])
+		bun_prices[stk_cd] = get_bun_price(stk_cd, stk_nm, bun_charts[stk_cd])
+	print(bun_prices)
+
 	pass
 
 
@@ -658,7 +700,7 @@ get_miche_failed = True
 def daily_work(now):
 	global new_day, krx_first, current_status
 	global nxt_start_time, nxt_end_time, krx_start_time,nxt_cancelled, krx_end_time, nxt_fin_time
-	global stored_jango_data, stored_miche_data, get_miche_failed
+	global stored_jango_data, stored_miche_data, get_miche_failed, working_status
 
 	stored_jango_data = get_jango(now)
 	if is_between(now, nxt_start_time, nxt_end_time):
@@ -687,6 +729,7 @@ def daily_work(now):
 				print('{} krx_first get_jango and sell_jango.'.format(now))
 				krx_first = True
 			sell_jango(now, stored_jango_data, 'KRX')
+			working_status='calling buy_cl'
 			buy_cl(now)
 		else:
 			current_status = 'NXT'
@@ -699,7 +742,7 @@ def daily_work(now):
 
 def set_new_day():
 	global new_day, waiting_shown, no_working_shown, nxt_cancelled, ktx_first, current_status
-	global updown_list
+	global updown_list, access_token
 
 	if new_day:
 		return
@@ -714,6 +757,9 @@ def set_new_day():
 	current_status = 'NEW'
 	not_nxt_cd = {}
 	updown_list = {}
+	init_order_count()
+	access_token = {}
+
 
 # Global flag for auto sell - dictionary keyed by account
 AUTO_SELL_FILE = 'auto_sell_enabled.json'
@@ -769,7 +815,7 @@ def load_dictionaries_from_json():
 			save_interested_stocks_to_json()
 			print('interested_stocks is modified, thus saved')
 	except Exception as ex:
-		print(ex)
+		print('783', ex)
 		exit(0)
 
 
@@ -792,7 +838,7 @@ def fill_charts_for_CL(MY_ACCESS_TOKEN):
 				continue
 			bun_charts[stk_cd] = get_bun_chart(MY_ACCESS_TOKEN, stk_cd)
 	except Exception as ex:
-		print(ex)
+		print('806', ex)
 		exit(0)
 
 
@@ -833,12 +879,6 @@ def save_interested_stocks_to_json():
 
 
 
-# Global variable for tracking previous hour
-prev_hour = None
-# Global storage for jango data (updated by timer handler)
-stored_jango_data = []
-# Global storage for miche data (updated by timer handler)
-stored_miche_data = []
 # Background thread for periodic timer handler
 background_thread = None
 thread_stop_event = threading.Event()
@@ -881,7 +921,7 @@ async def lifespan(app: FastAPI):
 		print("KRX jango data initialized")
 	except Exception as e:
 		print(f"Error initializing KRX jango data: {e}")
-		stored_jango_data = []
+		stored_jango_data = {}
 	
 	# Initialize stored miche data by calling once immediately (non-blocking, allow failure)
 	print("Initializing miche data...")
@@ -931,7 +971,7 @@ app = FastAPI(lifespan=lifespan)
 
 def periodic_timer_handler():
 	"""Periodic timer event handler that runs the trading loop logic"""
-	global prev_hour, new_day, stored_jango_data, stored_miche_data
+	global prev_hour, new_day, stored_jango_data, stored_miche_data, working_status
 	
 	now = datetime.now().time()
 	now_hour = now.hour
@@ -945,7 +985,7 @@ def periodic_timer_handler():
 		try:
 			daily_work(now)
 		except Exception as ex:
-			print(ex)
+			traceback.print_exc()
 			print('currrent status={}'.format(working_status))
 
 def format_account_data():
@@ -3569,7 +3609,7 @@ async def cancel_order_api(request: dict, proxy_path: str = "", token: str = Coo
 		
 		# Retrieve token from backend using account number
 		access_token = None
-		for key in key_list:
+		for k, key in key_list.items():
 			if key['ACCT'] == acct:
 				access_token = get_token(key['AK'], key['SK'])
 				break
@@ -3597,7 +3637,7 @@ async def cancel_order_api(request: dict, proxy_path: str = "", token: str = Coo
 def issue_buy_order(stk_cd, ord_uv, ord_qty, stex, trde_tp):
 	global key_list
 	access_token = None
-	for key in key_list:
+	for k, key in key_list.items():
 		access_token = get_token(key['AK'], key['SK'])
 
 		if not access_token:

@@ -24,11 +24,13 @@ key_0130['ACCT'] = '0130'
 key_0130['SK'] = SK_0130
 key_0130['AK'] = AK_0130
 
-key_list = [ key_0130, key_9136]
 
 
 def get_key_list():
-    return key_list
+	key_list = {}
+	key_list[key_0130['ACCT']] = key_0130
+	key_list[key_9136['ACCT']] = key_9136
+	return key_list
 
 
 # 접근토큰 발급

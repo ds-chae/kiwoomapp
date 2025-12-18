@@ -5,8 +5,10 @@ import pandas as pd
 from au1001 import get_one_token
 
 
-def get_bun_price(chart):
+def get_bun_price(stk_cd, stk_nm, chart ):
 	bun_price = {}
+	bun_price['stk_cd'] = stk_cd
+	bun_price['stk_nm'] = stk_nm
 	high_index = 0
 	low_index = 0
 	high_price = 0
