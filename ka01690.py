@@ -348,7 +348,7 @@ def get_upper_limit(MY_ACCESS_TOKEN, stk_cd):
 
 
 def call_sell_order(MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond):
-	global current_status
+	global current_status, working_status
 
 	trde_able_qty = indv.get("trde_able_qty", "0")
 	rmnd_qty = indv.get('rmnd_qty', "0")
@@ -629,8 +629,9 @@ def buy_cl(now):
 	global order_count, interested_stocks, bun_prices, bun_charts
 	global stored_jango_data, stored_miche_data, key_list
 
-	for k, key in key_list.items():
-		ACCT = key['ACCT']
+	for ACCT, key in key_list.items():
+		#ACCT = key['ACCT']
+		available
 		MY_ACCESS_TOKEN = get_token(key['AK'], key['SK'])  # 접근토큰
 		buy_cl_by_account(ACCT, MY_ACCESS_TOKEN)
 
@@ -694,7 +695,7 @@ def buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock):
 
 
 current_status = ''
-working_status = ''
+working_status = 'initial'
 get_miche_failed = True
 
 def daily_work(now):
