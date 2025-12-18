@@ -406,7 +406,10 @@ def sell_jango(now, jango, market):
 		try:
 			j = jango[ACCT]
 			# Check auto sell enabled for this specific account
-			if ACCT not in auto_sell_enabled or not auto_sell_enabled[ACCT]:
+			# Mode can be NONE, BUY, SELL, BOTH
+			mode = auto_sell_enabled.get(ACCT, 'NONE')
+			# sell_jango runs if mode is SELL or BOTH
+			if mode not in ['SELL', 'BOTH']:
 				continue
 
 			MY_ACCESS_TOKEN = jango_token[ACCT]
@@ -630,8 +633,14 @@ def buy_cl(now):
 	global stored_jango_data, stored_miche_data, key_list
 
 	for ACCT, key in key_list.items():
+		# Check auto sell enabled for this specific account
+		# Mode can be NONE, BUY, SELL, BOTH
+		mode = auto_sell_enabled.get(ACCT, 'NONE')
+		# buy_cl runs if mode is BUY or BOTH
+		if mode not in ['BUY', 'BOTH']:
+			continue
+
 		#ACCT = key['ACCT']
-		available
 		MY_ACCESS_TOKEN = get_token(key['AK'], key['SK'])  # 접근토큰
 		buy_cl_by_account(ACCT, MY_ACCESS_TOKEN)
 
@@ -775,6 +784,18 @@ def load_dictionaries_from_json():
 		try:
 			with open(AUTO_SELL_FILE, 'r', encoding='utf-8') as f:
 				auto_sell_enabled = json.load(f)
+			
+			# Migration: Convert boolean values to strings
+			modified_migration = False
+			for acct, val in auto_sell_enabled.items():
+				if isinstance(val, bool):
+					auto_sell_enabled[acct] = 'SELL' if val else 'NONE'
+					modified_migration = True
+			
+			if modified_migration:
+				save_auto_sell_to_json()
+				print(f"Migrated auto_sell_enabled boolean values to strings")
+				
 			print(f"Loaded auto_sell_enabled from {AUTO_SELL_FILE}: {auto_sell_enabled}")
 		except Exception as e:
 			print(f"Error loading auto_sell_enabled: {e}")
@@ -1919,6 +1940,30 @@ async def root(token: str = Cookie(None)):
 					width: 100%;
 				}
 			}
+			.auto-sell-control {
+				display: flex;
+				align-items: center;
+				gap: 10px;
+			}
+			.auto-sell-select {
+				padding: 6px;
+				border-radius: 4px;
+				border: 1px solid #ddd;
+				font-weight: 600;
+			}
+			.btn-apply-auto-sell {
+				background: #34495e;
+				color: white;
+				border: none;
+				padding: 6px 12px;
+				border-radius: 4px;
+				cursor: pointer;
+				font-size: 14px;
+				transition: background-color 0.2s;
+			}
+			.btn-apply-auto-sell:hover {
+				background: #2c3e50;
+			}
 		</style>
 	</head>
 	<body>
@@ -2235,7 +2280,7 @@ async def root(token: str = Cookie(None)):
 						if (accountResult.timestamp) {
 							const headlineTime = document.getElementById('headline-time');
 							if (headlineTime) {
-								let headlineText = '�� Account ' + accountResult.timestamp;
+								let headlineText = 'Account ' + accountResult.timestamp;
 								if (accountResult.current_status) {
 									headlineText += ' (' + accountResult.current_status + ')';
 								}
@@ -2263,35 +2308,60 @@ async def root(token: str = Cookie(None)):
 							Object.values(accountGroups).some(stocks => stocks && stocks.length > 0);
 						
 						if (!hasData) {
-							tableContainer.innerHTML = `
-								<div class="empty-state">
-									<h2>No Holdings Found</h2>
-									<p>No account holdings are currently available.</p>
-								</div>
-							`;
+							if (!tableContainer.querySelector('.empty-state')) {
+								tableContainer.innerHTML = `
+									<div class="empty-state">
+										<h2>No Holdings Found</h2>
+										<p>No account holdings are currently available.</p>
+									</div>
+								`;
+							}
 							return;
 						}
+
+						// Remove empty state if exists
+						const emptyState = tableContainer.querySelector('.empty-state');
+						if (emptyState) emptyState.remove();
 						
-						// Build HTML for grouped accounts
-						let htmlContent = '';
 						const sortedAccounts = Object.keys(accountGroups).sort();
 						
+						// 1. Remove accounts that no longer exist in data
+						const existingGroups = tableContainer.querySelectorAll('.account-group');
+						existingGroups.forEach(group => {
+							const id = group.id.replace('account-group-', '');
+							if (!accountGroups[id]) group.remove();
+						});
+
+						// 2. Update or Create accounts
 						for (const acctNo of sortedAccounts) {
+							let group = document.getElementById('account-group-' + acctNo);
 							const stocks = accountGroups[acctNo] || [];
-							if (stocks.length === 0) continue;
 							
-							// Get auto sell status for this account
-							const isAutoSellEnabled = autoSellData[acctNo] === true;
-							const autoSellText = isAutoSellEnabled ? 'Auto Sell: ON' : 'Auto Sell: OFF';
-							const autoSellClass = isAutoSellEnabled ? 'account-auto-sell-btn enabled' : 'account-auto-sell-btn disabled';
+							// Get auto sell status
+							let cleanMode = autoSellData[acctNo] || 'NONE';
+							if (typeof cleanMode === 'boolean') cleanMode = cleanMode ? 'SELL' : 'NONE';
+							if (!['NONE', 'BUY', 'SELL', 'BOTH'].includes(cleanMode)) cleanMode = 'NONE';
 							
-							htmlContent += `
-								<div class="account-group">
+							// If group doesn't exist, create it
+							if (!group) {
+								group = document.createElement('div');
+								group.className = 'account-group';
+								group.id = 'account-group-' + acctNo;
+								
+								// Generate options
+								const options = ['NONE', 'BUY', 'SELL', 'BOTH'].map(mode => 
+									`<option value="${mode}" ${mode === cleanMode ? 'selected' : ''}>${mode}</option>`
+								).join('');
+								
+								group.innerHTML = `
 									<div class="account-group-header">
 										<h2>Account: ${acctNo}</h2>
-										<button class="${autoSellClass}" id="btn-auto-sell-${acctNo}" onclick="toggleAccountAutoSell('${acctNo}', this)" data-account="${acctNo}">
-											${autoSellText}
-										</button>
+										<div class="auto-sell-control">
+											<select id="select-auto-sell-${acctNo}" class="auto-sell-select">
+												${options}
+											</select>
+											<button class="btn-apply-auto-sell" onclick="applyAccountAutoSell('${acctNo}')">Apply</button>
+										</div>
 									</div>
 									<table>
 										<thead>
@@ -2304,45 +2374,95 @@ async def root(token: str = Cookie(None)):
 												<th>PRESET PRC/RATE</th>
 											</tr>
 										</thead>
-										<tbody>
-							`;
+										<tbody></tbody>
+									</table>
+								`;
+								// Insert in sorted order could be complex, assume appending is fine or handled by sort order if we clear. 
+								// Since we update in order, appending is fine for new ones. 
+								// To strictly maintain order for interleaved additions:
+								// Find successor
+								const successorId = sortedAccounts.find(a => a > acctNo && document.getElementById('account-group-' + a));
+								if (successorId) {
+									tableContainer.insertBefore(group, document.getElementById('account-group-' + successorId));
+								} else {
+									tableContainer.appendChild(group);
+								}
+							}
+							
+							// Update Select Box if not focused
+							const selectBox = group.querySelector(`#select-auto-sell-${acctNo}`);
+							if (selectBox && document.activeElement !== selectBox) {
+								if (selectBox.value !== cleanMode) {
+									selectBox.value = cleanMode;
+								}
+							}
+
+							// Update Rows
+							const tbody = group.querySelector('tbody');
+							const existingRows = Array.from(tbody.rows);
+							const rowMap = new Map();
+							existingRows.forEach(r => rowMap.set(r.getAttribute('data-row-id'), r));
+							const processedIds = new Set();
+							
+							// Sort stocks ? Logic just iterates data order.
 							
 							for (const item of stocks) {
 								const rowId = item.account + '_' + item.stock_code;
+								processedIds.add(rowId);
+								
 								const profitClass = getProfitClass(item.profit_rate);
 								const rmndQty = item.rmnd_qty || '0';
 								const presetPrcRate = item.preset_prc_rate || '- / -';
 								
-								// Extract sell_price and sell_rate from preset_prc_rate for data attributes
-								let sellPrice = '';
-								let sellRate = '';
+								// Extract parts
+								let sellPrice = '', sellRate = '';
 								const parts = presetPrcRate.split(' / ');
 								if (parts.length === 2) {
 									sellPrice = parts[0].trim() !== '-' ? parts[0].trim().replace(/,/g, '') : '';
 									sellRate = parts[1].trim() !== '-' ? parts[1].trim().replace('%', '') : '';
-									// Keep sellRate as percentage (remove % sign but keep percentage value)
 								}
 								
-								htmlContent += `
-									<tr data-row-id="${rowId}" data-stock-code="${item.stock_code}" data-stock-name="${item.stock_name}" data-sell-price="${sellPrice}" data-sell-rate="${sellRate}" onclick="selectRow(this)">
-										<td><strong>${item.stock_code}</strong></td>
-										<td>${item.stock_name}</td>
-										<td>${item.tradeable_qty} / ${rmndQty}</td>
-										<td>${item.avg_buy_price}</td>
-										<td class="${profitClass}">${item.profit_rate}</td>
-										<td>${presetPrcRate}</td>
-									</tr>
+								const cellContent = `
+									<td><strong>${item.stock_code}</strong></td>
+									<td>${item.stock_name}</td>
+									<td>${item.tradeable_qty} / ${rmndQty}</td>
+									<td>${item.avg_buy_price}</td>
+									<td class="${profitClass}">${item.profit_rate}</td>
+									<td>${presetPrcRate}</td>
 								`;
+								
+								let row = rowMap.get(rowId);
+								if (row) {
+									// Update existing row if content changed
+									// Comparing innerHTML might be expensive but robust.
+									// Or just set it.
+									if (row.innerHTML !== cellContent) {
+										row.innerHTML = cellContent;
+									}
+									// Update attributes always to be safe or check them
+									if (row.getAttribute('data-sell-price') !== sellPrice) row.setAttribute('data-sell-price', sellPrice);
+									if (row.getAttribute('data-sell-rate') !== sellRate) row.setAttribute('data-sell-rate', sellRate);
+									if (row.getAttribute('data-profit-rate') !== item.profit_rate) row.setAttribute('data-profit-rate', item.profit_rate); // if used elsewhere
+									// onclick persists
+								} else {
+									// Create new row
+									row = document.createElement('tr');
+									row.setAttribute('data-row-id', rowId);
+									row.setAttribute('data-stock-code', item.stock_code);
+									row.setAttribute('data-stock-name', item.stock_name);
+									row.setAttribute('data-sell-price', sellPrice);
+									row.setAttribute('data-sell-rate', sellRate);
+									row.setAttribute('onclick', 'selectRow(this)');
+									row.innerHTML = cellContent;
+									tbody.appendChild(row);
+								}
 							}
 							
-							htmlContent += `
-										</tbody>
-									</table>
-								</div>
-							`;
+							// Remove Deleted Rows
+							for (const [id, r] of rowMap) {
+								if (!processedIds.has(id)) r.remove();
+							}
 						}
-						
-						tableContainer.innerHTML = htmlContent;
 					}
 				})
 				.catch(error => {
@@ -2358,10 +2478,7 @@ async def root(token: str = Cookie(None)):
 						const autoSellData = result.data;
 						// Update each account button
 						for (const account in autoSellData) {
-							const btn = document.getElementById('btn-auto-sell-' + account);
-							if (btn) {
-								updateAccountAutoSellButton(account, autoSellData[account]);
-							}
+							updateAccountAutoSellSelect(account, autoSellData[account]);
 						}
 					}
 				})
@@ -2370,45 +2487,46 @@ async def root(token: str = Cookie(None)):
 				});
 		}
 		
-		function updateAccountAutoSellButton(account, enabled) {
-			const btn = document.getElementById('btn-auto-sell-' + account);
-			if (btn) {
-				if (enabled) {
-					btn.textContent = 'Auto Sell: ON';
-					btn.classList.add('enabled');
-					btn.classList.remove('disabled');
-				} else {
-					btn.textContent = 'Auto Sell: OFF';
-					btn.classList.add('disabled');
-					btn.classList.remove('enabled');
+		function updateAccountAutoSellSelect(account, mode) {
+			const select = document.getElementById('select-auto-sell-' + account);
+			if (select) {
+				// Normalize mode
+				const validModes = ['NONE', 'BUY', 'SELL', 'BOTH'];
+				if (typeof mode === 'boolean') {
+					mode = mode ? 'SELL' : 'NONE';
 				}
+				if (!validModes.includes(mode)) {
+					mode = 'NONE';
+				}
+				select.value = mode;
 			}
 		}
 		
-		function toggleAccountAutoSell(account, buttonElement) {
-			const btn = document.getElementById('btn-auto-sell-' + account);
-			const currentState = btn && btn.classList.contains('enabled');
-			const newState = !currentState;
+		function applyAccountAutoSell(account) {
+			const select = document.getElementById('select-auto-sell-' + account);
+			if (!select) return;
+			
+			const selectedMode = select.value;
 			
 			fetch('./api/auto-sell', {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',
 				},
-				body: JSON.stringify({ account: account, enabled: newState })
+				body: JSON.stringify({ account: account, enabled: selectedMode })
 			})
 			.then(response => response.json())
 			.then(result => {
 				if (result.status === 'success') {
-					updateAccountAutoSellButton(account, result.enabled);
-					showMessage(result.message || `Auto sell ${result.enabled ? 'enabled' : 'disabled'} for account ${account}`, 'success');
+					updateAccountAutoSellSelect(account, result.enabled);
+					showMessage(result.message || `Auto trade mode set to ${result.enabled} for account ${account}`, 'success');
 				} else {
 					showMessage('Error: ' + (result.message || 'Failed to update auto sell status'), 'error');
 				}
 			})
 			.catch(error => {
-				console.error('Error toggling account auto sell:', error);
-				showMessage('Error toggling auto sell: ' + error.message, 'error');
+				console.error('Error applying account auto sell:', error);
+				showMessage('Error applying auto sell: ' + error.message, 'error');
 			});
 		}
 		
@@ -3827,10 +3945,15 @@ async def set_auto_sell_api(request: dict, proxy_path: str = "", token: str = Co
 		if enabled is None:
 			return {"status": "error", "message": "Missing 'enabled' parameter"}
 		
-		auto_sell_enabled[account] = bool(enabled)
+		# Validate mode
+		valid_modes = ['NONE', 'BUY', 'SELL', 'BOTH']
+		if enabled not in valid_modes:
+			return {"status": "error", "message": f"Invalid mode. Must be one of {valid_modes}"}
+			
+		auto_sell_enabled[account] = enabled
 		# Save to file
 		if save_auto_sell_to_json():
-			return {"status": "success", "enabled": auto_sell_enabled[account], "message": f"Auto sell {'enabled' if auto_sell_enabled[account] else 'disabled'} for account {account}"}
+			return {"status": "success", "enabled": auto_sell_enabled[account], "message": f"Auto trade set to {auto_sell_enabled[account]} for account {account}"}
 		else:
 			return {"status": "error", "message": "Failed to save auto sell status to file"}
 	except Exception as e:
