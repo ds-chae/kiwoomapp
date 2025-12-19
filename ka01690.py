@@ -2355,8 +2355,20 @@ async def root(token: str = Cookie(None)):
 		function updateTable() {
 			// Fetch both account data and auto sell status in parallel
 			Promise.all([
-				fetch('./api/account-data').then(r => r.json()),
-				fetch('./api/auto-sell').then(r => r.json())
+				fetch('./api/account-data').then(r => {
+					if (r.status === 401) {
+						window.location.reload();
+						return Promise.reject('Unauthorized');
+					}
+					return r.json();
+				}),
+				fetch('./api/auto-sell').then(r => {
+					if (r.status === 401) {
+						window.location.reload();
+						return Promise.reject('Unauthorized');
+					}
+					return r.json();
+				})
 			])
 				.then(([accountResult, autoSellResult]) => {
 					if (accountResult.status === 'success') {
@@ -2551,6 +2563,15 @@ async def root(token: str = Cookie(None)):
 				})
 				.catch(error => {
 					console.error('Error updating table:', error);
+					const tableContainer = document.getElementById('table-container');
+					if (tableContainer) {
+						tableContainer.innerHTML = `
+							<div class="empty-state error-state" style="border: 2px solid #e74c3c; background-color: #fadbd8; padding: 20px; border-radius: 8px; text-align: center;">
+								<h2 style="color: #c0392b; margin-bottom: 10px;">Backend is down. Retrying...</h2>
+								<p style="color: #7f8c8d;">Connection to the server failed. Will try again automatically.</p>
+							</div>
+						`;
+					}
 				});
 		}
 		
