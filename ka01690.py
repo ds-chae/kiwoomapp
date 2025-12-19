@@ -207,7 +207,6 @@ def get_jango(now, market = 'KRX'):
 	global get_jango_count, key_list, jango_token
 
 	log_jango = (get_jango_count == 0)
-	log_jango = False
 
 	get_jango_count += 1
 	if get_jango_count >= 10 :
@@ -684,7 +683,9 @@ def buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock):
 	for m in miche:
 		print('io_tp_nm=', m['io_tp_nm'])
 		if m['stk_cd'] == stk_cd and m['io_tp_nm']  == '+매수' :
-			bsum += int(m['ord_qty'])*int(['ord_pric'])
+			oqty = m['ord_qty']
+			oqp = m['ord_pric']
+			bsum += int(oqty)*int(oqp)
 	if bsum >= bamount * 2 * 0.85:
 		ordered[stk_cd] = 2
 	elif bsum >= bamount * 1 * 0.85:
@@ -709,18 +710,20 @@ def buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock):
 	stex = 'KRX'
 	trde_tp = '0'
 	if ordered[stk_cd] < 1 :
-		ord_price = round_trunc(bun_price[price_index])
+		bp = bun_price['price'][price_index]
+		ord_price = round_trunc(bp)
 		ord_qty = bamount // ord_price
 		#ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trade_tp=trde_tp, cond_uv='')
-		ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, '1', str(ord_price), trade_tp=trde_tp, cond_uv='')
+		ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, '1', str(ord_price), trde_tp=trde_tp, cond_uv='')
 		print('1_buy_order_result: {}'.format(ret_status))
 		ordered[stk_cd] += 1
 		print('price:{} current buy order for {} {} {} is {}'.format(ord_price, ACCT, stk_cd, stk_nm, ordered[stk_cd]))
 	if ordered[stk_cd] < 2:
-		ord_price = round_trunc(bun_price[price_index+1])
+		bp = bun_price['price'][price_index+1]
+		ord_price = round_trunc(bp)
 		ord_qty = bamount // ord_price
 		#ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trade_tp=trde_tp, cond_uv='')
-		ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, '1', str(ord_price), trade_tp=trde_tp, cond_uv='')
+		ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, '1', str(ord_price), trde_tp=trde_tp, cond_uv='')
 		print('2_buy_order_result: {}'.format(ret_status))
 		ordered[stk_cd] += 1
 		print('price:{} current buy order for {} {} {} is {}'.format(ord_price, ACCT, stk_cd, stk_nm, ordered[stk_cd]))
