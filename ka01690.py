@@ -357,7 +357,7 @@ def get_upper_limit(MY_ACCESS_TOKEN, stk_cd):
 		return 0
 
 
-def cancel_different_sell_order(now, ACCT, stk_cd, ord_uv):
+def cancel_different_sell_order(now, ACCT, stk_cd, stk_nm, ord_uv):
 	global stored_miche_data
 	cancel_count = 0
 	int_uv = int(ord_uv)
@@ -366,7 +366,7 @@ def cancel_different_sell_order(now, ACCT, stk_cd, ord_uv):
 		if 'oso' in stored_miche_data[ACCT]:
 			miche = stored_miche_data[ACCT]['oso']
 	for m in miche:
-		print('io_tp_nm=', m['io_tp_nm'])
+		#print('io_tp_nm=', m['io_tp_nm'])
 		if m['stk_cd'] == stk_cd and m['io_tp_nm']  == '-매도' :
 			oqty = m['ord_qty']
 			oqp = int(m['ord_pric'])
@@ -374,7 +374,7 @@ def cancel_different_sell_order(now, ACCT, stk_cd, ord_uv):
 				result = cancel_order_main(now, jango_token[ACCT], m['stex_tp_txt'], m['ord_no'], stk_cd)
 				print('cancel_different_sell_order ', result)
 				cancel_count += 1
-	print('cancel_different_sell_order {} {} {} returns {}.'.format(ACCT, stk_cd, ord_uv, cancel_count))
+	print('cancel_different_sell_order {} {} {} {} returns {}.'.format(ACCT, stk_cd, stk_nm, ord_uv, cancel_count))
 	return cancel_count
 
 
@@ -426,7 +426,7 @@ def call_sell_order(now, ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, se
 		return
 
 	# if any cancelled sell order, try next
-	cancel_count = cancel_different_sell_order(now, ACCT, stk_cd, ord_uv)
+	cancel_count = cancel_different_sell_order(now, ACCT, stk_cd, stk_nm, ord_uv)
 	if cancel_count > 0 :
 		return
 
@@ -737,7 +737,7 @@ def buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock):
 		if 'oso' in stored_miche_data[ACCT]:
 			miche = stored_miche_data[ACCT]['oso']
 	for m in miche:
-		print('io_tp_nm=', m['io_tp_nm'])
+		#print('io_tp_nm=', m['io_tp_nm'])
 		if m['stk_cd'] == stk_cd and m['io_tp_nm']  == '+매수' :
 			oqty = m['ord_qty']
 			oqp = m['ord_pric']
@@ -754,7 +754,7 @@ def buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock):
 
 	if not stk_cd in bun_charts:
 		print('getting bun_chart for {} {}'.format(stk_cd, stk_nm))
-		bun_charts[stk_cd] = get_bun_chart(MY_ACCESS_TOKEN, stk_cd)
+		bun_charts[stk_cd] = get_bun_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm)
 	if not stk_cd in bun_prices:
 		print('getting bun_price for {} {} from bun_chart'.format(stk_cd, stk_nm))
 		bun_prices[stk_cd] = get_bun_price(stk_cd, stk_nm, bun_charts[stk_cd])
@@ -3841,6 +3841,23 @@ async def cancel_order_api(request: dict, proxy_path: str = "", token: str = Coo
 		return {"status": "error", "message": str(e)}
 
 
+def cancel_related_buy_order(stk_cd):
+	global stored_miche_data, jango_token
+	now = datetime.now().time()
+	cancel_count = 0
+	for ACCT, miche in stored_miche_data.items():
+		if 'oso' in miche:
+			oso = miche['oso']
+			for m in oso:
+				#print('io_tp_nm=', m['io_tp_nm'])
+				if m['stk_cd'] == stk_cd and m['io_tp_nm']  == '+매수' :
+					result = cancel_order_main(now, jango_token[ACCT], m['stex_tp_txt'], m['ord_no'], stk_cd)
+					print('cancel_related_buy_order ', result)
+					cancel_count += 1
+	print('cancel_related_buy_order {} returns {}.'.format(stk_cd, cancel_count))
+	return cancel_count
+
+
 def issue_buy_order(stk_cd, ord_uv, ord_qty, stex, trde_tp):
 	global key_list
 	access_token = None
@@ -4113,51 +4130,59 @@ def set_interested_rate(stock_code, stock_name='', color=None,
                     stime='', yyyymmdd='', sellprice='0',
                     sellrate='0', sellgap='0'):
 	global interested_stocks
+	try:
+		if color and color == 'DELETE':
+			if stock_code in interested_stocks:
+				del interested_stocks[stock_code]
+				cancel_related_buy_order(stock_code)
+		else:
+			if not stock_name or stock_name == '':
+				stock_name = get_stockname(stock_code)
 
-	if not stock_name or stock_name == '':
-		stock_name = get_stockname(stock_code)
+			# Add or update the stock in interested list
+			if stock_code not in interested_stocks:
+				stock = {}
+			else:
+				stock = interested_stocks[stock_code]
 
-	# Add or update the stock in interested list
-	if stock_code not in interested_stocks:
-		stock = {}
-	else:
-		stock = interested_stocks[stock_code]
+			stock['stock_name'] = stock_name.strip()
+			if color :
+				color = color_kor_to_eng(color)
+				stock['color'] = color.strip()
 
-	stock['stock_name'] = stock_name.strip()
-	if color :
-		color = color_kor_to_eng(color)
-		stock['color'] = color.strip()
+			if btype :
+				stock['btype'] = btype.strip()
 
-	if btype :
-		stock['btype'] = btype.strip()
+			if bamount is not None:
+				try:
+					bamount_int = int(bamount)
+					stock['bamount'] = bamount_int
+				except (ValueError, TypeError):
+					pass
 
-	if bamount is not None:
-		try:
-			bamount_int = int(bamount)
-			stock['bamount'] = bamount_int
-		except (ValueError, TypeError):
-			pass
+			if stime:
+				stock['stime'] = stime.strip()
 
-	if stime:
-		stock['stime'] = stime.strip()
+			if yyyymmdd:
+				stock['yyyymmdd'] = yyyymmdd.strip()
 
-	if yyyymmdd:
-		stock['yyyymmdd'] = yyyymmdd.strip()
+			stock['sellprice'] = sellprice
+			stock['sellrate'] = sellrate
+			stock['sellgap'] = sellgap
+			if not 'clprice' in stock:
+				stock['clprice'] = '0'
 
-	stock['sellprice'] = sellprice
-	stock['sellrate'] = sellrate
-	stock['sellgap'] = sellgap
-	if not 'clprice' in stock:
-		stock['clprice'] = '0'
+			interested_stocks[stock_code] = stock
 
-	interested_stocks[stock_code] = stock
 	# Save to file
-	if save_interested_stocks_to_json():
-		return {"status": "success", "message": f"Stock {stock_code} added/updated in interested list",
-	        "data": interested_stocks}
-	else:
-		return {"status": "error", "message": "Failed to save to file"}
-
+		if save_interested_stocks_to_json():
+			return {"status": "success", "message": f"Stock {stock_code} added/updated in interested list",
+	    	    "data": interested_stocks}
+		else:
+			return {"status": "error", "message": "Failed to save to file"}
+	except Exception as ex :
+		traceback.print_exc()
+		return {"status": "error", "message": str(ex) }
 
 
 @app.post("/api/interested-stocks")
