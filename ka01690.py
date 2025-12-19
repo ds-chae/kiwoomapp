@@ -2981,7 +2981,6 @@ async def root(token: str = Cookie(None)):
 			.then(response => response.json())
 			.then(result => {
 				if (result.status === 'success') {
-					alert('Order cancellation requested successfully');
 					// Refresh miche data after a short delay
 					setTimeout(updateMiche, 1000);
 				} else {
