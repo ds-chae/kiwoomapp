@@ -14,7 +14,8 @@ import uvicorn
 from contextlib import asynccontextmanager
 import secrets
 import socket
-from ka10080 import get_bun_chart, get_bun_price, get_price_index
+from ka10080 import get_bun_chart, get_bun_price, get_price_index, set_low_after_high, get_low_after_high
+
 
 # Interested stocks list
 INTERESTED_STOCKS_FILE = 'interested_stocks.json'
@@ -220,6 +221,21 @@ def get_jango(now, market = 'KRX'):
 		j = call_fn_kt00018(log_jango, market, acct, MY_ACCESS_TOKEN)
 		j['ACCT'] = acct
 		jango[acct] = j
+
+	# set lowest using jango cur_pric
+	for acct, j in jango.items():
+		acnt_evlt_remn_indv_tot = j.get("acnt_evlt_remn_indv_tot", [])
+
+		for indv in acnt_evlt_remn_indv_tot:
+			stk_cd = indv.get('stk_cd', '')
+			stk_nm = indv.get('stk_nm', '')
+			if stk_cd[0] == 'A':
+				stk_cd = stk_cd[1:]
+			cur_prc = int(indv.get('cur_prc','0'))
+			if cur_prc < 0 :
+				cur_prc = -cur_prc
+			set_low_after_high(stk_cd, stk_nm, int(cur_prc))
+
 	return jango
 
 def call_fn_kt00018(log_jango, market, ACCT, MY_ACCESS_TOKEN):
@@ -341,12 +357,58 @@ def get_upper_limit(MY_ACCESS_TOKEN, stk_cd):
 		return 0
 
 
+def cancel_different_sell_order(now, ACCT, stk_cd, ord_uv):
+	global stored_miche_data
+	cancel_count = 0
+	int_uv = int(ord_uv)
+	miche = []
+	if ACCT in stored_miche_data:
+		if 'oso' in stored_miche_data[ACCT]:
+			miche = stored_miche_data[ACCT]['oso']
+	for m in miche:
+		print('io_tp_nm=', m['io_tp_nm'])
+		if m['stk_cd'] == stk_cd and m['io_tp_nm']  == '-매도' :
+			oqty = m['ord_qty']
+			oqp = int(m['ord_pric'])
+			if oqp != int_uv:
+				result = cancel_order_main(now, jango_token[ACCT], m['stex_tp_txt'], m['ord_no'], stk_cd)
+				print('cancel_different_sell_order ', result)
+				cancel_count += 1
+	print('cancel_different_sell_order {} {} {} returns {}.'.format(ACCT, stk_cd, ord_uv, cancel_count))
+	return cancel_count
 
 
 
+def calculate_sell_price(pur_pric, sell_cond, stk_cd):
+	ord_uv = '0'
+	if 'sellprice' in sell_cond:
+		ord_uv = sell_cond['sellprice']
+	if ord_uv != '0':
+		return ord_uv
+
+	sellrate = float(sell_cond.get('sellrate', '0.0'))
+	if sellrate != 0.0 :
+		# sellrate is stored as-is (percentage), divide by 100 for calculation
+		s_rate_percent = sellrate
+		s_rate = s_rate_percent / 100.0
+		s_price = pur_pric * (1.0 + s_rate)
+		s_price = round_trunc(s_price)
+		ord_uv = str(s_price)
+		return ord_uv
+
+	sellgap = float(sell_cond.get('sellgap', '0.0')) / 100.
+	if sellgap != 0.0 :
+		bun_price = bun_prices[stk_cd]
+		lowest = get_low_after_high(stk_cd)
+		if lowest != 0 :
+			gap = float(bun_price['gap'])
+			cl_price = lowest + gap * sellgap
+			return str(cl_price)
+
+	return '0'
 
 
-def call_sell_order(MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond):
+def call_sell_order(now, ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond):
 	global current_status, working_status
 
 	trde_able_qty = indv.get("trde_able_qty", "0")
@@ -354,46 +416,41 @@ def call_sell_order(MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond):
 	pur_pric_str = indv.get('pur_pric', '0')
 	pur_pric = float(pur_pric_str) if pur_pric_str else 0.0
 
-	trde_able_qty_int = int(trde_able_qty) if trde_able_qty else 0
-	if trde_able_qty_int == 0:
-		return
-	if isinstance(trde_able_qty, str) and len(trde_able_qty) > 4:
-		trde_able_qty = trde_able_qty[4:]
-
-	ord_uv = '0'
-	if 'sellprice' in sell_cond:
-		ord_uv = sell_cond['sellprice']
-	if ord_uv == '0':
-		if 'sellrate' in sell_cond:
-			# sellrate is stored as-is (percentage), divide by 100 for calculation
-			s_rate_percent = float(sell_cond['sellrate'])
-			s_rate = s_rate_percent / 100.0
-			s_price = pur_pric * (1.0 + s_rate)
-			s_price = round_trunc(s_price)
-			ord_uv = str(s_price)
+	ord_uv = calculate_sell_price(pur_pric, sell_cond, stk_cd)
 
 	if ord_uv == '0': # price is not calculated
 		return
 	upperlimit = get_upper_limit(MY_ACCESS_TOKEN, stk_cd)
 	if int(ord_uv) > upperlimit :
 		print('{} {} {} exceed upper limit {}'.format(stk_cd, stk_nm, ord_uv, upperlimit))
-		pass
-	else:
-		working_status = 'call sell_order()'
-		trde_tp = '0'  # 매매구분 0:보통 , 3:시장가 , 5:조건부지정가 , 81:장마감후시간외 , 61:장시작전시간외, 62:시간외단일가 , 6:최유리지정가 , 7:최우선지정가 , 10:보통(IOC) , 13:시장가(IOC) , 16:최유리(IOC) , 20:보통(FOK) , 23:시장가(FOK) , 26:최유리(FOK) , 28:스톱지정가,29:중간가,30:중간가(IOC),31:중간가(FOK)
-		ret_status = sell_order(MY_ACCESS_TOKEN, dmst_stex_tp=market, stk_cd=stk_cd,
-		                        ord_qty=trde_able_qty, ord_uv=ord_uv, trde_tp=trde_tp, cond_uv='')
-		print('sell_order_result')
-		print(ret_status)
-		if isinstance(ret_status, dict):
-			rcde = ret_status.get('return_code')
-			rmsg = ret_status.get('return_msg', '')
-			if rmsg and len(rmsg) > 13:
-				code = rmsg[7:13]
-				if code == '507615':
-					not_nxt_cd[stk_cd] = True
-			print(rcde)
-		print('call_sell_order:{}'.format(stk_nm))
+		return
+
+	# if any cancelled sell order, try next
+	cancel_count = cancel_different_sell_order(now, ACCT, stk_cd, ord_uv)
+	if cancel_count > 0 :
+		return
+
+	trde_able_qty_int = int(trde_able_qty) if trde_able_qty else 0
+	if trde_able_qty_int == 0:
+		return
+	if isinstance(trde_able_qty, str) and len(trde_able_qty) > 4:
+		trde_able_qty = trde_able_qty[4:]
+
+	working_status = 'call sell_order()'
+	trde_tp = '0'  # 매매구분 0:보통 , 3:시장가 , 5:조건부지정가 , 81:장마감후시간외 , 61:장시작전시간외, 62:시간외단일가 , 6:최유리지정가 , 7:최우선지정가 , 10:보통(IOC) , 13:시장가(IOC) , 16:최유리(IOC) , 20:보통(FOK) , 23:시장가(FOK) , 26:최유리(FOK) , 28:스톱지정가,29:중간가,30:중간가(IOC),31:중간가(FOK)
+	ret_status = sell_order(MY_ACCESS_TOKEN, dmst_stex_tp=market, stk_cd=stk_cd,
+							ord_qty=trde_able_qty, ord_uv=ord_uv, trde_tp=trde_tp, cond_uv='')
+	print('sell_order_result')
+	print(ret_status)
+	if isinstance(ret_status, dict):
+		rcde = ret_status.get('return_code')
+		rmsg = ret_status.get('return_msg', '')
+		if rmsg and len(rmsg) > 13:
+			code = rmsg[7:13]
+			if code == '507615':
+				not_nxt_cd[stk_cd] = True
+		print(rcde)
+	print('call_sell_order:{}'.format(stk_nm))
 
 
 jango_token = {}
@@ -401,9 +458,8 @@ jango_token = {}
 def sell_jango(now, jango, market):
 	global auto_sell_enabled, current_status, jango_token
 
-	for ACCT in jango:
+	for ACCT, j in jango.items():
 		try:
-			j = jango[ACCT]
 			# Check auto sell enabled for this specific account
 			# Mode can be NONE, BUY, SELL, BOTH
 			mode = auto_sell_enabled.get(ACCT, 'NONE')
@@ -429,7 +485,7 @@ def sell_jango(now, jango, market):
 
 				sell_cond = interested_stocks[stk_cd]
 				working_status = 'before call_sell_order {} {} {}'.format(market, stk_cd, stk_nm)
-				call_sell_order(MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond)
+				call_sell_order(now, ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond)
 		except Exception as ex:
 			print('at 314 {}'.format(working_status))
 			print(ex)
@@ -676,7 +732,7 @@ def buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock):
 			each_cd = each_cd[1:]
 		if each_cd == stk_cd:
 			bsum += int(eachjango['pur_amt'])
-	miche = {}
+	miche = []
 	if ACCT in stored_miche_data:
 		if 'oso' in stored_miche_data[ACCT]:
 			miche = stored_miche_data[ACCT]['oso']
@@ -697,8 +753,10 @@ def buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock):
 		return
 
 	if not stk_cd in bun_charts:
+		print('getting bun_chart for {} {}'.format(stk_cd, stk_nm))
 		bun_charts[stk_cd] = get_bun_chart(MY_ACCESS_TOKEN, stk_cd)
 	if not stk_cd in bun_prices:
+		print('getting bun_price for {} {} from bun_chart'.format(stk_cd, stk_nm))
 		bun_prices[stk_cd] = get_bun_price(stk_cd, stk_nm, bun_charts[stk_cd])
 	print(bun_prices)
 	if not stk_cd in bun_prices:
@@ -877,16 +935,14 @@ bun_prices = {}
 def fill_charts_for_CL(MY_ACCESS_TOKEN):
 	global bun_charts, interested_stocks
 	try:
-		for stk_cd in interested_stocks:
-			stock = interested_stocks[stk_cd]
-			btype = ''
-			if 'btype' in stock:
-				btype = stock['btype']
+		for stk_cd, stock in interested_stocks.items():
+			btype = stock.get('btype', '')
 			if btype != 'CL':
 				continue
 			if stk_cd in bun_charts:
 				continue
-			bun_charts[stk_cd] = get_bun_chart(MY_ACCESS_TOKEN, stk_cd)
+			stk_nm = stock['stock_name']
+			bun_charts[stk_cd] = get_bun_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm)
 	except Exception as ex:
 		print('806', ex)
 		exit(0)
@@ -1094,10 +1150,10 @@ def format_account_data():
 				pur_pric = stock.get('pur_pric', '0')
 				pur_pric_float = float(pur_pric) if pur_pric else 0.0
 				
-				cur_prc = stock.get('cur_prc', '0')
-				if cur_prc[0] == '-':
-					cur_prc = cur_prc[1:]
-				cur_prc_float = float(cur_prc) if cur_prc else 0.0
+				cur_prc = int(stock.get('cur_prc', '0'))
+				if cur_prc < 0 :
+					cur_prc = -cur_prc
+				cur_prc_float = float(cur_prc)
 				
 				prft_rt = stock.get('prft_rt', '0')
 				prft_rt_float = float(prft_rt) if prft_rt else 0.0

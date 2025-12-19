@@ -20,9 +20,25 @@ def get_price_index(color):
 	if color == 'V': # 보 Violet
 		return 8
 	return 9
-
-
 # [2] -> R, [3] -> O
+
+
+low_after_high = {}
+
+def set_low_after_high(stk_cd, stk_nm, lprc):
+	if lprc == 0:
+		print('fro stock {} {} set lowest to zero is not allowed'.format(stk_cd, stk_nm))
+		return
+
+	ltmp = low_after_high.get(stk_cd, 10000000)
+	if ltmp > lprc:
+		low_after_high[stk_cd] = lprc
+
+
+def get_low_after_high(stk_cd):
+	lprc = low_after_high.get(stk_cd, 0)
+	return lprc
+
 
 def get_bun_price(stk_cd, stk_nm, chart ):
 	bun_price = {}
@@ -50,6 +66,21 @@ def get_bun_price(stk_cd, stk_nm, chart ):
 			high_price = hpc
 		i += 1
 	i = high_index
+
+	# find lowest price after high price
+	hidx = high_index - 1
+	low_price = int(chart[high_index]['low_pric'])
+	if low_price < 0:
+		low_price = -low_price
+	while hidx >= 0 :
+		tlpc = int(chart[hidx]['low_pric'])
+		if tlpc < 0 :
+			tlpc = -tlpc
+		if low_price > tlpc:
+			low_price = tlpc
+		hidx -= 1
+	set_low_after_high(stk_cd, stk_nm, low_price)
+
 	if (i + prd) >= chartlen:
 		bun_price['high_price'] = 0
 		bun_price['low_price'] = 0
@@ -103,13 +134,13 @@ def fn_ka10080(token, data, cont_yn='N', next_key=''):
 	return response.json()['stk_min_pole_chart_qry']
 
 
-def get_bun_chart(MY_ACCESS_TOKEN, stk_cd):
+def get_bun_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm):
 	params = {
 		'stk_cd': stk_cd, # 종목코드 거래소별 종목코드 (KRX:039490,NXT:039490_NX,SOR:039490_AL)
 		'tic_scope': '15', # 틱범위 1:1분, 3:3분, 5:5분, 10:10분, 15:15분, 30:30분, 45:45분, 60:60분
 		'upd_stkpc_tp': '1', # 수정주가구분 0 or 1
 	}
-	print('get_bun_chart:{}'.format(stk_cd))
+	print('get_bun_chart:{} {}'.format(stk_cd, stk_nm))
 	# 3. API 실행
 	return fn_ka10080(token=MY_ACCESS_TOKEN, data=params)
 
@@ -119,9 +150,11 @@ if __name__ == '__main__':
 	# 1. 토큰 설정
 	MY_ACCESS_TOKEN = get_one_token()
 
+	stk_cd = '105840'
+	stk_nm = '우진'
 	# 2. 요청 데이터
 	params = {
-		'stk_cd': '105840', # 종목코드 거래소별 종목코드 (KRX:039490,NXT:039490_NX,SOR:039490_AL)
+		'stk_cd': stk_cd, # 종목코드 거래소별 종목코드 (KRX:039490,NXT:039490_NX,SOR:039490_AL)
 		'tic_scope': '15', # 틱범위 1:1분, 3:3분, 5:5분, 10:10분, 15:15분, 30:30분, 45:45분, 60:60분
 		'upd_stkpc_tp': '1', # 수정주가구분 0 or 1
 	}
@@ -130,7 +163,7 @@ if __name__ == '__main__':
 	bun_chart = fn_ka10080(token=MY_ACCESS_TOKEN, data=params)
 	print(bun_chart)
 
-	bun_price = get_bun_price(bun_chart)
+	bun_price = get_bun_price(stk_cd, stk_nm, bun_chart)
 	print(bun_price)
 
 	# next-key, cont-yn 값이 있을 경우
