@@ -409,7 +409,7 @@ def calculate_sell_price(pur_pric, sell_cond, stk_cd):
 
 
 def call_sell_order(now, ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond):
-	global current_status, working_status
+	global current_status, working_status, new_day
 
 	trde_able_qty = indv.get("trde_able_qty", "0")
 	rmnd_qty = indv.get('rmnd_qty', "0")
@@ -442,15 +442,24 @@ def call_sell_order(now, ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, se
 							ord_qty=trde_able_qty, ord_uv=ord_uv, trde_tp=trde_tp, cond_uv='')
 	print('sell_order_result')
 	print(ret_status)
-	if isinstance(ret_status, dict):
-		rcde = ret_status.get('return_code')
-		rmsg = ret_status.get('return_msg', '')
-		if rmsg and len(rmsg) > 13:
-			code = rmsg[7:13]
-			if code == '507615':
-				not_nxt_cd[stk_cd] = True
-		print(rcde)
+	test_ret_status(stk_cd, ret_status)
 	print('call_sell_order:{}'.format(stk_nm))
+
+
+def test_ret_status(stk_cd, ret_status):
+	if not isinstance(ret_status, dict):
+		return
+
+	rcde = ret_status.get('return_code')
+	rmsg = ret_status.get('return_msg', '')
+	if rmsg and len(rmsg) > 13:
+		code = rmsg[7:13]
+		if code == '507615':
+			not_nxt_cd[stk_cd] = True
+		if code == '571489':
+			set_new_day(False)
+			print('No trading day, set new_day to False')
+		print(rcde)
 
 
 jango_token = {}
@@ -774,6 +783,7 @@ def buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock):
 		#ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trade_tp=trde_tp, cond_uv='')
 		ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, '1', str(ord_price), trde_tp=trde_tp, cond_uv='')
 		print('1_buy_order_result: {}'.format(ret_status))
+		test_ret_status(stk_cd, ret_status)
 		ordered[stk_cd] += 1
 		print('price:{} current buy order for {} {} {} is {}'.format(ord_price, ACCT, stk_cd, stk_nm, ordered[stk_cd]))
 	if ordered[stk_cd] < 2:
@@ -783,6 +793,7 @@ def buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock):
 		#ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trade_tp=trde_tp, cond_uv='')
 		ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, '1', str(ord_price), trde_tp=trde_tp, cond_uv='')
 		print('2_buy_order_result: {}'.format(ret_status))
+		test_ret_status(stk_cd, ret_status)
 		ordered[stk_cd] += 1
 		print('price:{} current buy order for {} {} {} is {}'.format(ord_price, ACCT, stk_cd, stk_nm, ordered[stk_cd]))
 
@@ -831,30 +842,32 @@ def daily_work(now):
 			current_status = 'NXT'
 	else:
 		if (new_day):
-			current_status = 'OFF'
-			new_day = False
+			set_new_day(False)
 			print('{} {} Setting new day=False'.format(cur_date(), now))
 
 
-def set_new_day():
+def set_new_day(tf):
 	global new_day, waiting_shown, no_working_shown, nxt_cancelled, ktx_first, current_status
 	global updown_list, access_token
-
-	if new_day:
-		return
-	print('Setting new_day=True, clearing variables.')
-	now = datetime.now().time()
-	print('{} {} Setting new day=True'.format(cur_date(), now))
-	new_day = True
-	waiting_shown = False
-	no_working_shown = False
-	nxt_cancelled = False
-	ktx_first = False
-	current_status = 'NEW'
-	not_nxt_cd = {}
-	updown_list = {}
-	init_order_count()
-	access_token = {}
+	if tf:
+		if new_day:
+			return
+		print('Setting new_day=True, clearing variables.')
+		now = datetime.now().time()
+		print('{} {} Setting new day=True'.format(cur_date(), now))
+		new_day = True
+		waiting_shown = False
+		no_working_shown = False
+		nxt_cancelled = False
+		ktx_first = False
+		current_status = 'NEW'
+		not_nxt_cd = {}
+		updown_list = {}
+		init_order_count()
+		access_token = {}
+	else:
+		new_day = False
+		current_status = 'OFF'
 
 
 # Global flag for auto sell - dictionary keyed by account
@@ -4369,5 +4382,5 @@ def get_stockname(stk_cd):
 
 # 실행 구간
 if __name__ == '__main__':
-	set_new_day()
+	set_new_day(True)
 	uvicorn.run(app, host="0.0.0.0", port=8006, access_log=False)
