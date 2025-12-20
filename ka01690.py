@@ -872,7 +872,7 @@ def set_new_day(tf):
 		init_order_count()
 		access_token = {}
 	else:
-		if not tf:
+		if not new_day:
 			return
 		print('{} new_day is switching OFF'.format(now))
 		new_day = False
