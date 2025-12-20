@@ -341,7 +341,10 @@ def get_upper_limit(MY_ACCESS_TOKEN, stk_cd):
 		try:
 			response = fn_ka10007(token=MY_ACCESS_TOKEN, data=params)
 			print('calling fn_ka1007 in get_upper_limit succeeded')
-			if stk_cd == response['stk_cd']:
+			rstk_cd = response['stk_cd']
+			if rstk_cd and len(rstk_cd) > 0 and rstk_cd[0] == 'A':
+				rstk_cd = rstk_cd[1:]
+			if stk_cd == rstk_cd:
 				updown_list[stk_cd] = response
 			else:
 				print('calling fn_ka1007 in get_upper_limit mismatch')
@@ -467,8 +470,9 @@ def test_ret_status(stk_cd, ret_status):
 jango_token = {}
 
 def sell_jango(jango, market):
-	global auto_sell_enabled, current_status, jango_token, now
+	global auto_sell_enabled, current_status, jango_token, now, working_status
 
+	working_status = 'begin sell_jango()'
 	for ACCT, j in jango.items():
 		try:
 			# Check auto sell enabled for this specific account
