@@ -16,6 +16,7 @@ import secrets
 import socket
 from ka10080 import get_bun_chart, get_bun_price, get_price_index, set_low_after_high, get_low_after_high
 
+now = datetime.now().time()
 
 # Interested stocks list
 INTERESTED_STOCKS_FILE = 'interested_stocks.json'
@@ -204,7 +205,7 @@ get_jango_count = 0
 			"crd_loan_dt": ""
 		},
 '''
-def get_jango(now, market = 'KRX'):
+def get_jango(market = 'KRX'):
 	global get_jango_count, key_list, jango_token
 
 	log_jango = (get_jango_count == 0)
@@ -408,7 +409,7 @@ def calculate_sell_price(pur_pric, sell_cond, stk_cd):
 	return '0'
 
 
-def call_sell_order(now, ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond):
+def call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond):
 	global current_status, working_status, new_day
 
 	trde_able_qty = indv.get("trde_able_qty", "0")
@@ -447,6 +448,7 @@ def call_sell_order(now, ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, se
 
 
 def test_ret_status(stk_cd, ret_status):
+	global now
 	if not isinstance(ret_status, dict):
 		return
 
@@ -457,15 +459,15 @@ def test_ret_status(stk_cd, ret_status):
 		if code == '507615':
 			not_nxt_cd[stk_cd] = True
 		if code == '571489':
-			set_new_day(False)
+			set_new_day(now, False)
 			print('No trading day, set new_day to False')
 		print(rcde)
 
 
 jango_token = {}
 
-def sell_jango(now, jango, market):
-	global auto_sell_enabled, current_status, jango_token
+def sell_jango(jango, market):
+	global auto_sell_enabled, current_status, jango_token, now
 
 	for ACCT, j in jango.items():
 		try:
@@ -494,7 +496,7 @@ def sell_jango(now, jango, market):
 
 				sell_cond = interested_stocks[stk_cd]
 				working_status = 'before call_sell_order {} {} {}'.format(market, stk_cd, stk_nm)
-				call_sell_order(now, ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond)
+				call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond)
 		except Exception as ex:
 			print('at 314 {}'.format(working_status))
 			print(ex)
@@ -722,7 +724,7 @@ def buy_cl_by_account(ACCT, MY_ACCESS_TOKEN):
 
 
 def buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock):
-	global working_status, order_count
+	global working_status, order_count, now
 	working_status = 'in buy_cl_stk_cd'
 	ordered = order_count[ACCT]
 	if stk_cd in ordered and ordered[stk_cd] >= 2:
@@ -804,12 +806,12 @@ current_status = ''
 working_status = 'initial'
 get_miche_failed = True
 
-def daily_work(now):
-	global new_day, krx_first, current_status
+def daily_work():
+	global new_day, krx_first, current_status, now
 	global nxt_start_time, nxt_end_time, krx_start_time,nxt_cancelled, krx_end_time, nxt_fin_time
 	global stored_jango_data, stored_miche_data, get_miche_failed, working_status
 
-	stored_jango_data = get_jango(now)
+	stored_jango_data = get_jango()
 	if is_between(now, nxt_start_time, nxt_end_time):
 		current_status = 'NXT'
 		try:
@@ -818,7 +820,7 @@ def daily_work(now):
 			get_miche_failed = True
 			print(f"Error updating miche data: {e}")
 
-		sell_jango(now, stored_jango_data, 'NXT')
+		sell_jango(stored_jango_data, 'NXT')
 	elif is_between(now, nxt_end_time, krx_start_time):
 		current_status = 'NXT->KRX'
 		if not nxt_cancelled:
@@ -835,7 +837,7 @@ def daily_work(now):
 			if not krx_first:
 				print('{} krx_first get_jango and sell_jango.'.format(now))
 				krx_first = True
-			sell_jango(now, stored_jango_data, 'KRX')
+			sell_jango(stored_jango_data, 'KRX')
 			working_status='calling buy_cl'
 			buy_cl(now)
 		else:
@@ -848,11 +850,11 @@ def daily_work(now):
 
 def set_new_day(tf):
 	global new_day, waiting_shown, no_working_shown, nxt_cancelled, ktx_first, current_status
-	global updown_list, access_token
+	global updown_list, access_token, now
 	if tf:
 		if new_day:
 			return
-		print('Setting new_day=True, clearing variables.')
+		print('{} Setting new_day=True, clearing variables.'.format(now))
 		now = datetime.now().time()
 		print('{} {} Setting new day=True'.format(cur_date(), now))
 		new_day = True
@@ -866,6 +868,9 @@ def set_new_day(tf):
 		init_order_count()
 		access_token = {}
 	else:
+		if not tf:
+			return
+		print('{} new_day is switching OFF'.format(now))
 		new_day = False
 		current_status = 'OFF'
 
@@ -1036,7 +1041,7 @@ async def lifespan(app: FastAPI):
 	print("Initializing jango data...")
 	now = datetime.now().time()
 	try:
-		stored_jango_data = get_jango(now, 'KRX')
+		stored_jango_data = get_jango('KRX')
 		print("KRX jango data initialized")
 	except Exception as e:
 		print(f"Error initializing KRX jango data: {e}")
@@ -1090,7 +1095,7 @@ app = FastAPI(lifespan=lifespan)
 
 def periodic_timer_handler():
 	"""Periodic timer event handler that runs the trading loop logic"""
-	global prev_hour, new_day, stored_jango_data, stored_miche_data, working_status
+	global prev_hour, new_day, stored_jango_data, stored_miche_data, working_status, now
 	
 	now = datetime.now().time()
 	now_hour = now.hour
@@ -1099,10 +1104,10 @@ def periodic_timer_handler():
 	prev_hour = now_hour
 
 	if is_between(now, day_start_time, nxt_start_time):
-		set_new_day()
+		set_new_day(now, True)
 	elif new_day:
 		try:
-			daily_work(now)
+			daily_work()
 		except Exception as ex:
 			traceback.print_exc()
 			print('currrent status={}'.format(working_status))
