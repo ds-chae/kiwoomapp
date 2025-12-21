@@ -9,7 +9,7 @@ from au1001 import get_token, get_key_list, get_one_token
 import time as time_module
 import threading
 from fastapi import FastAPI, HTTPException, status, Cookie, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 import uvicorn
 from contextlib import asynccontextmanager
 import secrets
@@ -4394,6 +4394,62 @@ def get_stockname(stk_cd):
 
 	print('No name field in fn_ka10100 result')
 	return ''
+
+
+# Proxy endpoint for datagather service
+@app.api_route("/stock/data/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+async def proxy_to_datagather(path: str, request: Request):
+	"""
+	Proxy requests from /stock/data/* to datagather service on port 8007.
+	Example: /stock/data/api/status -> http://localhost:8007/api/status
+	"""
+	# Target URL for datagather service
+	target_url = f"http://localhost:8007/{path}"
+	
+	# Get query parameters
+	query_params = dict(request.query_params)
+	
+	# Get request body if present
+	body = None
+	try:
+		body = await request.body()
+	except:
+		pass
+	
+	# Get headers (excluding host and other problematic headers)
+	headers = dict(request.headers)
+	headers.pop('host', None)
+	headers.pop('content-length', None)
+	
+	try:
+		# Forward the request to datagather service
+		if request.method == "GET":
+			response = requests.get(target_url, params=query_params, headers=headers, timeout=10)
+		elif request.method == "POST":
+			response = requests.post(target_url, params=query_params, data=body, headers=headers, timeout=10)
+		elif request.method == "PUT":
+			response = requests.put(target_url, params=query_params, data=body, headers=headers, timeout=10)
+		elif request.method == "DELETE":
+			response = requests.delete(target_url, params=query_params, headers=headers, timeout=10)
+		elif request.method == "PATCH":
+			response = requests.patch(target_url, params=query_params, data=body, headers=headers, timeout=10)
+		else:
+			return {"status": "error", "message": f"Unsupported method: {request.method}"}
+		
+		# Return the response from datagather
+		# Check if response is HTML
+		if 'text/html' in response.headers.get('content-type', ''):
+			return HTMLResponse(content=response.text, status_code=response.status_code)
+		else:
+			# Return JSON or other content
+			return JSONResponse(content=response.json() if response.headers.get('content-type', '').startswith('application/json') else {"data": response.text}, status_code=response.status_code)
+			
+	except requests.exceptions.ConnectionError:
+		return JSONResponse(content={"status": "error", "message": "Data gather service is not available"}, status_code=503)
+	except requests.exceptions.Timeout:
+		return JSONResponse(content={"status": "error", "message": "Request to data gather service timed out"}, status_code=504)
+	except Exception as e:
+		return JSONResponse(content={"status": "error", "message": f"Proxy error: {str(e)}"}, status_code=500)
 
 
 # 실행 구간

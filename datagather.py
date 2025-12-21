@@ -2,7 +2,13 @@ import json
 import time
 import os
 import traceback
+import threading
 from datetime import datetime, timedelta
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse, JSONResponse
+import uvicorn
+
 from ka10081 import get_day_chart
 from ka10080 import get_bun_chart
 from au1001 import get_one_token
@@ -13,6 +19,21 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Define chart data directory: chart_data/day
 CHART_DIR = os.path.join(BASE_DIR, 'chart_data', 'day')
 INTERESTED_STOCKS_FILE = os.path.join(BASE_DIR, 'interested_stocks.json')
+
+# Global status tracking
+status_info = {
+    'last_run': None,
+    'next_run': None,
+    'status': 'initializing',
+    'daily_charts_processed': 0,
+    'minute_charts_processed': 0,
+    'errors': []
+}
+status_lock = threading.Lock()
+
+# Background thread control
+thread_stop_event = threading.Event()
+background_thread = None
 
 def ensure_chart_dir():
     """Ensure the chart data directory exists."""
@@ -206,6 +227,14 @@ def gather_minute_charts(token, stocks):
     print(f"=== Minute chart gathering finished at {datetime.now()} ===\n")
 
 def run_daily_job():
+    global status_info
+    
+    with status_lock:
+        status_info['status'] = 'running'
+        status_info['last_run'] = datetime.now().isoformat()
+        status_info['daily_charts_processed'] = 0
+        status_info['minute_charts_processed'] = 0
+    
     print(f"Starting daily data gathering at {datetime.now()}")
     
     # 1. Get Token
@@ -213,21 +242,30 @@ def run_daily_job():
         token = get_one_token()
         if not token:
             print("Failed to obtain access token.")
+            with status_lock:
+                status_info['status'] = 'error'
+                status_info['errors'].append({'time': datetime.now().isoformat(), 'error': 'Failed to obtain access token'})
             return
     except Exception as e:
         print(f"Error getting token: {e}")
+        with status_lock:
+            status_info['status'] = 'error'
+            status_info['errors'].append({'time': datetime.now().isoformat(), 'error': str(e)})
         return
 
     # 2. Load Stocks
     stocks = load_interested_stocks()
     if not stocks:
         print("No interested stocks to process.")
+        with status_lock:
+            status_info['status'] = 'idle'
         return
     
     print(f"Found {len(stocks)} stocks to process.")
     
     # 3. Process each stock - Daily charts only
     print(f"\n=== Gathering daily charts ===")
+    daily_count = 0
     for stock_code, stock_info in stocks.items():
         stock_name = stock_info.get('stock_name', stock_code)
         
@@ -268,6 +306,7 @@ def run_daily_job():
             
             if data_list and isinstance(data_list, list):
                 save_chart_data(stock_code, update_date, data_list)
+                daily_count += 1
             else:
                 print(f"No chart data found in response for {stock_code}")
                 
@@ -277,15 +316,76 @@ def run_daily_job():
         except Exception as e:
             print(f"Exception processing {stock_code}: {e}")
             traceback.print_exc()
+            with status_lock:
+                status_info['errors'].append({'time': datetime.now().isoformat(), 'stock': stock_code, 'error': str(e)})
+
+    with status_lock:
+        status_info['daily_charts_processed'] = daily_count
 
     # 4. Gather minute charts independently by scanning directory
-    gather_minute_charts(token, stocks)
+    minute_count = gather_minute_charts_with_count(token, stocks)
+    
+    with status_lock:
+        status_info['minute_charts_processed'] = minute_count
+        status_info['status'] = 'idle'
+        # Keep only last 10 errors
+        if len(status_info['errors']) > 10:
+            status_info['errors'] = status_info['errors'][-10:]
     
     print(f"Daily job finished at {datetime.now()}")
 
-if __name__ == "__main__":
+def gather_minute_charts_with_count(token, stocks):
+    """Wrapper for gather_minute_charts that returns count."""
+    print(f"\n=== Starting minute chart gathering at {datetime.now()} ===")
+    
+    current_date_str = datetime.now().strftime("%Y%m%d")
+    daily_charts = get_daily_chart_files()
+    
+    if not daily_charts:
+        print("No daily chart files found in directory.")
+        return 0
+    
+    print(f"Found {len(daily_charts)} daily chart files.")
+    
+    minute_count = 0
+    # Process each daily chart file
+    for stock_code, date_str, file_path in daily_charts:
+        # Check if within 10-day limit
+        if not should_fetch_minute_chart(date_str, current_date_str):
+            print(f"[{stock_code}] Daily chart {date_str} is beyond 10-day limit. Skipping minute chart.")
+            continue
+        
+        # Get stock name from interested_stocks if available
+        stock_name = stock_code
+        if stock_code in stocks:
+            stock_name = stocks[stock_code].get('stock_name', stock_code)
+        
+        print(f"[{stock_code}] Daily chart {date_str} is within 10-day limit. Fetching minute chart...")
+        
+        try:
+            minute_data = get_bun_chart(token, stock_code, stock_name)
+            if minute_data and isinstance(minute_data, list):
+                save_minute_chart_data(stock_code, date_str, minute_data)
+                minute_count += 1
+            else:
+                print(f"[{stock_code}] No minute chart data returned")
+            
+            # Be polite to the API rate limits
+            time.sleep(0.2)
+            
+        except Exception as e:
+            print(f"[{stock_code}] Error fetching minute chart: {e}")
+            traceback.print_exc()
+    
+    print(f"=== Minute chart gathering finished at {datetime.now()} ===\n")
+    return minute_count
+
+def background_data_gathering():
+    """Background thread that runs the data gathering loop."""
+    global status_info, thread_stop_event
+    
     ensure_chart_dir()
-    print("datagather.py service started.")
+    print("Background data gathering thread started.")
     
     # Run once on startup
     print("Running initial data gathering...")
@@ -293,8 +393,16 @@ if __name__ == "__main__":
 
     print("Waiting for execution time (21:00 daily)...")
     
-    while True:
+    while not thread_stop_event.is_set():
         now = datetime.now()
+        
+        # Calculate next run time
+        next_run = datetime(now.year, now.month, now.day, 21, 0, 0)
+        if now.hour >= 21:
+            next_run += timedelta(days=1)
+        
+        with status_lock:
+            status_info['next_run'] = next_run.isoformat()
         
         # Check if it's 21:00 (9 PM)
         if now.hour == 21 and now.minute == 0:
@@ -302,5 +410,216 @@ if __name__ == "__main__":
             # Sleep for 61 seconds to ensure we don't match the condition again today
             time.sleep(61)
         else:
-            # Sleep for 30 seconds before checking again
-            time.sleep(30)
+            # Sleep for 30 seconds before checking again, but check stop event
+            for _ in range(30):
+                if thread_stop_event.is_set():
+                    break
+                time.sleep(1)
+    
+    print("Background data gathering thread stopped.")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan event handler for startup and shutdown."""
+    global background_thread, thread_stop_event, status_info
+    
+    # Startup
+    print("Starting FastAPI application...")
+    
+    with status_lock:
+        status_info['status'] = 'starting'
+    
+    # Start background thread
+    thread_stop_event.clear()
+    background_thread = threading.Thread(
+        target=background_data_gathering,
+        daemon=False,
+        name="DataGatheringThread"
+    )
+    background_thread.start()
+    print("Background thread started successfully")
+    
+    yield
+    
+    # Shutdown
+    print("Shutting down application...")
+    thread_stop_event.set()
+    if background_thread and background_thread.is_alive():
+        print("Waiting for background thread to stop...")
+        background_thread.join(timeout=10.0)
+        if background_thread.is_alive():
+            print("Warning: Background thread did not stop within timeout")
+        else:
+            print("Background thread stopped successfully")
+    print("Application shutdown complete")
+
+# FastAPI app
+app = FastAPI(lifespan=lifespan, title="Data Gather Service")
+
+@app.get("/", response_class=HTMLResponse)
+@app.get("/stock/data", response_class=HTMLResponse)
+@app.get("/stock/data/", response_class=HTMLResponse)
+async def root():
+    """Display status page."""
+    with status_lock:
+        status = status_info.copy()
+    
+    html_content = f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Data Gather Service</title>
+        <style>
+            * {{
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }}
+            body {{
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                padding: 20px;
+                min-height: 100vh;
+            }}
+            .container {{
+                max-width: 1000px;
+                margin: 0 auto;
+                background: white;
+                border-radius: 12px;
+                box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+                overflow: hidden;
+            }}
+            .header {{
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                padding: 30px;
+                text-align: center;
+            }}
+            .content {{
+                padding: 30px;
+            }}
+            .status-card {{
+                background: #f5f5f5;
+                border-radius: 8px;
+                padding: 20px;
+                margin-bottom: 20px;
+            }}
+            .status-card h2 {{
+                margin-bottom: 15px;
+                color: #333;
+            }}
+            .status-item {{
+                display: flex;
+                justify-content: space-between;
+                padding: 10px 0;
+                border-bottom: 1px solid #ddd;
+            }}
+            .status-item:last-child {{
+                border-bottom: none;
+            }}
+            .status-label {{
+                font-weight: 600;
+                color: #555;
+            }}
+            .status-value {{
+                color: #333;
+            }}
+            .status-running {{
+                color: #4caf50;
+                font-weight: bold;
+            }}
+            .status-idle {{
+                color: #2196f3;
+                font-weight: bold;
+            }}
+            .status-error {{
+                color: #f44336;
+                font-weight: bold;
+            }}
+            .error-list {{
+                max-height: 200px;
+                overflow-y: auto;
+                background: #fff;
+                border-radius: 4px;
+                padding: 10px;
+            }}
+            .error-item {{
+                padding: 8px;
+                margin-bottom: 8px;
+                background: #ffebee;
+                border-left: 4px solid #f44336;
+                border-radius: 4px;
+                font-size: 14px;
+            }}
+        </style>
+        <script>
+            // Auto-refresh every 10 seconds
+            setTimeout(() => location.reload(), 10000);
+        </script>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>📊 Data Gather Service</h1>
+                <p>Stock Chart Data Collection System</p>
+            </div>
+            <div class="content">
+                <div class="status-card">
+                    <h2>System Status</h2>
+                    <div class="status-item">
+                        <span class="status-label">Status:</span>
+                        <span class="status-value status-{status['status']}">{status['status'].upper()}</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Last Run:</span>
+                        <span class="status-value">{status['last_run'] or 'Not yet run'}</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Next Run:</span>
+                        <span class="status-value">{status['next_run'] or 'Calculating...'}</span>
+                    </div>
+                </div>
+                
+                <div class="status-card">
+                    <h2>Last Run Statistics</h2>
+                    <div class="status-item">
+                        <span class="status-label">Daily Charts Processed:</span>
+                        <span class="status-value">{status['daily_charts_processed']}</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Minute Charts Processed:</span>
+                        <span class="status-value">{status['minute_charts_processed']}</span>
+                    </div>
+                </div>
+                
+                <div class="status-card">
+                    <h2>Recent Errors</h2>
+                    <div class="error-list">
+                        {''.join([f'<div class="error-item"><strong>{e.get("time", "Unknown time")}</strong><br>{e.get("stock", "")} {e.get("error", "Unknown error")}</div>' for e in status['errors'][-5:]]) if status['errors'] else '<p>No recent errors</p>'}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
+
+@app.get("/api/status")
+@app.get("/stock/data/api/status")
+async def get_status():
+    """Get current status as JSON."""
+    with status_lock:
+        return JSONResponse(content=status_info.copy())
+
+@app.post("/api/trigger")
+@app.post("/stock/data/api/trigger")
+async def trigger_job():
+    """Manually trigger a data gathering job."""
+    threading.Thread(target=run_daily_job, daemon=True).start()
+    return {"status": "success", "message": "Data gathering job triggered"}
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8007)
