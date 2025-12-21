@@ -462,7 +462,7 @@ def test_ret_status(stk_cd, ret_status):
 		if code == '507615':
 			not_nxt_cd[stk_cd] = True
 		if code == '571489':
-			set_new_day(now, False)
+			set_new_day(False)
 			print('No trading day, set new_day to False')
 		print(rcde)
 
@@ -927,6 +927,7 @@ def load_dictionaries_from_json():
 
 	try:
 		modified = False
+		current_date = datetime.now().strftime("%Y%m%d")
 		for stk in interested_stocks:
 			print('istk, stk={}'.format(stk))
 			stock = interested_stocks[stk]
@@ -939,6 +940,12 @@ def load_dictionaries_from_json():
 				modified = True
 			if 'color' in stock:
 				stock['color'] = color_kor_to_eng(stock['color'])
+			# Add yyyymmdd field if empty or missing
+			yyyymmdd = stock.get('yyyymmdd', '')
+			if yyyymmdd == '':
+				print('adding yyyymmdd={} for {}'.format(current_date, stk))
+				stock['yyyymmdd'] = current_date
+				modified = True
 			print('in istk', stock)
 
 		if modified:
@@ -1108,7 +1115,7 @@ def periodic_timer_handler():
 	prev_hour = now_hour
 
 	if is_between(now, day_start_time, nxt_start_time):
-		set_new_day(now, True)
+		set_new_day(True)
 	elif new_day:
 		try:
 			daily_work()

@@ -2,8 +2,9 @@ import json
 import time
 import os
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta
 from ka10081 import get_day_chart
+from ka10080 import get_bun_chart
 from au1001 import get_one_token
 
 # Configuration
@@ -35,12 +36,38 @@ def load_interested_stocks():
         print(f"Error loading {INTERESTED_STOCKS_FILE}: {e}")
         return {}
 
-def save_and_merge_chart_data(stock_code, new_data_list):
+def save_chart_data(stock_code, date_str, data_list):
     """
-    Save chart data to file, merging with existing data.
-    Preserves existing data and appends new unique records.
+    Save chart data to file with date-based filename.
+    Filename format: YYYYMMDD_stockcode.json
+    No merging - each date gets its own file.
     """
-    file_path = os.path.join(CHART_DIR, f"{stock_code}.json")
+    file_path = os.path.join(CHART_DIR, f"{date_str}_{stock_code}.json")
+    
+    try:
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(data_list, f, indent=4, ensure_ascii=False)
+        
+        print(f"[{stock_code}] Saved chart data for {date_str}. Total records: {len(data_list)}")
+            
+    except Exception as e:
+        print(f"Error saving file for {stock_code} on {date_str}: {e}")
+
+def chart_file_exists(stock_code, date_str):
+    """
+    Check if chart file already exists for the given stock and date.
+    Only compares the date part (YYYYMMDD).
+    """
+    file_path = os.path.join(CHART_DIR, f"{date_str}_{stock_code}.json")
+    return os.path.exists(file_path)
+
+def save_minute_chart_data(stock_code, date_str, new_data_list):
+    """
+    Save minute chart data to file with date-based filename.
+    Filename format: YYYYMMDD_stockcode_min.json
+    Merges with existing data if file exists.
+    """
+    file_path = os.path.join(CHART_DIR, f"{date_str}_{stock_code}_min.json")
     
     existing_data = []
     
@@ -50,19 +77,17 @@ def save_and_merge_chart_data(stock_code, new_data_list):
             with open(file_path, 'r', encoding='utf-8') as f:
                 existing_data = json.load(f)
         except Exception as e:
-            print(f"Error reading existing chart data for {stock_code}: {e}")
-            
+            print(f"Error reading existing minute chart data for {stock_code}: {e}")
+    
     # Merge logic: Deduplicate based on full record content
-    # Using json dump as key for stability
     existing_set = set()
     for record in existing_data:
         try:
-            # Sort keys to ensure consistent string representation
             record_str = json.dumps(record, sort_keys=True)
             existing_set.add(record_str)
         except TypeError:
             continue
-            
+    
     merged_data = existing_data[:]
     added_count = 0
     
@@ -75,19 +100,110 @@ def save_and_merge_chart_data(stock_code, new_data_list):
                 added_count += 1
         except TypeError:
             continue
-            
+    
     # Save merged data
     try:
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(merged_data, f, indent=4, ensure_ascii=False)
         
         if added_count > 0:
-            print(f"[{stock_code}] Saved. Added {added_count} new records. Total: {len(merged_data)}")
+            print(f"[{stock_code}] Minute chart for {date_str}: Added {added_count} new records. Total: {len(merged_data)}")
         else:
-            print(f"[{stock_code}] Saved. No new records found. Total: {len(merged_data)}")
-            
+            print(f"[{stock_code}] Minute chart for {date_str}: No new records. Total: {len(merged_data)}")
     except Exception as e:
-        print(f"Error saving file for {stock_code}: {e}")
+        print(f"Error saving minute chart for {stock_code} on {date_str}: {e}")
+
+def should_fetch_minute_chart(update_date_str, current_date_str):
+    """
+    Determine if minute chart should be fetched based on date difference.
+    Returns True if current date is within 10 days after update date.
+    """
+    try:
+        update_date = datetime.strptime(update_date_str, "%Y%m%d")
+        current_date = datetime.strptime(current_date_str, "%Y%m%d")
+        
+        days_diff = (current_date - update_date).days
+        
+        # Fetch if within 10 days (0 to 10 days inclusive)
+        return 0 <= days_diff <= 10
+    except Exception as e:
+        print(f"Error calculating date difference: {e}")
+        return False
+
+def get_daily_chart_files():
+    """
+    Scan the chart directory and return a list of daily chart files.
+    Returns list of tuples: (stock_code, date_str, file_path)
+    """
+    daily_charts = []
+    
+    if not os.path.exists(CHART_DIR):
+        return daily_charts
+    
+    try:
+        for filename in os.listdir(CHART_DIR):
+            # Skip minute chart files
+            if filename.endswith('_min.json'):
+                continue
+            
+            # Parse daily chart filename: YYYYMMDD_stockcode.json
+            if filename.endswith('.json'):
+                parts = filename[:-5].split('_')  # Remove .json and split
+                if len(parts) == 2:
+                    date_str, stock_code = parts
+                    if len(date_str) == 8 and date_str.isdigit():
+                        file_path = os.path.join(CHART_DIR, filename)
+                        daily_charts.append((stock_code, date_str, file_path))
+    except Exception as e:
+        print(f"Error scanning chart directory: {e}")
+    
+    return daily_charts
+
+def gather_minute_charts(token, stocks):
+    """
+    Scan for daily chart files and gather minute charts for those within 10-day limit.
+    Independent from daily chart gathering.
+    """
+    print(f"\n=== Starting minute chart gathering at {datetime.now()} ===")
+    
+    current_date_str = datetime.now().strftime("%Y%m%d")
+    daily_charts = get_daily_chart_files()
+    
+    if not daily_charts:
+        print("No daily chart files found in directory.")
+        return
+    
+    print(f"Found {len(daily_charts)} daily chart files.")
+    
+    # Process each daily chart file
+    for stock_code, date_str, file_path in daily_charts:
+        # Check if within 10-day limit
+        if not should_fetch_minute_chart(date_str, current_date_str):
+            print(f"[{stock_code}] Daily chart {date_str} is beyond 10-day limit. Skipping minute chart.")
+            continue
+        
+        # Get stock name from interested_stocks if available
+        stock_name = stock_code
+        if stock_code in stocks:
+            stock_name = stocks[stock_code].get('stock_name', stock_code)
+        
+        print(f"[{stock_code}] Daily chart {date_str} is within 10-day limit. Fetching minute chart...")
+        
+        try:
+            minute_data = get_bun_chart(token, stock_code, stock_name)
+            if minute_data and isinstance(minute_data, list):
+                save_minute_chart_data(stock_code, date_str, minute_data)
+            else:
+                print(f"[{stock_code}] No minute chart data returned")
+            
+            # Be polite to the API rate limits
+            time.sleep(0.2)
+            
+        except Exception as e:
+            print(f"[{stock_code}] Error fetching minute chart: {e}")
+            traceback.print_exc()
+    
+    print(f"=== Minute chart gathering finished at {datetime.now()} ===\n")
 
 def run_daily_job():
     print(f"Starting daily data gathering at {datetime.now()}")
@@ -110,14 +226,27 @@ def run_daily_job():
     
     print(f"Found {len(stocks)} stocks to process.")
     
-    # 3. Process each stock
+    # 3. Process each stock - Daily charts only
+    print(f"\n=== Gathering daily charts ===")
     for stock_code, stock_info in stocks.items():
         stock_name = stock_info.get('stock_name', stock_code)
-        print(f"Processing {stock_code} ({stock_name})...")
+        
+        # Get update date from stock_info, default to today if not present
+        update_date = stock_info.get('yyyymmdd', '')
+        if not update_date or len(update_date) != 8:
+            update_date = datetime.now().strftime("%Y%m%d")
+            print(f"Warning: {stock_code} has no valid yyyymmdd field, using today's date: {update_date}")
+        
+        print(f"Processing {stock_code} ({stock_name}) for date {update_date}...")
+        
+        # Check if chart file already exists for this date
+        if chart_file_exists(stock_code, update_date):
+            print(f"[{stock_code}] Chart file for {update_date} already exists. Skipping.")
+            continue
         
         try:
-            # Fetch data using ka10081
-            result = get_day_chart(token, stock_code)
+            # Fetch data using ka10081 with the update date
+            result = get_day_chart(token, stock_code, date=update_date)
             
             # Basic validation of result
             if not isinstance(result, dict):
@@ -138,7 +267,7 @@ def run_daily_job():
                 data_list = result.get('output')
             
             if data_list and isinstance(data_list, list):
-                save_and_merge_chart_data(stock_code, data_list)
+                save_chart_data(stock_code, update_date, data_list)
             else:
                 print(f"No chart data found in response for {stock_code}")
                 
@@ -149,6 +278,9 @@ def run_daily_job():
             print(f"Exception processing {stock_code}: {e}")
             traceback.print_exc()
 
+    # 4. Gather minute charts independently by scanning directory
+    gather_minute_charts(token, stocks)
+    
     print(f"Daily job finished at {datetime.now()}")
 
 if __name__ == "__main__":
