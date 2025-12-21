@@ -622,4 +622,4 @@ async def trigger_job():
     return {"status": "success", "message": "Data gathering job triggered"}
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8007)
+    uvicorn.run(app, host="0.0.0.0", port=8007, access_log=False)
