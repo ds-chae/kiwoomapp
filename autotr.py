@@ -793,9 +793,9 @@ def buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock):
 	if ordered[stk_cd] < 1 :
 		bp = bun_price['price'][price_index]
 		ord_price = round_trunc(bp)
-		ord_qty = bamount // ord_price
+		ord_qty = str(bamount // ord_price)
 		#ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trade_tp=trde_tp, cond_uv='')
-		ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, '1', str(ord_price), trde_tp=trde_tp, cond_uv='')
+		ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, ord_qty, str(ord_price), trde_tp=trde_tp, cond_uv='')
 		print('1_buy_order_result: {}'.format(ret_status))
 		test_ret_status(stk_cd, ret_status)
 		ordered[stk_cd] += 1
@@ -803,9 +803,9 @@ def buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock):
 	if ordered[stk_cd] < 2:
 		bp = bun_price['price'][price_index+1]
 		ord_price = round_trunc(bp)
-		ord_qty = bamount // ord_price
+		ord_qty = str(bamount // ord_price)
 		#ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trade_tp=trde_tp, cond_uv='')
-		ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, '1', str(ord_price), trde_tp=trde_tp, cond_uv='')
+		ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, ord_qty, str(ord_price), trde_tp=trde_tp, cond_uv='')
 		print('2_buy_order_result: {}'.format(ret_status))
 		test_ret_status(stk_cd, ret_status)
 		ordered[stk_cd] += 1
@@ -2248,7 +2248,7 @@ async def root(token: str = Cookie(None)):
 			const profitClass = getProfitClass(item.profit_rate);
 			const rmndQty = item.rmnd_qty || '0';
 			return `
-				<tr data-row-id="${rowId}" data-stock-code="${item.stock_code}" data-stock-name="${item.stock_name}" data-preset-price="${item.preset_sell_price}" onclick="selectRow(this)">
+				<tr data-row-id="${rowId}" data-stock-code="${item.stock_code}" data-stock-name="${item.stock_name}" data-preset-price="${item.preset_sell_price}" data-avg-buy-price="${item.avg_buy_price}" onclick="selectRow(this)">
 					<td>${item.account}</td>
 					<td><strong>${item.stock_code}</strong></td>
 					<td>${item.stock_name}</td>
@@ -2274,22 +2274,39 @@ async def root(token: str = Cookie(None)):
 			const stockName = rowElement.getAttribute('data-stock-name') || '';
 			const sellPrice = rowElement.getAttribute('data-sell-price') || '';
 			const sellRate = rowElement.getAttribute('data-sell-rate') || '';
+			let avgBuyPrice = rowElement.getAttribute('data-avg-buy-price') || '';
+			
+			// If data-avg-buy-price attribute is missing, try to get it from the table cell (4th column)
+			if (!avgBuyPrice) {
+				const cells = rowElement.querySelectorAll('td');
+				if (cells.length >= 4) {
+					avgBuyPrice = cells[3].textContent.trim();
+				}
+			}
+			
+			// Extract current price from avg_buy_price (format: "avg / current" or "- / current")
+			let currentPrice = '';
+			if (avgBuyPrice && avgBuyPrice.includes('/')) {
+				const parts = avgBuyPrice.split('/');
+				if (parts.length === 2) {
+					const currentPart = parts[1].trim().replace(/,/g, '');
+					if (currentPart && currentPart !== '-' && currentPart !== '') {
+						currentPrice = currentPart;
+					}
+				}
+			}
 			
 			// Fill buy section
 			document.getElementById('buy-stock-code-input').value = stockCode;
 			document.getElementById('buy-stock-name-input').value = stockName;
-			document.getElementById('buy-price-input').value = '';
+			// Fill with current price if available
+			if (currentPrice) {
+				document.getElementById('buy-price-input').value = currentPrice;
+			} else {
+				document.getElementById('buy-price-input').value = '';
+			}
 			document.getElementById('buy-amount-input').value = '';
 			
-			// Fill int stocks section
-			document.getElementById('interested-stock-code-input').value = stockCode;
-			document.getElementById('interested-stock-name-input').value = stockName;
-			if (sellPrice && sellPrice !== '-') {
-				const priceValue = sellPrice.replace(/,/g, '');
-				document.getElementById('interested-stock-price-input').value = priceValue;
-			} else {
-				document.getElementById('interested-stock-price-input').value = '';
-			}
 			// Fill int stocks section
 			document.getElementById('interested-stock-code-input').value = stockCode;
 			document.getElementById('interested-stock-name-input').value = stockName;
@@ -2366,11 +2383,16 @@ async def root(token: str = Cookie(None)):
 			const stockCode = rowElement.getAttribute('data-stock-code');
 			const stockName = rowElement.getAttribute('data-stock-name') || '';
 			const orderPrice = rowElement.getAttribute('data-order-price') || '';
+			const currentPrice = rowElement.getAttribute('data-current-price') || '';
 			
 			// Fill buy section
 			document.getElementById('buy-stock-code-input').value = stockCode;
 			document.getElementById('buy-stock-name-input').value = stockName;
-			if (orderPrice && orderPrice !== '0' && orderPrice !== '') {
+			
+			// Fill with current price if available, otherwise fallback to order price
+			if (currentPrice && currentPrice !== '0' && currentPrice !== '') {
+				document.getElementById('buy-price-input').value = currentPrice;
+			} else if (orderPrice && orderPrice !== '0' && orderPrice !== '') {
 				document.getElementById('buy-price-input').value = orderPrice;
 			} else {
 				document.getElementById('buy-price-input').value = '';
@@ -2380,7 +2402,9 @@ async def root(token: str = Cookie(None)):
 			// Fill int stocks section
 			document.getElementById('interested-stock-code-input').value = stockCode;
 			document.getElementById('interested-stock-name-input').value = stockName;
-			if (orderPrice && orderPrice !== '0' && orderPrice !== '') {
+			if (currentPrice && currentPrice !== '0' && currentPrice !== '') {
+				document.getElementById('interested-stock-price-input').value = currentPrice;
+			} else if (orderPrice && orderPrice !== '0' && orderPrice !== '') {
 				document.getElementById('interested-stock-price-input').value = orderPrice;
 			} else {
 				document.getElementById('interested-stock-price-input').value = '';
@@ -2576,6 +2600,8 @@ async def root(token: str = Cookie(None)):
 									if (row.getAttribute('data-sell-price') !== sellPrice) row.setAttribute('data-sell-price', sellPrice);
 									if (row.getAttribute('data-sell-rate') !== sellRate) row.setAttribute('data-sell-rate', sellRate);
 									if (row.getAttribute('data-profit-rate') !== item.profit_rate) row.setAttribute('data-profit-rate', item.profit_rate); // if used elsewhere
+									// Always set data-avg-buy-price to ensure it's present
+									row.setAttribute('data-avg-buy-price', item.avg_buy_price || '');
 									// onclick persists
 								} else {
 									// Create new row
@@ -2585,6 +2611,7 @@ async def root(token: str = Cookie(None)):
 									row.setAttribute('data-stock-name', item.stock_name);
 									row.setAttribute('data-sell-price', sellPrice);
 									row.setAttribute('data-sell-rate', sellRate);
+									row.setAttribute('data-avg-buy-price', item.avg_buy_price || '');
 									row.setAttribute('onclick', 'selectRow(this)');
 									row.innerHTML = cellContent;
 									tbody.appendChild(row);
@@ -2902,6 +2929,7 @@ async def root(token: str = Cookie(None)):
 										data-stock-code="${stkCdClean}" 
 										data-stock-name="${order.stk_nm || ''}" 
 										data-order-price="${ordPric || ''}"
+										data-current-price="${curPrc || ''}"
 										onclick="selectMicheRow(this)"
 										style="cursor: pointer;">
 										<td>${order.ACCT}</td>
