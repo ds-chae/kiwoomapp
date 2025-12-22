@@ -168,10 +168,10 @@ def fn_kt00018(log_jango, token, data, cont_yn='N', next_key=''):
 	# 4. ÀÀ´ä »óÅÂ ÄÚµå¿Í µ¥ÀÌÅÍ Ãâ·Â
 	if log_jango:
 		print('get_jango => Code:', response.status_code)
-		print('get_jango => Header:', json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4, ensure_ascii=False))
-		print('get_jango => Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON ÀÀ´äÀ» ÆÄ½ÌÇÏ¿© Ãâ·Â
-		print('get_jango => Finish:')
-		print('')
+		#print('get_jango => Header:', json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4, ensure_ascii=False))
+		#print('get_jango => Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON ÀÀ´äÀ» ÆÄ½ÌÇÏ¿© Ãâ·Â
+		#print('get_jango => Finish:')
+		#print('')
 
 	return response.json()
 
@@ -378,12 +378,14 @@ def cancel_different_sell_order(now, ACCT, stk_cd, stk_nm, ord_uv):
 				result = cancel_order_main(now, jango_token[ACCT], m['stex_tp_txt'], m['ord_no'], stk_cd)
 				print('cancel_different_sell_order ', result)
 				cancel_count += 1
-	print('cancel_different_sell_order {} {} {} {} returns {}.'.format(ACCT, stk_cd, stk_nm, ord_uv, cancel_count))
+	if cancel_count != 0:
+		print('cancel_different_sell_order {} {} {} {} returns {}.'.format(ACCT, stk_cd, stk_nm, ord_uv, cancel_count))
 	return cancel_count
 
 
 
 def calculate_sell_price(pur_pric, sell_cond, stk_cd):
+	global bun_prices
 	ord_uv = '0'
 	if 'sellprice' in sell_cond:
 		ord_uv = sell_cond['sellprice']
@@ -403,10 +405,11 @@ def calculate_sell_price(pur_pric, sell_cond, stk_cd):
 	sellgap = float(sell_cond.get('sellgap', '0.0')) / 100.
 	if sellgap != 0.0 :
 		bun_price = bun_prices[stk_cd]
+		print('before get_low_after_high')
 		lowest = get_low_after_high(stk_cd)
 		if lowest != 0 :
 			gap = float(bun_price['gap'])
-			cl_price = lowest + gap * sellgap
+			cl_price = round_trunc(int(lowest + gap * sellgap))
 			return str(cl_price)
 
 	return '0'
@@ -415,6 +418,7 @@ def calculate_sell_price(pur_pric, sell_cond, stk_cd):
 def call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond):
 	global current_status, working_status, new_day
 
+	check_bun_price(MY_ACCESS_TOKEN, stk_cd, stk_nm)
 	trde_able_qty = indv.get("trde_able_qty", "0")
 	rmnd_qty = indv.get('rmnd_qty', "0")
 	pur_pric_str = indv.get('pur_pric', '0')
@@ -727,6 +731,15 @@ def buy_cl_by_account(ACCT, MY_ACCESS_TOKEN):
 	pass
 
 
+def check_bun_price(MY_ACCESS_TOKEN, stk_cd, stk_nm):
+	if not stk_cd in bun_charts:
+		print('getting bun_chart for {} {}'.format(stk_cd, stk_nm))
+		bun_charts[stk_cd] = get_bun_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm)
+	if not stk_cd in bun_prices:
+		print('getting bun_price for {} {} from bun_chart'.format(stk_cd, stk_nm))
+		bun_prices[stk_cd] = get_bun_price(stk_cd, stk_nm, bun_charts[stk_cd])
+
+
 def buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock):
 	global working_status, order_count, now
 	working_status = 'in buy_cl_stk_cd'
@@ -767,12 +780,7 @@ def buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock):
 	if ordered[stk_cd] >= 2:
 		return
 
-	if not stk_cd in bun_charts:
-		print('getting bun_chart for {} {}'.format(stk_cd, stk_nm))
-		bun_charts[stk_cd] = get_bun_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm)
-	if not stk_cd in bun_prices:
-		print('getting bun_price for {} {} from bun_chart'.format(stk_cd, stk_nm))
-		bun_prices[stk_cd] = get_bun_price(stk_cd, stk_nm, bun_charts[stk_cd])
+	check_bun_price(MY_ACCESS_TOKEN, stk_cd, stk_nm)
 	print(bun_prices)
 	if not stk_cd in bun_prices:
 		print('getting bun_chart or bun_price for {} {} failed'.format(stk_cd, stk_nm));
