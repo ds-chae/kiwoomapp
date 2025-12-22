@@ -408,7 +408,7 @@ def calculate_sell_price(pur_pric, sell_cond, stk_cd):
 		print('before get_low_after_high')
 		lowest = get_low_after_high(stk_cd)
 		if lowest != 0 :
-			gap = float(bun_price['gap'])
+			gap = float(bun_price['gap']) * 2
 			cl_price = round_trunc(int(lowest + gap * sellgap))
 			return str(cl_price)
 
