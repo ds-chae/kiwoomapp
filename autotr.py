@@ -2204,23 +2204,29 @@ async def root(token: str = Cookie(None)):
 					</div>
 				</div>
 				<div class="buy-section" id="buy-section" style="margin-top: 20px; padding: 20px; background: #f8f9fa; border-radius: 8px;">
-					<h3>Buy Order</h3>
+					<h3>Buy</h3>
 					<div class="add-interested-form-content">
 						<div class="form-group">
 							<label for="buy-stock-code-input">Code</label>
-							<input type="text" id="buy-stock-code-input" placeholder="e.g., 005930" />
+							<input type="text" id="buy-stock-code-input" placeholder="e.g., 005930" maxlength="8" />
 						</div>
 						<div class="form-group">
 							<label for="buy-stock-name-input">Name</label>
-							<input type="text" id="buy-stock-name-input" placeholder="e.g., Samsung Electronics" />
+							<input type="text" id="buy-stock-name-input" placeholder="e.g., Samsung Electronics" maxlength="20" />
 						</div>
 						<div class="form-group">
 							<label for="buy-price-input">Price</label>
-							<input type="number" id="buy-price-input" placeholder="Price" step="0.01" min="0" />
+							<input type="number" id="buy-price-input" placeholder="Price" step="0.01" min="0" maxlength="6" />
 						</div>
 						<div class="form-group">
 							<label for="buy-amount-input">Amount</label>
-							<input type="number" id="buy-amount-input" placeholder="amount" step="1" min="1" />
+							<input type="number" id="buy-amount-input" placeholder="amount" step="1" min="1" maxlength="8" />
+						</div>
+						<div class="form-group">
+							<label>Account</label>
+							<div id="buy-account-checkboxes" style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center; min-height: 42px; padding: 10px 0;">
+								<!-- Account checkboxes will be populated here -->
+							</div>
 						</div>
 						<button class="btn-buy-interested" onclick="buyStock()" title="Buy stock">
 							Buy
@@ -3757,12 +3763,23 @@ async def root(token: str = Cookie(None)):
 				return;
 			}
 			
+			// Get account list from checkboxes
+			const accountCheckboxes = document.querySelectorAll('#buy-account-checkboxes input[type="checkbox"]:checked');
+			const accountList = Array.from(accountCheckboxes).map(cb => cb.value);
+			
+			// Validate that at least one account is selected
+			if (accountList.length === 0) {
+				showMessage('Please select at least one account', 'error');
+				return;
+			}
+			
 			// Call buy order API
 			const buyData = {
 				stock_code: stockCode,
 				stock_name: stockName,
 				price: price,
-				amount: amount
+				amount: amount,
+				accounts: accountList
 			};
 			
 			fetch('./api/buy-order', {
@@ -3779,6 +3796,12 @@ async def root(token: str = Cookie(None)):
 					// Clear the inputs after successful buy
 					document.getElementById('buy-price-input').value = '';
 					document.getElementById('buy-amount-input').value = '';
+					// Uncheck all account checkboxes
+					document.querySelectorAll('#buy-account-checkboxes input[type="checkbox"]').forEach(cb => {
+						cb.checked = false;
+					});
+				} else if (result.status === 'partial') {
+					showMessage(result.message || 'Some buy orders failed. Check details.', 'error');
 				} else {
 					showMessage('Error: ' + result.message, 'error');
 				}
@@ -3827,6 +3850,45 @@ async def root(token: str = Cookie(None)):
 			});
 		}
 		
+		function loadAccountCheckboxes() {
+			fetch('./api/accounts')
+				.then(response => response.json())
+				.then(result => {
+					if (result.status === 'success' && result.data) {
+						const checkboxesContainer = document.getElementById('buy-account-checkboxes');
+						checkboxesContainer.innerHTML = '';
+						
+						result.data.forEach(account => {
+							const label = document.createElement('label');
+							label.style.display = 'flex';
+							label.style.alignItems = 'center';
+							label.style.gap = '5px';
+							label.style.cursor = 'pointer';
+							label.style.marginRight = '10px';
+							
+							const checkbox = document.createElement('input');
+							checkbox.type = 'checkbox';
+							checkbox.value = account;
+							checkbox.id = 'buy-account-checkbox-' + account;
+							checkbox.style.width = '16px';
+							checkbox.style.height = '16px';
+							checkbox.style.cursor = 'pointer';
+							
+							const span = document.createElement('span');
+							span.textContent = account;
+							span.style.fontSize = '14px';
+							
+							label.appendChild(checkbox);
+							label.appendChild(span);
+							checkboxesContainer.appendChild(label);
+						});
+					}
+				})
+				.catch(error => {
+					console.error('Error loading accounts:', error);
+				});
+		}
+		
 		// Auto-update every 1 second
 		setInterval(function() {
 			updateTable();
@@ -3840,12 +3902,29 @@ async def root(token: str = Cookie(None)):
 		updateMiche();
 		updateSellPrices();
 		updateInterestedStocks();
+		loadAccountCheckboxes();
 		</script>
 	</body>
 	</html>
 	"""
 	
 	return html_content
+
+@app.get("/api/accounts")
+@app.get("/stock/api/accounts")
+async def get_accounts_api(proxy_path: str = "", token: str = Cookie(None)):
+	"""API endpoint to get list of available accounts"""
+	# Check authentication
+	if not token or not verify_token(token):
+		raise HTTPException(
+			status_code=status.HTTP_401_UNAUTHORIZED,
+			detail="Not authenticated"
+		)
+	try:
+		accounts = list(key_list.keys())
+		return {"status": "success", "data": accounts}
+	except Exception as e:
+		return {"status": "error", "message": str(e)}
 
 @app.get("/api/account-data")
 @app.get("/stock/api/account-data")
@@ -3944,47 +4023,55 @@ def cancel_related_buy_order(stk_cd):
 	return cancel_count
 
 
-def issue_buy_order(stk_cd, ord_uv, ord_qty, stex, trde_tp):
+def issue_buy_order(stk_cd, ord_uv, ord_qty, stex, trde_tp, account):
+	"""Issue buy order for a specific account"""
 	global key_list
-	access_token = None
-	for k, key in key_list.items():
-		access_token = get_token(key['AK'], key['SK'])
+	
+	if not account:
+		return {"status": "error", "message": "Account parameter is required"}
+	
+	# Find specific account
+	if account not in key_list:
+		return {"status": "error", "message": f"Account {account} not found"}
+	
+	key = key_list[account]
+	access_token = get_token(key['AK'], key['SK'])
 
-		if not access_token:
-			return {"status": "error", "message": "Unable to retrieve token"}
+	if not access_token:
+		return {"status": "error", "message": "Unable to retrieve token"}
 
-		# Convert price and amount to strings (as expected by buy_order)
-		ord_uv_str = str(ord_uv)
-		ord_qty_str = str(ord_qty)
+	# Convert price and amount to strings (as expected by buy_order)
+	ord_uv_str = str(ord_uv)
+	ord_qty_str = str(ord_qty)
 
-		print('issue buy order ', ord_uv_str, ord_uv, ord_qty, stex, trde_tp)
+	print('issue buy order for account {}: {}, {}, {}, {}, {}'.format(account, ord_uv_str, ord_uv, ord_qty, stex, trde_tp))
 
-		# Place buy order
-		ret_status = buy_order(
-			MY_ACCESS_TOKEN=access_token,
-			dmst_stex_tp=stex,
-			stk_cd=stk_cd,
-			ord_qty=ord_qty_str,
-			ord_uv=ord_uv_str,
-			trde_tp=trde_tp,
-			cond_uv=''
-		)
+	# Place buy order
+	ret_status = buy_order(
+		MY_ACCESS_TOKEN=access_token,
+		dmst_stex_tp=stex,
+		stk_cd=stk_cd,
+		ord_qty=ord_qty_str,
+		ord_uv=ord_uv_str,
+		trde_tp=trde_tp,
+		cond_uv=''
+	)
 
-		print('buy_order_result: {}'.format(ret_status))
+	print('buy_order_result for account {}: {}'.format(account, ret_status))
 
-		# Check return status
-		if isinstance(ret_status, dict):
-			rcde = ret_status.get('return_code')
-			rmsg = ret_status.get('return_msg', '')
-			if rcde and rcde != '0000':
-				return {"status": "error", "message": f"Buy order failed: {rmsg}", "return_code": rcde}
+	# Check return status
+	if isinstance(ret_status, dict):
+		rcde = ret_status.get('return_code')
+		rmsg = ret_status.get('return_msg', '')
+		if rcde and rcde != '0000':
+			return {"status": "error", "message": f"Buy order failed: {rmsg}", "return_code": rcde}
 	return ret_status
 
 
 @app.post("/api/buy-order")
 @app.post("/stock/api/buy-order")
 async def buy_order_api(request: dict, proxy_path: str = "", token: str = Cookie(None)):
-	"""API endpoint to place a buy order"""
+	"""API endpoint to place a buy order for specified accounts"""
 	# Check authentication
 	if not token or not verify_token(token):
 		raise HTTPException(
@@ -3997,9 +4084,18 @@ async def buy_order_api(request: dict, proxy_path: str = "", token: str = Cookie
 		ord_uv = int(request.get('price'))  # Order price
 		ord_amount = int(request.get('amount'))
 		ord_qty = ord_amount // ord_uv
+		accounts = request.get('accounts', [])  # List of accounts
+		
+		# Ensure accounts is a list (handle case where it might be a string or other type)
+		if not isinstance(accounts, list):
+			if isinstance(accounts, str):
+				# If it's a string, split by comma
+				accounts = [acc.strip() for acc in accounts.split(',') if acc.strip()]
+			else:
+				accounts = []
 
-		print('buy_order_api: stk_cd={}, stk_nm={}, ord_uv={}, amount={}'.format(
-			stk_cd, stk_nm, ord_uv, ord_amount))
+		print('buy_order_api: stk_cd={}, stk_nm={}, ord_uv={}, amount={}, accounts={} (type: {})'.format(
+			stk_cd, stk_nm, ord_uv, ord_amount, accounts, type(accounts).__name__))
 		
 		if not all([stk_cd, ord_uv, ord_qty]):
 			return {"status": "error", "message": "Missing required parameters: stock_code, price, amount"}
@@ -4014,17 +4110,51 @@ async def buy_order_api(request: dict, proxy_path: str = "", token: str = Cookie
 		if stk_cd and stk_cd[0] == 'A':
 			stk_cd = stk_cd[1:]
 		
-		# Retrieve token from first account in key_list
 		stex = 'KRX'
 		trde_tp = '0'
 
-		ret_status = issue_buy_order(stk_cd, ord_uv, ord_qty, stex, trde_tp)
+		# If no accounts specified, use all accounts
+		if not accounts or len(accounts) == 0:
+			accounts = list(key_list.keys())
+		print('buy_order_api accounts={}'.format(accounts))
+		# Execute buy order for each account individually
+		results = []
+		for account in accounts:
+			try:
+				ret_status = issue_buy_order(stk_cd, ord_uv, ord_qty, stex, trde_tp, account=account)
+				results.append({
+					"account": account,
+					"status": "success" if isinstance(ret_status, dict) and ret_status.get('return_code') == '0000' else "error",
+					"data": ret_status
+				})
+			except Exception as e:
+				print('buy_order_api exception for account {}: {}'.format(account, e))
+				results.append({
+					"account": account,
+					"status": "error",
+					"message": str(e)
+				})
+		
+		# Check if all orders succeeded
+		all_success = all(r.get('status') == 'success' for r in results)
+		if all_success:
+			return {
+				"status": "success",
+				"message": f"Buy orders placed for {len(results)} account(s): {ord_qty} shares of {stk_nm or stk_cd} at {ord_uv}",
+				"data": results
+			}
+		else:
+			# Some failed
+			failed_accounts = [r['account'] for r in results if r.get('status') != 'success']
+			return {
+				"status": "partial",
+				"message": f"Some buy orders failed for accounts: {', '.join(failed_accounts)}",
+				"data": results
+			}
 
 	except Exception as e:
 		print('buy_order_api exception: {}'.format(e))
 		return {"status": "error", "message": str(e)}
-
-	return {"status": "success", "message": f"Buy order placed: {ord_qty} shares of {stk_nm or stk_cd} at {ord_uv}", "data": ret_status}
 
 
 @app.get("/api/sell-prices")
