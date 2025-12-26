@@ -5,13 +5,14 @@ import traceback
 import threading
 from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
 
 from ka10081 import get_day_chart
 from ka10080 import get_bun_chart
 from au1001 import get_one_token
+from ka10100 import get_stockname
 
 # Configuration
 # Determine the directory where this script is located
@@ -56,6 +57,19 @@ def load_interested_stocks():
     except Exception as e:
         print(f"Error loading {INTERESTED_STOCKS_FILE}: {e}")
         return {}
+
+
+def save_interested_stocks_to_json(interested_stocks):
+	"""Save interested_stocks to JSON file"""
+	try:
+		with open(INTERESTED_STOCKS_FILE, 'w', encoding='utf-8') as f:
+			json.dump(interested_stocks, f, indent=2, ensure_ascii=False)
+		print(f"Saved interested_stocks to {INTERESTED_STOCKS_FILE}")
+		return True
+	except Exception as e:
+		print(f"Error saving interested_stocks: {e}")
+		return False
+
 
 def save_chart_data(stock_code, date_str, data_list):
     """
@@ -267,6 +281,7 @@ def run_daily_job():
     print(f"\n=== Gathering daily charts ===")
     daily_count = 0
     current_date_str = datetime.now().strftime("%Y%m%d")
+    json_modified = False
 
     for stock_code, stock_info in stocks.items():
         stock_name = stock_info.get('stock_name', stock_code)
@@ -276,7 +291,9 @@ def run_daily_job():
         if not update_date or len(update_date) != 8:
             update_date = datetime.now().strftime("%Y%m%d")
             print(f"Warning: {stock_code} has no valid yyyymmdd field, using today's date: {update_date}")
-        
+            stock_info['yyyymmdd'] = update_date
+            json_modified = True
+
         print(f"Processing {stock_code} ({stock_name}) for date {update_date}...")
         
         try:
@@ -319,6 +336,8 @@ def run_daily_job():
             traceback.print_exc()
             with status_lock:
                 status_info['errors'].append({'time': datetime.now().isoformat(), 'stock': stock_code, 'error': str(e)})
+    if json_modified:
+        save_interested_stocks_to_json(stocks)
 
     with status_lock:
         status_info['daily_charts_processed'] = daily_count
@@ -663,10 +682,19 @@ def get_stock_list():
                 if len(parts) == 2:
                     date_str, stock_code = parts
                     if len(date_str) == 8 and date_str.isdigit():
-                        # Get stock name from interested_stocks
+                        # Get stock name from interested_stocks, or call get_stockname if not found
                         stock_name = stock_code
                         if stock_code in interested_stocks:
                             stock_name = interested_stocks[stock_code].get('stock_name', stock_code)
+                        # If stock name is still just the stock code, try to get it from API
+                        if stock_name == stock_code:
+                            try:
+                                stock_name = get_stockname(stock_code)
+                                if not stock_name or stock_name == '':
+                                    stock_name = stock_code
+                            except Exception as e:
+                                print(f"Error getting stock name for {stock_code}: {e}")
+                                stock_name = stock_code
                         stocks.append({
                             'date': date_str,
                             'stock_code': stock_code,
@@ -751,14 +779,6 @@ async def charts_page():
                 margin-bottom: 4px;
                 gap: 8px;
             }
-            .stock-item-content {
-                display: flex;
-                gap: 8px;
-                align-items: center;
-                flex: 1;
-                cursor: pointer;
-                min-width: 0;
-            }
             .stock-date {
                 font-size: 12px;
                 color: #888;
@@ -771,9 +791,8 @@ async def charts_page():
                 font-weight: bold;
                 font-size: 14px;
                 color: #333;
-                width: 60px;
+                width: 80px;
                 overflow: hidden;
-                text-overflow: ellipsis;
                 white-space: nowrap;
             }
             .stock-name {
@@ -784,6 +803,12 @@ async def charts_page():
                 overflow: hidden;
                 text-overflow: ellipsis;
                 white-space: nowrap;
+            }
+            .stock-item-lower {
+                display: flex;
+                gap: 8px;
+                align-items: center;
+                cursor: pointer;
             }
             .delete-btn {
                 background: #e74c3c;
@@ -911,13 +936,13 @@ async def charts_page():
         html_content += f"""
                     <div class="stock-item" data-stock-code="{stock_code}" data-date="{date_str}">
                         <div class="stock-item-header">
-                            <div class="stock-item-content" onclick="loadStockCharts('{stock_code}', '{date_str}')">
-                                <div class="stock-date">{formatted_date}</div>
-                                <div class="stock-code">{stock_code}</div>
-                            </div>
+                            <div class="stock-date" onclick="loadStockCharts('{stock_code}', '{date_str}')">{formatted_date}</div>
                             <button class="delete-btn" onclick="event.stopPropagation(); deleteChartData('{stock_code}', '{date_str}')" title="Delete chart data">Delete</button>
                         </div>
-                        <div class="stock-name" onclick="loadStockCharts('{stock_code}', '{date_str}')">{stock_name}</div>
+                        <div class="stock-item-lower" onclick="loadStockCharts('{stock_code}', '{date_str}')">
+                            <div class="stock-code">{stock_code}</div>
+                            <div class="stock-name">{stock_name}</div>
+                        </div>
                     </div>
         """
     
@@ -966,47 +991,69 @@ async def charts_page():
             function loadStockCharts(stockCode, dateStr) {
                 selectStock(stockCode, dateStr);
                 
-                // Load daily chart
-                fetch(`./api/chart-data/${stockCode}/daily`)
+                // Load daily chart - send both stock code and date
+                fetch(`./api/chart-data/${stockCode}/daily?date=${dateStr}`)
                     .then(response => response.json())
                     .then(data => {
-                        if (data.status === 'success' && data.data) {
+                        if (data.status === 'success' && data.data && data.data.length > 0) {
                             dailyChartData = data.data;
                             drawDailyChart(dailyChartData);
                             // drawDailyChart already calls drawVolumeChart internally
                         } else {
                             dailyChartData = null;
-                            clearChart('daily-chart');
+                            showNoDataMessage('daily-chart');
                             clearChart('daily-volume-chart');
                         }
                     })
                     .catch(error => {
                         console.error('Error loading daily chart:', error);
                         dailyChartData = null;
-                        clearChart('daily-chart');
+                        showNoDataMessage('daily-chart');
                         clearChart('daily-volume-chart');
                     });
                 
-                // Load minute chart - independently, not limited by daily chart dates
-                fetch(`./api/chart-data/${stockCode}/minute`)
+                // Load minute chart - send both stock code and date
+                fetch(`./api/chart-data/${stockCode}/minute?date=${dateStr}`)
                     .then(response => response.json())
                     .then(data => {
-                        if (data.status === 'success' && data.data) {
+                        if (data.status === 'success' && data.data && data.data.length > 0) {
                             minuteChartData = data.data;
                             drawMinuteChart(minuteChartData);
                             // drawMinuteChart already calls drawVolumeChart internally
                         } else {
                             minuteChartData = null;
-                            clearChart('minute-chart');
+                            showNoDataMessage('minute-chart');
                             clearChart('minute-volume-chart');
                         }
                     })
                     .catch(error => {
                         console.error('Error loading minute chart:', error);
                         minuteChartData = null;
-                        clearChart('minute-chart');
+                        showNoDataMessage('minute-chart');
                         clearChart('minute-volume-chart');
                     });
+            }
+            
+            function showNoDataMessage(canvasId) {
+                const canvas = document.getElementById(canvasId);
+                if (!canvas) return;
+                
+                const ctx = canvas.getContext('2d');
+                const wrapper = canvas.parentElement;
+                
+                // Set canvas size
+                canvas.width = wrapper.clientWidth;
+                canvas.height = wrapper.clientHeight;
+                
+                // Clear canvas
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                
+                // Draw "No matching data" message
+                ctx.fillStyle = '#999';
+                ctx.font = '16px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('No matching data', canvas.width / 2, canvas.height / 2);
             }
             
             function parsePrice(priceStr) {
@@ -1667,10 +1714,11 @@ async def charts_page():
 
 @app.get("/api/chart-data/{stock_code}/daily")
 @app.get("/stock/data/api/chart-data/{stock_code}/daily")
-async def get_daily_chart_data(stock_code: str):
-    """Get daily chart data for a stock."""
+async def get_daily_chart_data(stock_code: str, date: str = Query(...)):
+    """Get daily chart data for a stock matching both stock code and date."""
+    print('get_daily_chart_data {} {}'.format(stock_code, date))
     try:
-        # Find all daily chart files for this stock
+        # Find daily chart files matching both stock code and date
         all_data = []
         
         if not os.path.exists(CHART_DIR):
@@ -1684,8 +1732,10 @@ async def get_daily_chart_data(stock_code: str):
                 parts = filename[:-5].split('_')
                 if len(parts) == 2:
                     date_str, file_stock_code = parts
-                    if file_stock_code == stock_code and len(date_str) == 8:
+                    # Match both stock code and date
+                    if file_stock_code == stock_code and date_str == date and len(date_str) == 8:
                         file_path = os.path.join(CHART_DIR, filename)
+                        print('get_daily_chart_data file_path={}'.format(file_path))
                         try:
                             with open(file_path, 'r', encoding='utf-8') as f:
                                 file_data = json.load(f)
@@ -1697,16 +1747,21 @@ async def get_daily_chart_data(stock_code: str):
         # Sort by date
         all_data.sort(key=lambda x: x.get('dt', ''), reverse=True)
         
+        if len(all_data) == 0:
+            print({"status": "error", "message": "No matching data"})
+            return JSONResponse(content={"status": "error", "message": "No matching data"})
+        
         return JSONResponse(content={"status": "success", "data": all_data})
     except Exception as e:
         return JSONResponse(content={"status": "error", "message": str(e)})
 
 @app.get("/api/chart-data/{stock_code}/minute")
 @app.get("/stock/data/api/chart-data/{stock_code}/minute")
-async def get_minute_chart_data(stock_code: str):
-    """Get minute chart data for a stock."""
+async def get_minute_chart_data(stock_code: str, date: str = Query(...)):
+    print('get_minute_chart_data {} {}'.format(stock_code, date))
+    """Get minute chart data for a stock matching both stock code and date."""
     try:
-        # Find all minute chart files for this stock
+        # Find minute chart files matching both stock code and date
         all_data = []
         
         if not os.path.exists(CHART_DIR):
@@ -1722,8 +1777,10 @@ async def get_minute_chart_data(stock_code: str):
                 parts = base_name.split('_')
                 if len(parts) == 2:
                     date_str, file_stock_code = parts
-                    if file_stock_code == stock_code and len(date_str) == 8:
+                    # Match both stock code and date
+                    if file_stock_code == stock_code and date_str == date and len(date_str) == 8:
                         file_path = os.path.join(CHART_DIR, filename)
+                        print('get_minute_chart_data {} {} file_path={}'.format(stock_code, date, file_path))
                         try:
                             with open(file_path, 'r', encoding='utf-8') as f:
                                 file_data = json.load(f)
@@ -1735,6 +1792,10 @@ async def get_minute_chart_data(stock_code: str):
         # Sort by time
         all_data.sort(key=lambda x: x.get('cntr_tm', ''), reverse=True)
         
+        if len(all_data) == 0:
+            print({"status": "error", "message": "No matching data"})
+            return JSONResponse(content={"status": "error", "message": "No matching data"})
+
         return JSONResponse(content={"status": "success", "data": all_data})
     except Exception as e:
         return JSONResponse(content={"status": "error", "message": str(e)})
@@ -1788,3 +1849,4 @@ async def delete_chart_data(stock_code: str, date_str: str):
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8007, access_log=False)
+

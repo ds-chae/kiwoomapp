@@ -14,7 +14,9 @@ import uvicorn
 from contextlib import asynccontextmanager
 import secrets
 import socket
+
 from ka10080 import get_bun_chart, get_bun_price, get_price_index, set_low_after_high, get_low_after_high
+from ka10100 import get_stockname
 
 now = datetime.now().time()
 
@@ -2086,54 +2088,6 @@ async def cancel_nxt_trade_endpoint():
 		return {"status": "error", "message": str(e)}
 
 
-
-import requests
-import json
-
-# 종목정보 조회
-def fn_ka10100(token, data, cont_yn='N', next_key=''):
-	# 1. 요청할 API URL
-	#host = 'https://mockapi.kiwoom.com' # 모의투자
-	host = 'https://api.kiwoom.com' # 실전투자
-	endpoint = '/api/dostk/stkinfo'
-	url =  host + endpoint
-
-	# 2. header 데이터
-	headers = {
-		'Content-Type': 'application/json;charset=UTF-8', # 컨텐츠타입
-		'authorization': f'Bearer {token}', # 접근토큰
-		'cont-yn': cont_yn, # 연속조회여부
-		'next-key': next_key, # 연속조회키
-		'api-id': 'ka10100', # TR명
-	}
-
-	# 3. http POST 요청
-	response = requests.post(url, headers=headers, json=data)
-
-	# 4. 응답 상태 코드와 데이터 출력
-	print('Code:', response.status_code)
-	print('Header:', json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4, ensure_ascii=False))
-	print('Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON 응답을 파싱하여 출력
-	return response.json()
-
-
-# 실행 구간
-def get_stockname(stk_cd):
-	print('in get_stockname')
-	MY_ACCESS_TOKEN = get_one_token()
-	# 2. 요청 데이터
-	params = {
-		'stk_cd': stk_cd, # 종목코드
-	}
-
-	print('calling fn_ka10100')
-	# 3. API 실행
-	json = fn_ka10100(token=MY_ACCESS_TOKEN, data=params)
-	if 'name' in json:
-		return json['name']
-
-	print('No name field in fn_ka10100 result')
-	return ''
 
 
 # Proxy endpoint for datagather service
