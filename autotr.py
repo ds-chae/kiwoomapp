@@ -2045,19 +2045,90 @@ async def root(token: str = Cookie(None)):
 			#interested-stocks-container {
 				overflow-x: auto;
 				-webkit-overflow-scrolling: touch;
+				width: auto;
+				display: inline-block;
 			}
 			#interested-stocks-container table {
 				min-width: 600px;
+				width: auto;
+			}
+			/* Increase stock name width in interested stocks section (2nd column) to prevent wrapping */
+			#interested-stocks-container table th:nth-child(2),
+			#interested-stocks-container table td:nth-child(2) {
+				width: 200px;
+				min-width: 200px;
+				white-space: nowrap;
+				overflow: hidden;
+			}
+			/* Fix column widths in interested stocks section */
+			#interested-stocks-container table th:nth-child(3),
+			#interested-stocks-container table td:nth-child(3) {
+				width: 60px;
+				max-width: 60px;
+				min-width: 60px;
+				white-space: nowrap;
+				overflow: hidden;
+			}
+			#interested-stocks-container table th:nth-child(4),
+			#interested-stocks-container table td:nth-child(4) {
+				width: 60px;
+				max-width: 60px;
+				min-width: 60px;
+				white-space: nowrap;
+				overflow: hidden;
+			}
+			#interested-stocks-container table th:nth-child(6),
+			#interested-stocks-container table td:nth-child(6) {
+				width: 80px;
+				max-width: 80px;
+				min-width: 80px;
+				white-space: nowrap;
+				overflow: hidden;
+			}
+			#interested-stocks-container table th:nth-child(7),
+			#interested-stocks-container table td:nth-child(7) {
+				width: 50px;
+				max-width: 50px;
+				min-width: 50px;
+				white-space: nowrap;
+				overflow: hidden;
+			}
+			#interested-stocks-container table th:nth-child(8),
+			#interested-stocks-container table td:nth-child(8) {
+				width: 40px;
+				max-width: 40px;
+				min-width: 40px;
+				white-space: nowrap;
+				overflow: hidden;
+			}
+			/* Fix BAmount column width to 8 digits */
+			#interested-stocks-container table th:nth-child(5),
+			#interested-stocks-container table td:nth-child(5) {
+				width: 80px;
+				max-width: 80px;
+				min-width: 80px;
+				white-space: nowrap;
+				overflow: hidden;
+			}
+			/* Fix Action column width to 6 digits */
+			#interested-stocks-container table th:nth-child(9),
+			#interested-stocks-container table td:nth-child(9) {
+				width: 60px;
+				max-width: 60px;
+				min-width: 60px;
+				white-space: nowrap;
+				overflow: hidden;
 			}
 			@media screen and (max-width: 1600px) {
 				#interested-stocks-container {
 					overflow-x: auto;
 					width: 100%;
 					-webkit-overflow-scrolling: touch;
+					display: block;
 				}
 				#interested-stocks-container table {
 					min-width: 600px;
-					width: 100%;
+					width: auto;
 				}
 			}
 			.btn-cancel {
@@ -2255,13 +2326,25 @@ async def root(token: str = Cookie(None)):
 					white-space: nowrap;
 					overflow: hidden;
 				}
-				/* Increase stock name width in interested stocks section (2nd column) to prevent wrapping */
-				#interested-stocks-container table th:nth-child(2),
-				#interested-stocks-container table td:nth-child(2) {
-					width: 200px;
-					min-width: 200px;
+				/* Decrease left padding of account holdings section in mobile */
+				.table-container {
+					padding-left: 10px;
+					padding-right: 10px;
+				}
+				.account-group {
+					padding-left: 0;
+				}
+				/* Increase width of title area (header) of account holdings section in mobile */
+				.account-group-header {
+					width: calc(100% + 100px);
+					min-width: calc(100% + 100px);
+					box-sizing: border-box;
+					white-space: nowrap;
+				}
+				.account-group-header h2.account-header-text {
 					white-space: nowrap;
 					overflow: hidden;
+					text-overflow: ellipsis;
 				}
 				/* Fix buy section input widths in mobile */
 				#buy-section #buy-stock-code-input {
@@ -3584,9 +3667,9 @@ async def root(token: str = Cookie(None)):
 												<th>COLOR</th>
 												<th>BType</th>
 												<th>BAmount</th>
-												<th>SellPrice</th>
-												<th>SellRate</th>
-												<th>SellGap</th>
+												<th>PRICE</th>
+												<th>RATE</th>
+												<th>GAP</th>
 												<th>Action</th>
 											</tr>
 										</thead>
@@ -3613,9 +3696,9 @@ async def root(token: str = Cookie(None)):
 											<th>COLOR</th>
 											<th>BType</th>
 											<th>BAmount</th>
-											<th>SellPrice</th>
-											<th>SellRate</th>
-											<th>SellGap</th>
+											<th>PRICE</th>
+											<th>RATE</th>
+											<th>GAP</th>
 											<th>Action</th>
 										</tr>
 									</thead>
@@ -3703,9 +3786,9 @@ async def root(token: str = Cookie(None)):
 											<th>COLOR</th>
 											<th>BType</th>
 											<th>BAmount</th>
-											<th>SellPrice</th>
-											<th>SellRate</th>
-											<th>SellGap</th>
+											<th>PRICE</th>
+											<th>RATE</th>
+											<th>GAP</th>
 											<th>Action</th>
 										</tr>
 									</thead>
@@ -3736,9 +3819,9 @@ async def root(token: str = Cookie(None)):
 										<th>COLOR</th>
 										<th>BType</th>
 										<th>BAmount</th>
-										<th>SellPrice</th>
-										<th>SellRate</th>
-										<th>SellGap</th>
+										<th>PRICE</th>
+										<th>RATE</th>
+										<th>GAP</th>
 										<th>Action</th>
 									</tr>
 								</thead>
@@ -4136,6 +4219,14 @@ async def root(token: str = Cookie(None)):
 				// Even if state hasn't changed, ensure text is correct after table recreation
 				// Only update if text is actually wrong to prevent unnecessary DOM manipulation
 				if (isMobile) {
+					// On mobile, ensure "ACCNT:" is shown in account group headers (table might have been recreated)
+					document.querySelectorAll('.account-header-text').forEach(h2 => {
+						const text = h2.textContent;
+						if (text && (text.startsWith('Account: ') || text.startsWith('ACCT: '))) {
+							const acctNo = text.replace(/^(Account|ACCT): /, '');
+							h2.textContent = 'ACCNT: ' + acctNo;
+						}
+					});
 					// On mobile, ensure "ACCT" is shown (table might have been recreated)
 					document.querySelectorAll('#miche-container table thead th:first-child').forEach(th => {
 						const currentText = th.textContent.trim();
@@ -4173,12 +4264,16 @@ async def root(token: str = Cookie(None)):
 			cachedIsMobile = isMobile;
 			
 			if (isMobile) {
-				// Change "Account:" to "ACCT:" in account group headers
+				// Change "Account:" to "ACCNT:" in account group headers
 				document.querySelectorAll('.account-header-text').forEach(h2 => {
 					const text = h2.textContent;
 					if (text && text.startsWith('Account: ')) {
 						const acctNo = text.replace('Account: ', '');
-						h2.textContent = 'ACCT: ' + acctNo;
+						h2.textContent = 'ACCNT: ' + acctNo;
+					} else if (text && text.startsWith('ACCT: ')) {
+						// Also handle if it's already "ACCT:" and needs to be changed to "ACCNT:"
+						const acctNo = text.replace('ACCT: ', '');
+						h2.textContent = 'ACCNT: ' + acctNo;
 					}
 				});
 				
@@ -4201,8 +4296,8 @@ async def root(token: str = Cookie(None)):
 				// Restore "Account:" in desktop
 				document.querySelectorAll('.account-header-text').forEach(h2 => {
 					const text = h2.textContent;
-					if (text && text.startsWith('ACCT: ')) {
-						const acctNo = text.replace('ACCT: ', '');
+					if (text && (text.startsWith('ACCT: ') || text.startsWith('ACCNT: '))) {
+						const acctNo = text.replace(/^(ACCT|ACCNT): /, '');
 						h2.textContent = 'Account: ' + acctNo;
 					}
 				});
