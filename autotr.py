@@ -53,6 +53,9 @@ stored_jango_data = {}
 # Global storage for miche data (updated by timer handler)
 stored_miche_data = {}
 
+# Global flag to track if cleanup has run today at 20:30
+cleanup_run_today = False
+
 def init_order_count():
 	global order_count, key_list
 
@@ -1020,7 +1023,97 @@ def save_interested_stocks_to_json():
 		print(f"Error saving interested_stocks: {e}")
 		return False
 
+def get_account_holdings_stock_codes():
+	"""Get set of all stock codes currently in account holdings"""
+	global stored_jango_data
+	holdings_stock_codes = set()
+	
+	try:
+		all_jango = stored_jango_data
+		if isinstance(all_jango, dict):
+			iterator = all_jango.values()
+		else:
+			iterator = all_jango
+		
+		for account in iterator:
+			if account.get("return_code") != 0:
+				continue
+			
+			acnt_evlt_remn_indv_tot = account.get("acnt_evlt_remn_indv_tot", [])
+			
+			for stock in acnt_evlt_remn_indv_tot:
+				stk_cd = stock.get('stk_cd', '')
+				# Remove 'A' prefix if present
+				if stk_cd and stk_cd[0] == 'A':
+					stk_cd_clean = stk_cd[1:]
+				else:
+					stk_cd_clean = stk_cd
+				
+				if stk_cd_clean:
+					holdings_stock_codes.add(stk_cd_clean)
+	except Exception as e:
+		print(f"Error getting account holdings stock codes: {e}")
+	
+	return holdings_stock_codes
 
+def cleanup_old_interested_stocks():
+	"""Delete interested stocks that are 10+ days old and not in account holdings"""
+	global interested_stocks, cleanup_run_today
+	
+	try:
+		# Get current date
+		current_date = datetime.now().date()
+		
+		# Get all stock codes in account holdings
+		holdings_stock_codes = get_account_holdings_stock_codes()
+		
+		# Track stocks to delete
+		stocks_to_delete = []
+		
+		# Iterate through interested_stocks
+		for stock_code, stock_info in interested_stocks.items():
+			yyyymmdd = stock_info.get('yyyymmdd', '')
+			
+			# Skip if yyyymmdd is missing or invalid
+			if not yyyymmdd or len(yyyymmdd) != 8 or not yyyymmdd.isdigit():
+				continue
+			
+			# Parse the date
+			try:
+				stock_date = datetime.strptime(yyyymmdd, '%Y%m%d').date()
+			except ValueError:
+				print(f"Invalid date format in interested_stocks for {stock_code}: {yyyymmdd}")
+				continue
+			
+			# Calculate days passed
+			days_passed = (current_date - stock_date).days
+			
+			# Check if 10 days have passed
+			if days_passed >= 10:
+				# Check if stock is NOT in account holdings
+				if stock_code not in holdings_stock_codes:
+					stocks_to_delete.append(stock_code)
+					print(f"Marking {stock_code} ({stock_info.get('stock_name', '')}) for deletion: {days_passed} days old, not in holdings")
+		
+		# Delete marked stocks
+		if stocks_to_delete:
+			for stock_code in stocks_to_delete:
+				del interested_stocks[stock_code]
+				print(f"Deleted {stock_code} from interested_stocks (10+ days old, not in holdings)")
+			
+			# Save if any deletions occurred
+			if stocks_to_delete:
+				save_interested_stocks_to_json()
+				print(f"Cleanup completed: deleted {len(stocks_to_delete)} old interested stocks")
+		else:
+			print("Cleanup completed: no old interested stocks to delete")
+		
+		# Mark cleanup as run today
+		cleanup_run_today = True
+		
+	except Exception as e:
+		print(f"Error in cleanup_old_interested_stocks: {e}")
+		traceback.print_exc()
 
 # Background thread for periodic timer handler
 background_thread = None
@@ -1114,10 +1207,24 @@ app = FastAPI(lifespan=lifespan)
 
 def periodic_timer_handler():
 	"""Periodic timer event handler that runs the trading loop logic"""
-	global prev_hour, new_day, stored_jango_data, stored_miche_data, working_status, now
+	global prev_hour, new_day, stored_jango_data, stored_miche_data, working_status, now, cleanup_run_today
 	
 	now = datetime.now().time()
 	now_hour = now.hour
+	
+	# Check if it's 20:30 and cleanup hasn't run today
+	if now_hour == 20 and now.minute == 30 and not cleanup_run_today:
+		try:
+			print(f"{cur_date()} Running cleanup of old interested stocks at 20:30...")
+			cleanup_old_interested_stocks()
+		except Exception as e:
+			print(f"Error running cleanup at 20:30: {e}")
+			traceback.print_exc()
+	
+	# Reset cleanup flag at midnight (00:00)
+	if now_hour == 0 and now.minute == 0:
+		cleanup_run_today = False
+	
 	if prev_hour is not None and now_hour != prev_hour:
 		print('{} Hour change from {} to {}'.format(cur_date(), prev_hour, now_hour))
 	prev_hour = now_hour
@@ -1568,7 +1675,7 @@ async def root(token: str = Cookie(None)):
 				color: white;
 			}
 			th {
-				padding: 15px;
+				padding: 5px 15px 5px 8px;
 				text-align: left;
 				font-weight: 600;
 				text-transform: uppercase;
@@ -1585,7 +1692,7 @@ async def root(token: str = Cookie(None)):
 				white-space: nowrap;
 			}
 			td {
-				padding: 15px;
+				padding: 5px 15px 5px 8px;
 				border-bottom: 1px solid #e0e0e0;
 				border-right: 1px solid #e0e0e0;
 			}
@@ -1621,23 +1728,6 @@ async def root(token: str = Cookie(None)):
 			}
 			.profit-zero {
 				color: #7f8c8d;
-			}
-			.refresh-btn {
-				position: fixed;
-				bottom: 30px;
-				right: 30px;
-				background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-				color: white;
-				border: none;
-				padding: 15px 30px;
-				border-radius: 50px;
-				cursor: pointer;
-				font-size: 16px;
-				box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-				transition: transform 0.2s;
-			}
-			.refresh-btn:hover {
-				transform: scale(1.05);
 			}
 			.empty-state {
 				text-align: center;
@@ -1959,7 +2049,7 @@ async def root(token: str = Cookie(None)):
 			#interested-stocks-container table {
 				min-width: 600px;
 			}
-			@media screen and (max-width: 768px) {
+			@media screen and (max-width: 1600px) {
 				#interested-stocks-container {
 					overflow-x: auto;
 					width: 100%;
@@ -2021,10 +2111,18 @@ async def root(token: str = Cookie(None)):
 			#miche-container table th:nth-child(1),
 			#miche-container table td:nth-child(1) {
 				width: 80px;
+				min-width: 70px;
+			}
+			/* Increase font size for account cells in orders section */
+			#miche-container table td.account-cell {
+				font-size: 16px;
+				font-weight: 600;
 			}
 			#miche-container table th:nth-child(2),
 			#miche-container table td:nth-child(2) {
 				width: 80px;
+				max-width: 80px;
+				min-width: 80px;
 			}
 			#miche-container table th:nth-child(4),
 			#miche-container table td:nth-child(4) {
@@ -2033,14 +2131,17 @@ async def root(token: str = Cookie(None)):
 			#miche-container table th:nth-child(5),
 			#miche-container table td:nth-child(5) {
 				width: 160px;
+				text-align: right;
 			}
 			#miche-container table th:nth-child(7),
 			#miche-container table td:nth-child(7) {
 				width: 80px;
+				text-align: right;
 			}
 			#miche-container table th:nth-child(6),
 			#miche-container table td:nth-child(6) {
 				width: 150px;
+				text-align: right;
 			}
 			#miche-container table th:nth-child(8),
 			#miche-container table td:nth-child(8) {
@@ -2050,7 +2151,7 @@ async def root(token: str = Cookie(None)):
 			#miche-container table td:nth-child(9) {
 				width: 60px;
 			}
-			@media screen and (max-width: 768px) {
+			@media screen and (max-width: 1600px) {
 				#miche-container {
 					overflow-x: auto;
 					width: 100%;
@@ -2059,6 +2160,129 @@ async def root(token: str = Cookie(None)):
 				#miche-container table {
 					min-width: 600px;
 					width: 100%;
+				}
+				/* Reduce header height and match table width for orders section in mobile */
+				#miche-container .account-group-header {
+					padding: 8px 15px;
+					font-size: 1.1em;
+					width: 100%;
+					box-sizing: border-box;
+				}
+				#miche-container .account-group-header h2 {
+					font-size: 1em;
+					margin: 0;
+				}
+				/* Change "Account:" to "ACCT:" in mobile for account group headers */
+				.account-group-header h2.account-header-text {
+					font-size: 1em;
+				}
+				/* Limit ACCT column width to 4 digits in mobile (approximately 70px for 4 digits) */
+				#miche-container table th:first-child,
+				#miche-container table td:first-child {
+					width: 70px;
+					max-width: 70px;
+					min-width: 70px;
+					overflow: hidden;
+					white-space: nowrap;
+					font-size: 12px;
+				}
+				/* Fix code column width to 6 digits in orders section (2nd column) */
+				#miche-container table th:nth-child(2),
+				#miche-container table td:nth-child(2) {
+					width: 70px;
+					max-width: 70px;
+					min-width: 70px;
+					white-space: nowrap;
+				}
+				/* Increase stock name width in orders section (3rd column) to prevent wrapping */
+				#miche-container table th:nth-child(3),
+				#miche-container table td:nth-child(3) {
+					width: 200px;
+					min-width: 200px;
+					white-space: nowrap;
+					overflow: hidden;
+				}
+				/* Fix TYPE column width to 6 digits in orders section (4th column) in mobile */
+				#miche-container table th:nth-child(4),
+				#miche-container table td:nth-child(4) {
+					width: 60px;
+					max-width: 60px;
+					min-width: 60px;
+					white-space: nowrap;
+					overflow: hidden;
+				}
+				/* Increase ORDER/CURRENT column width by 2 digits in orders section (6th column) in mobile */
+				#miche-container table th:nth-child(6),
+				#miche-container table td:nth-child(6) {
+					width: 170px;
+					max-width: 170px;
+					min-width: 170px;
+					white-space: nowrap;
+					overflow: hidden;
+				}
+				/* Increase stock name width in account holdings section (2nd column) to prevent wrapping */
+				.account-group table th:nth-child(2),
+				.account-group table td:nth-child(2) {
+					width: 200px;
+					min-width: 200px;
+					white-space: nowrap;
+					overflow: hidden;
+				}
+				/* Fix Qty column width to 8 digits in account holdings section (3rd column) in mobile */
+				.account-group table th:nth-child(3),
+				.account-group table td:nth-child(3) {
+					width: 90px;
+					max-width: 90px;
+					min-width: 90px;
+					white-space: nowrap;
+					overflow: hidden;
+				}
+				/* Fix Avg Buy Price column width to 18 digits in account holdings section (4th column) in mobile */
+				.account-group table th:nth-child(4),
+				.account-group table td:nth-child(4) {
+					width: 180px;
+					max-width: 180px;
+					min-width: 180px;
+					white-space: nowrap;
+					overflow: hidden;
+				}
+				/* Fix PRESET PRC/RATE column width to 10 digits in account holdings section (6th column) in mobile */
+				.account-group table th:nth-child(6),
+				.account-group table td:nth-child(6) {
+					width: 100px;
+					max-width: 100px;
+					min-width: 100px;
+					white-space: nowrap;
+					overflow: hidden;
+				}
+				/* Increase stock name width in interested stocks section (2nd column) to prevent wrapping */
+				#interested-stocks-container table th:nth-child(2),
+				#interested-stocks-container table td:nth-child(2) {
+					width: 200px;
+					min-width: 200px;
+					white-space: nowrap;
+					overflow: hidden;
+				}
+				/* Fix buy section input widths in mobile */
+				#buy-section #buy-stock-code-input {
+					width: 80px;
+					max-width: 80px;
+					min-width: 80px;
+				}
+				#buy-section #buy-price-input {
+					width: 80px;
+					max-width: 80px;
+					min-width: 80px;
+				}
+				#buy-section #buy-amount-input {
+					width: 80px;
+					max-width: 80px;
+					min-width: 80px;
+				}
+				#buy-section #buy-stock-name-input {
+					width: 160px;
+					max-width: 160px;
+					min-width: 160px;
 				}
 			}
 			.auto-sell-control {
@@ -2115,7 +2339,7 @@ async def root(token: str = Cookie(None)):
 								<tr>
 									<th>Code</th>
 									<th>Name</th>
-									<th>Order Type</th>
+									<th>TYPE</th>
 									<th>Order Qty</th>
 									<th>Order / Current</th>
 									<th>REMAIN</th>
@@ -2212,7 +2436,7 @@ async def root(token: str = Cookie(None)):
 						</div>
 						<div class="form-group">
 							<label for="buy-stock-name-input">Name</label>
-							<input type="text" id="buy-stock-name-input" placeholder="e.g., Samsung Electronics" maxlength="20" />
+							<input type="text" id="buy-stock-name-input" placeholder="e.g., Samsung Electronics" maxlength="20" readonly />
 						</div>
 						<div class="form-group">
 							<label for="buy-price-input">Price</label>
@@ -2239,7 +2463,6 @@ async def root(token: str = Cookie(None)):
 	html_content += """
 			</div>
 		</div>
-		<button class="refresh-btn" onclick="updateTable()">Refresh</button>
 		<script>
 		
 		function getProfitClass(profitRate) {
@@ -2518,7 +2741,7 @@ async def root(token: str = Cookie(None)):
 								
 								group.innerHTML = `
 									<div class="account-group-header">
-										<h2>Account: ${acctNo}</h2>
+										<h2 class="account-header-text">Account: ${acctNo}</h2>
 										<div class="auto-sell-control">
 											<select id="select-auto-sell-${acctNo}" class="auto-sell-select">
 												${options}
@@ -2532,7 +2755,7 @@ async def root(token: str = Cookie(None)):
 												<th>Code</th>
 												<th>Name</th>
 												<th>Qty</th>
-												<th>Avg Buy Price</th>
+												<th>AVGCUR PRC</th>
 												<th>Profit Rate</th>
 												<th>PRESET PRC/RATE</th>
 											</tr>
@@ -2822,7 +3045,7 @@ async def root(token: str = Cookie(None)):
 												<th>Account</th>
 												<th>Code</th>
 												<th>Name</th>
-												<th>Order Type</th>
+												<th>TYPE</th>
 												<th>Order Qty</th>
 												<th>Order / Current</th>
 												<th>REMAIN</th>
@@ -2878,7 +3101,7 @@ async def root(token: str = Cookie(None)):
 												<th>Account</th>
 												<th>Code</th>
 												<th>Name</th>
-												<th>Order Type</th>
+												<th>TYPE</th>
 												<th>Order Qty</th>
 												<th>Order / Current</th>
 												<th>REMAIN</th>
@@ -2938,7 +3161,7 @@ async def root(token: str = Cookie(None)):
 										data-current-price="${curPrc || ''}"
 										onclick="selectMicheRow(this)"
 										style="cursor: pointer;">
-										<td>${order.ACCT}</td>
+										<td class="account-cell">${order.ACCT}</td>
 										<td><strong>${stkCdClean}</strong></td>
 										<td>${order.stk_nm || '-'}</td>
 										<td>${order.io_tp_nm || '-'}</td>
@@ -2968,6 +3191,8 @@ async def root(token: str = Cookie(None)):
 						}
 						
 						micheContainer.innerHTML = htmlContent;
+						// Update mobile display after table is rendered
+						updateMobileDisplay();
 					} else {
 						// Show empty table even on API error
 						const micheSection = document.getElementById('miche-section');
@@ -2981,9 +3206,10 @@ async def root(token: str = Cookie(None)):
 								<table>
 									<thead>
 									<tr>
+										<th>Account</th>
 										<th>Code</th>
 										<th>Name</th>
-										<th>Order Type</th>
+										<th>TYPE</th>
 										<th>Order Qty</th>
 										<th>Order / Current</th>
 										<th>REMAIN</th>
@@ -2993,42 +3219,7 @@ async def root(token: str = Cookie(None)):
 								</thead>
 								<tbody>
 									<tr>
-										<td colspan="8" style="text-align: center; padding: 20px; color: #7f8c8d;">
-											Error loading unexecuted orders
-										</td>
-									</tr>
-									</tbody>
-								</table>
-							</div>
-						`;
-					}
-				})
-				.catch(error => {
-					console.error('Error updating miche:', error);
-					const micheSection = document.getElementById('miche-section');
-					const micheContainer = document.getElementById('miche-container');
-					micheSection.style.display = 'block';
-					micheContainer.innerHTML = `
-						<div class="account-group">
-							<div class="account-group-header">
-								<h2>Unexecuted Orders</h2>
-							</div>
-							<table>
-								<thead>
-									<tr>
-										<th>Code</th>
-										<th>Name</th>
-										<th>Order Type</th>
-										<th>Order Qty</th>
-										<th>Order / Current</th>
-										<th>REMAIN</th>
-										<th>Time</th>
-										<th>Action</th>
-									</tr>
-								</thead>
-								<tbody>
-									<tr>
-										<td colspan="8" style="text-align: center; padding: 20px; color: #7f8c8d;">
+										<td colspan="9" style="text-align: center; padding: 20px; color: #7f8c8d;">
 											Error loading unexecuted orders
 										</td>
 									</tr>
@@ -3036,7 +3227,47 @@ async def root(token: str = Cookie(None)):
 							</table>
 						</div>
 					`;
-				});
+						// Update mobile display after error table is rendered
+						updateMobileDisplay();
+				}
+			})
+			.catch(error => {
+				console.error('Error updating miche:', error);
+				const micheSection = document.getElementById('miche-section');
+				const micheContainer = document.getElementById('miche-container');
+				micheSection.style.display = 'block';
+				micheContainer.innerHTML = `
+					<div class="account-group">
+						<div class="account-group-header">
+							<h2>Unexecuted Orders</h2>
+						</div>
+						<table>
+							<thead>
+								<tr>
+									<th>Account</th>
+									<th>Code</th>
+									<th>Name</th>
+									<th>TYPE</th>
+									<th>Order Qty</th>
+									<th>Order / Current</th>
+									<th>REMAIN</th>
+									<th>Time</th>
+									<th>Action</th>
+								</tr>
+							</thead>
+							<tbody>
+								<tr>
+									<td colspan="9" style="text-align: center; padding: 20px; color: #7f8c8d;">
+										Error loading unexecuted orders
+									</td>
+								</tr>
+							</tbody>
+						</table>
+					</div>
+				`;
+				// Update mobile display after error table is rendered
+				updateMobileDisplay();
+			});
 		}
 		
 		function cancelOrder(buttonElement) {
@@ -3889,12 +4120,120 @@ async def root(token: str = Cookie(None)):
 				});
 		}
 		
+		// Function to update mobile display (change "Account" to "ACCT")
+		// Cache the mobile state to avoid unnecessary updates
+		let cachedIsMobile = null;
+		
+		function updateMobileDisplay() {
+			// Check if mobile (touch device AND screen width <= 1600px)
+			// Only consider it mobile if BOTH conditions are true to avoid flickering on PC
+			const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+			const isNarrowScreen = window.innerWidth <= 1600;
+			const isMobile = hasTouch && isNarrowScreen;
+			
+			// Only update if state changed to avoid flickering
+			if (cachedIsMobile === isMobile) {
+				// Even if state hasn't changed, ensure text is correct after table recreation
+				// Only update if text is actually wrong to prevent unnecessary DOM manipulation
+				if (isMobile) {
+					// On mobile, ensure "ACCT" is shown (table might have been recreated)
+					document.querySelectorAll('#miche-container table thead th:first-child').forEach(th => {
+						const currentText = th.textContent.trim();
+						if (currentText === 'Account') {
+							th.textContent = 'ACCT';
+						}
+					});
+					// On mobile, ensure "QTY" is shown (table might have been recreated)
+					document.querySelectorAll('#miche-container table thead th:nth-child(5)').forEach(th => {
+						const currentText = th.textContent.trim().toUpperCase();
+						if (currentText === 'ORDER QTY' || (currentText !== 'QTY' && currentText.includes('ORDER'))) {
+							th.textContent = 'QTY';
+							th.style.textTransform = 'none';
+						}
+					});
+				} else {
+					// On PC, ensure "Account" is shown (table might have been recreated)
+					document.querySelectorAll('#miche-container table thead th:first-child').forEach(th => {
+						const currentText = th.textContent.trim();
+						if (currentText === 'ACCT') {
+							th.textContent = 'Account';
+						}
+					});
+					// On PC, ensure "Order Qty" is shown (table might have been recreated)
+					document.querySelectorAll('#miche-container table thead th:nth-child(5)').forEach(th => {
+						const currentText = th.textContent.trim();
+						if (currentText === 'QTY') {
+							th.textContent = 'Order Qty';
+							th.style.textTransform = '';
+						}
+					});
+				}
+				return;
+			}
+			cachedIsMobile = isMobile;
+			
+			if (isMobile) {
+				// Change "Account:" to "ACCT:" in account group headers
+				document.querySelectorAll('.account-header-text').forEach(h2 => {
+					const text = h2.textContent;
+					if (text && text.startsWith('Account: ')) {
+						const acctNo = text.replace('Account: ', '');
+						h2.textContent = 'ACCT: ' + acctNo;
+					}
+				});
+				
+				// Change "Account" header to "ACCT" in miche table
+				document.querySelectorAll('#miche-container table thead th:first-child').forEach(th => {
+					if (th.textContent.trim() === 'Account') {
+						th.textContent = 'ACCT';
+					}
+				});
+				
+				// Change "Order Qty" to "QTY" in orders section (5th column)
+				document.querySelectorAll('#miche-container table thead th:nth-child(5)').forEach(th => {
+					const text = th.textContent.trim().toUpperCase();
+					if (text === 'ORDER QTY') {
+						th.textContent = 'QTY';
+						th.style.textTransform = 'none';
+					}
+				});
+			} else {
+				// Restore "Account:" in desktop
+				document.querySelectorAll('.account-header-text').forEach(h2 => {
+					const text = h2.textContent;
+					if (text && text.startsWith('ACCT: ')) {
+						const acctNo = text.replace('ACCT: ', '');
+						h2.textContent = 'Account: ' + acctNo;
+					}
+				});
+				
+				// Restore "Account" header in desktop
+				document.querySelectorAll('#miche-container table thead th:first-child').forEach(th => {
+					if (th.textContent.trim() === 'ACCT') {
+						th.textContent = 'Account';
+					}
+				});
+				
+				// Restore "Order Qty" in desktop
+				document.querySelectorAll('#miche-container table thead th:nth-child(5)').forEach(th => {
+					if (th.textContent.trim() === 'QTY') {
+						th.textContent = 'Order Qty';
+						th.style.textTransform = '';
+					}
+				});
+			}
+		}
+		
+		// Call updateMobileDisplay on window resize
+		window.addEventListener('resize', updateMobileDisplay);
+		
 		// Auto-update every 1 second
 		setInterval(function() {
 			updateTable();
 			updateMiche();
 			updateSellPrices();
 			updateInterestedStocks();
+			// Note: updateMobileDisplay() is called inside updateMiche() after table is rendered
 		}, 1000);
 		
 		// Initial update after page load
@@ -3903,6 +4242,8 @@ async def root(token: str = Cookie(None)):
 		updateSellPrices();
 		updateInterestedStocks();
 		loadAccountCheckboxes();
+		// Update mobile display after initial load
+		setTimeout(updateMobileDisplay, 500);
 		</script>
 	</body>
 	</html>

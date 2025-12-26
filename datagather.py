@@ -644,8 +644,8 @@ async def trigger_job():
     return {"status": "success", "message": "Data gathering job triggered"}
 
 def get_stock_list():
-    """Get list of unique stocks from chart_data directory with their names."""
-    stocks = {}
+    """Get list of stocks with dates from chart_data directory with their names."""
+    stocks = []
     interested_stocks = load_interested_stocks()
     
     if not os.path.exists(CHART_DIR):
@@ -663,14 +663,20 @@ def get_stock_list():
                 if len(parts) == 2:
                     date_str, stock_code = parts
                     if len(date_str) == 8 and date_str.isdigit():
-                        if stock_code not in stocks:
-                            # Get stock name from interested_stocks
-                            stock_name = stock_code
-                            if stock_code in interested_stocks:
-                                stock_name = interested_stocks[stock_code].get('stock_name', stock_code)
-                            stocks[stock_code] = stock_name
+                        # Get stock name from interested_stocks
+                        stock_name = stock_code
+                        if stock_code in interested_stocks:
+                            stock_name = interested_stocks[stock_code].get('stock_name', stock_code)
+                        stocks.append({
+                            'date': date_str,
+                            'stock_code': stock_code,
+                            'stock_name': stock_name
+                        })
     except Exception as e:
         print(f"Error scanning chart directory: {e}")
+    
+    # Sort by date (descending, newest first) then by stock code
+    stocks.sort(key=lambda x: (x['date'], x['stock_code']), reverse=True)
     
     return stocks
 
@@ -738,15 +744,64 @@ async def charts_page():
                 background: #bbdefb;
                 border-color: #667eea;
             }
+            .stock-item-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-start;
+                margin-bottom: 4px;
+                gap: 8px;
+            }
+            .stock-item-content {
+                display: flex;
+                gap: 8px;
+                align-items: center;
+                flex: 1;
+                cursor: pointer;
+                min-width: 0;
+            }
+            .stock-date {
+                font-size: 12px;
+                color: #888;
+                width: 80px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
             .stock-code {
                 font-weight: bold;
                 font-size: 14px;
                 color: #333;
-                margin-bottom: 4px;
+                width: 60px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
             }
             .stock-name {
                 font-size: 12px;
                 color: #666;
+                margin-top: 4px;
+                width: 200px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            .delete-btn {
+                background: #e74c3c;
+                color: white;
+                border: none;
+                padding: 2px 6px;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 10px;
+                font-weight: 600;
+                transition: background-color 0.2s;
+                height: 20px;
+                line-height: 16px;
+                width: 60px;
+                flex-shrink: 0;
+            }
+            .delete-btn:hover {
+                background: #c0392b;
             }
             .right-pane {
                 flex: 1;
@@ -762,9 +817,29 @@ async def charts_page():
                 border-radius: 8px;
                 padding: 15px;
                 box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-                overflow-x: auto;
+                overflow-x: scroll; /* Always show scrollbar */
                 overflow-y: hidden;
                 scroll-behavior: smooth;
+            }
+            .chart-container::-webkit-scrollbar {
+                height: 12px;
+                display: block; /* Force scrollbar to always be visible */
+            }
+            .chart-container::-webkit-scrollbar-track {
+                background: #f1f1f1;
+                border-radius: 6px;
+            }
+            .chart-container::-webkit-scrollbar-thumb {
+                background: #888;
+                border-radius: 6px;
+            }
+            .chart-container::-webkit-scrollbar-thumb:hover {
+                background: #555;
+            }
+            /* Force scrollbar visibility for Firefox */
+            .chart-container {
+                scrollbar-width: thin;
+                scrollbar-color: #888 #f1f1f1;
             }
             .chart-container:last-child {
                 margin-bottom: 0;
@@ -782,6 +857,7 @@ async def charts_page():
                 height: calc(100% - 30px);
                 display: flex;
                 flex-direction: column;
+                overflow-x: visible;
             }
             .candlestick-chart {
                 flex: 4;
@@ -825,13 +901,23 @@ async def charts_page():
                 <div id="stock-list">
     """
     
-    # Add stock items
-    sorted_stocks = sorted(stocks.items())
-    for stock_code, stock_name in sorted_stocks:
+    # Add stock items (already sorted by date and stock_code)
+    for stock in stocks:
+        stock_code = stock['stock_code']
+        stock_name = stock['stock_name']
+        date_str = stock['date']
+        # Format date: YYYYMMDD -> YYYY-MM-DD
+        formatted_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
         html_content += f"""
-                    <div class="stock-item" data-stock-code="{stock_code}" onclick="loadStockCharts('{stock_code}')">
-                        <div class="stock-code">{stock_code}</div>
-                        <div class="stock-name">{stock_name}</div>
+                    <div class="stock-item" data-stock-code="{stock_code}" data-date="{date_str}">
+                        <div class="stock-item-header">
+                            <div class="stock-item-content" onclick="loadStockCharts('{stock_code}', '{date_str}')">
+                                <div class="stock-date">{formatted_date}</div>
+                                <div class="stock-code">{stock_code}</div>
+                            </div>
+                            <button class="delete-btn" onclick="event.stopPropagation(); deleteChartData('{stock_code}', '{date_str}')" title="Delete chart data">Delete</button>
+                        </div>
+                        <div class="stock-name" onclick="loadStockCharts('{stock_code}', '{date_str}')">{stock_name}</div>
                     </div>
         """
     
@@ -867,18 +953,18 @@ async def charts_page():
             let dailyChartData = null;
             let minuteChartData = null;
             
-            function selectStock(stockCode) {
+            function selectStock(stockCode, dateStr) {
                 document.querySelectorAll('.stock-item').forEach(item => {
                     item.classList.remove('selected');
                 });
-                const item = document.querySelector(`[data-stock-code="${stockCode}"]`);
+                const item = document.querySelector(`[data-stock-code="${stockCode}"][data-date="${dateStr}"]`);
                 if (item) {
                     item.classList.add('selected');
                 }
             }
             
-            function loadStockCharts(stockCode) {
-                selectStock(stockCode);
+            function loadStockCharts(stockCode, dateStr) {
+                selectStock(stockCode, dateStr);
                 
                 // Load daily chart
                 fetch(`./api/chart-data/${stockCode}/daily`)
@@ -1031,10 +1117,10 @@ async def charts_page():
                 lowerBound = lowerBound - padding;
                 upperBound = upperBound + padding;
                 
-                // Chart dimensions
+                // Chart dimensions: candle width 3px, gap 1px, total spacing 4px
                 const poleWidth = 3;
                 const poleGap = 1;
-                const poleSpacing = poleWidth + poleGap;
+                const poleSpacing = 4; // Total spacing: 3px candle + 1px gap
                 const leftMargin = 60;
                 const rightMargin = 20;
                 const topMargin = 20;
@@ -1044,7 +1130,8 @@ async def charts_page():
                 const numPoles = priceData.length;
                 const requiredChartWidth = numPoles * poleSpacing;
                 const minChartWidth = wrapper.clientWidth - leftMargin - rightMargin;
-                const actualChartWidth = Math.max(requiredChartWidth, minChartWidth);
+                // Always ensure chart width is at least slightly larger than container to show scrollbar
+                const actualChartWidth = Math.max(requiredChartWidth, minChartWidth + 1);
                 
                 // Set canvas size - use offsetHeight to get the actual rendered height
                 canvas.height = wrapper.offsetHeight || wrapper.clientHeight;
@@ -1121,13 +1208,14 @@ async def charts_page():
                     ctx.fill();
                 });
                 
-                // Draw division line, top line, and bottom line for minute charts (384-period window)
+                // Draw division line, top line, bottom line, and calculated line for minute charts (384-period window)
                 if (canvasId === 'minute-chart' && priceData.length > 0) {
                     const period = 384;
                     const extensionPeriod = 260; // Extend for 260 candles until new high appears
                     const divisionPoints = [];
                     const topPoints = [];
                     const bottomPoints = [];
+                    const calculatedPoints = [];
                     
                     let previousMax = null;
                     let previousMin = null;
@@ -1198,6 +1286,14 @@ async def charts_page():
                             y: priceToY(minPrice),
                             value: minPrice
                         });
+                        
+                        // Yellow line: high - (high - low) * 4 / 10
+                        const calculatedValue = maxPrice - (maxPrice - minPrice) * 4 / 10;
+                        calculatedPoints.push({
+                            x: x,
+                            y: priceToY(calculatedValue),
+                            value: calculatedValue
+                        });
                     }
                     
                     // Draw the top line (maximum)
@@ -1241,6 +1337,23 @@ async def charts_page():
                         ctx.beginPath();
                         
                         divisionPoints.forEach((point, index) => {
+                            if (index === 0) {
+                                ctx.moveTo(point.x, point.y);
+                            } else {
+                                ctx.lineTo(point.x, point.y);
+                            }
+                        });
+                        
+                        ctx.stroke();
+                    }
+                    
+                    // Draw the yellow line (high - (high - low) * 4 / 10)
+                    if (calculatedPoints.length > 0) {
+                        ctx.strokeStyle = '#ffff00'; // Yellow color
+                        ctx.lineWidth = 1;
+                        ctx.beginPath();
+                        
+                        calculatedPoints.forEach((point, index) => {
                             if (index === 0) {
                                 ctx.moveTo(point.x, point.y);
                             } else {
@@ -1402,9 +1515,10 @@ async def charts_page():
                 const maxVolume = Math.max(...volumeData.map(v => v.volume));
                 
                 // Chart dimensions - must match candlestick chart exactly
+                // Candle width 3px, gap 1px, total spacing 4px
                 const poleWidth = 3;
                 const poleGap = 1;
-                const poleSpacing = poleWidth + poleGap;
+                const poleSpacing = 4; // Total spacing: 3px candle + 1px gap
                 const leftMargin = 60;
                 const rightMargin = 20;
                 const topMargin = 5;
@@ -1475,6 +1589,47 @@ async def charts_page():
                 const canvas = document.getElementById(canvasId);
                 const ctx = canvas.getContext('2d');
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+            
+            function deleteChartData(stockCode, dateStr) {
+                const formattedDate = dateStr ? `${dateStr.substring(0,4)}-${dateStr.substring(4,6)}-${dateStr.substring(6,8)}` : '';
+                if (!confirm(`Delete chart data for ${stockCode} (${formattedDate})? This action cannot be undone.`)) {
+                    return;
+                }
+                
+                fetch(`./api/chart-data/${stockCode}/${dateStr}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                })
+                .then(response => response.json())
+                .then(result => {
+                    if (result.status === 'success') {
+                        // Remove the stock item from the list
+                        const stockItem = document.querySelector(`[data-stock-code="${stockCode}"][data-date="${dateStr}"]`);
+                        if (stockItem) {
+                            stockItem.remove();
+                        }
+                        // Clear charts if this stock was selected
+                        clearChart('daily-chart');
+                        clearChart('daily-volume-chart');
+                        clearChart('minute-chart');
+                        clearChart('minute-volume-chart');
+                        dailyChartData = null;
+                        minuteChartData = null;
+                        // Remove selected state
+                        document.querySelectorAll('.stock-item').forEach(item => {
+                            item.classList.remove('selected');
+                        });
+                    } else {
+                        alert('Error deleting chart data: ' + (result.message || 'Unknown error'));
+                    }
+                })
+                .catch(error => {
+                    console.error('Error deleting chart data:', error);
+                    alert('Error deleting chart data: ' + error);
+                });
             }
             
             // Handle window resize
@@ -1581,6 +1736,53 @@ async def get_minute_chart_data(stock_code: str):
         all_data.sort(key=lambda x: x.get('cntr_tm', ''), reverse=True)
         
         return JSONResponse(content={"status": "success", "data": all_data})
+    except Exception as e:
+        return JSONResponse(content={"status": "error", "message": str(e)})
+
+@app.delete("/api/chart-data/{stock_code}/{date_str}")
+@app.delete("/stock/data/api/chart-data/{stock_code}/{date_str}")
+async def delete_chart_data(stock_code: str, date_str: str):
+    """Delete chart data files (daily and minute) for a specific stock and date."""
+    try:
+        if not os.path.exists(CHART_DIR):
+            return JSONResponse(content={"status": "error", "message": "Chart directory not found"})
+        
+        deleted_files = []
+        deleted_count = 0
+        
+        # Delete daily chart file: YYYYMMDD_stockcode.json
+        daily_filename = f"{date_str}_{stock_code}.json"
+        daily_file_path = os.path.join(CHART_DIR, daily_filename)
+        if os.path.exists(daily_file_path):
+            try:
+                os.remove(daily_file_path)
+                deleted_files.append(daily_filename)
+                deleted_count += 1
+            except Exception as e:
+                print(f"Error deleting {daily_filename}: {e}")
+        
+        # Delete minute chart file: YYYYMMDD_stockcode_min.json
+        minute_filename = f"{date_str}_{stock_code}_min.json"
+        minute_file_path = os.path.join(CHART_DIR, minute_filename)
+        if os.path.exists(minute_file_path):
+            try:
+                os.remove(minute_file_path)
+                deleted_files.append(minute_filename)
+                deleted_count += 1
+            except Exception as e:
+                print(f"Error deleting {minute_filename}: {e}")
+        
+        if deleted_count > 0:
+            return JSONResponse(content={
+                "status": "success",
+                "message": f"Deleted {deleted_count} chart file(s) for {stock_code} ({date_str})",
+                "deleted_files": deleted_files
+            })
+        else:
+            return JSONResponse(content={
+                "status": "error",
+                "message": f"No chart files found for {stock_code} ({date_str})"
+            })
     except Exception as e:
         return JSONResponse(content={"status": "error", "message": str(e)})
 
