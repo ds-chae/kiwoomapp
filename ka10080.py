@@ -23,23 +23,6 @@ def get_price_index(color):
 # [2] -> R, [3] -> O
 
 
-low_after_high = {}
-
-def set_low_after_high(stk_cd, stk_nm, lprc):
-	if lprc == 0:
-		print('fro stock {} {} set lowest to zero is not allowed'.format(stk_cd, stk_nm))
-		return
-
-	ltmp = low_after_high.get(stk_cd, 10000000)
-	if ltmp > lprc:
-		low_after_high[stk_cd] = lprc
-
-
-def get_low_after_high(stk_cd):
-	lprc = low_after_high.get(stk_cd, 0)
-	return lprc
-
-
 def get_bun_price(stk_cd, stk_nm, chart ):
 	bun_price = {}
 	bun_price['stk_cd'] = stk_cd
@@ -79,7 +62,6 @@ def get_bun_price(stk_cd, stk_nm, chart ):
 		if low_price > tlpc:
 			low_price = tlpc
 		hidx -= 1
-	set_low_after_high(stk_cd, stk_nm, low_price)
 
 	if (i + prd) >= chartlen:
 		bun_price['high_price'] = 0

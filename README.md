@@ -262,3 +262,7 @@ python datagather.py
 - All API endpoints require authentication except login page
 - Chart data is stored in JSON format with timestamp-based filenames
 - Mobile optimizations apply to screens ≤1600px width with touch capability
+
+20251228.
+let name the analysis as bounce analysis. modify datagather.py. make a csv file that contains bounce analysis dataset. the dataset contains 16 days peak date, high price, low price, its minute bounce low price, bounce high price, daily moving average values at daily paek date, trading amount of peak date. peak dates occur several times in one daily chart. as many peak date occur when 16 days window move. consider the peak date when trde_prica is greater then 150000. this csv building is done when user click 'Make CSV'. add 'Make CSV' button to /stock/data page.
+

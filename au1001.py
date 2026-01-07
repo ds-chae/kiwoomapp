@@ -13,6 +13,9 @@ KIWOOM_AK = os.getenv('KIWOOM_AK')
 SK_0130 = os.getenv('SK_0130')
 AK_0130 = os.getenv('AK_0130')
 
+SK_7942 = os.getenv('SK_7942')
+AK_7942 = os.getenv('AK_7942')
+
 key_9136 = {}
 key_9136['ACCT'] = '9136'
 key_9136['SK'] = KIWOOM_SK
@@ -24,12 +27,17 @@ key_0130['ACCT'] = '0130'
 key_0130['SK'] = SK_0130
 key_0130['AK'] = AK_0130
 
+key_7942 = {}
+key_7942['ACCT'] = '7942'
+key_7942['SK'] = SK_7942
+key_7942['AK'] = AK_7942
 
 
 def get_key_list():
 	key_list = {}
 	key_list[key_0130['ACCT']] = key_0130
 	key_list[key_9136['ACCT']] = key_9136
+	key_list[key_7942['ACCT']] = key_7942
 	return key_list
 
 
