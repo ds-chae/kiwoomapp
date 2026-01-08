@@ -624,6 +624,29 @@ async def root():
                 color: white;
                 padding: 30px;
                 text-align: center;
+                position: relative;
+            }}
+            .btn-stock {{
+                position: absolute;
+                top: 30px;
+                right: 30px;
+                background: rgba(255, 255, 255, 0.2);
+                color: white;
+                border: 2px solid rgba(255, 255, 255, 0.3);
+                padding: 10px 20px;
+                border-radius: 6px;
+                cursor: pointer;
+                font-size: 14px;
+                font-weight: 600;
+                text-decoration: none;
+                display: inline-block;
+                transition: all 0.3s;
+            }}
+            .btn-stock:hover {{
+                background: rgba(255, 255, 255, 0.3);
+                border-color: rgba(255, 255, 255, 0.5);
+                transform: translateY(-2px);
+                box-shadow: 0 4px 8px rgba(0,0,0,0.2);
             }}
             .content {{
                 padding: 30px;
@@ -744,6 +767,7 @@ async def root():
     <body>
         <div class="container">
             <div class="header">
+                <a href="/stock" class="btn-stock">Stock</a>
                 <h1>📊 Data Gather Service</h1>
                 <p>Stock Chart Data Collection System</p>
                 <a href="./charts" class="btn-charts">📈 View Charts</a>
