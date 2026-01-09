@@ -86,6 +86,7 @@ def get_bun_price(stk_cd, stk_nm, chart ):
 	return bun_price
 	# [2] -> R, [3] -> O
 
+
 # 주식분봉차트조회요청
 def fn_ka10080(token, data, cont_yn='N', next_key=''):
 	# 1. 요청할 API URL

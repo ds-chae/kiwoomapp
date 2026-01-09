@@ -16,7 +16,8 @@ from contextlib import asynccontextmanager
 import secrets
 import socket
 
-from ka10080 import get_bun_chart, get_bun_price, get_price_index
+from ka10080 import get_bun_chart, get_price_index
+from ka10081 import get_day_chart
 from ka10100 import get_stockname
 
 now = datetime.now()
@@ -452,13 +453,15 @@ def calculate_sell_price(MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk_nm):
                 return last_cl_price.get(stk_cd, 0)
 
         last_get_bun_time[stk_cd] = now
-        bun_chart = get_bun_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm)
-        bun_price = get_bun_price(stk_cd, stk_nm, bun_chart)
+        if not stk_cd in gap_prices:
+            gap_prices[stk_cd] = get_gap_price(MY_ACCESS_TOKEN, stk_cd)
+        gap_price = gap_prices[stk_cd]
         print('{} before get_low_after_high'.format(now))
+        bun_chart = get_bun_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm)
         lowest = get_low_after_high(bun_chart)
         print('{} get_low_after_high {} returns {}'.format(now, stk_nm, lowest))
         if lowest != 0 :
-            gap = float(bun_price['gap']) * 2
+            gap = float(gap_price['gap']) * 2
             cl_price = round_trunc(int(lowest + gap * sellgap))
             last_cl_price[stk_cd] = str(cl_price)
             return str(cl_price)
@@ -759,8 +762,10 @@ def cur_date():
 
 
 def buy_cl(now):
-    global order_count, interested_stocks, bun_prices, bun_charts
+    global order_count, interested_stocks, gap_prices, bun_charts
     global stored_jango_data, stored_miche_data, key_list
+
+    gap_prices = {} # clear on each call
 
     for ACCT, key in key_list.items():
         # Check auto sell enabled for this specific account
@@ -774,35 +779,32 @@ def buy_cl(now):
         MY_ACCESS_TOKEN = get_token(key['AK'], key['SK'])  # 접근토큰
         buy_cl_by_account(ACCT, MY_ACCESS_TOKEN)
 
+gap_prices = {}
 
 def buy_cl_by_account(ACCT, MY_ACCESS_TOKEN):
     global order_count, working_status
+    global gap_prices
 
     working_status = 'in buy_cl_by_account'
     for stk_cd in interested_stocks:
         int_stock = interested_stocks[stk_cd]
         btype = int_stock.get('btype', '')
         if btype == 'CL':
-            buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock)
+            if not stk_cd in gap_prices:
+                gap_prices[stk_cd] = get_gap_price(MY_ACCESS_TOKEN, stk_cd)
+
+            buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_prices[stk_cd])
     pass
 
 
-def check_bun_price(MY_ACCESS_TOKEN, stk_cd, stk_nm):
-    if not stk_cd in bun_charts:
-        print('{} getting bun_chart for {} {}'.format(now, stk_cd, stk_nm))
-        bun_charts[stk_cd] = get_bun_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm)
-    if not stk_cd in bun_prices:
-        print('{} getting bun_price for {} {} from bun_chart'.format(now, stk_cd, stk_nm))
-        bun_prices[stk_cd] = get_bun_price(stk_cd, stk_nm, bun_charts[stk_cd])
-
-
-def buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock):
+def buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
     global working_status, order_count, now
+    stk_nm = int_stock['stock_name']
+
     working_status = 'in buy_cl_stk_cd'
     ordered = order_count[ACCT]
     if stk_cd in ordered and ordered[stk_cd] >= 2:
         return
-    stk_nm = int_stock['stock_name']
     bamount = int(int_stock.get('bamount', '0'))
     if bamount <= 0 :
         return
@@ -836,18 +838,18 @@ def buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock):
     if ordered[stk_cd] >= 2:
         return
 
-    check_bun_price(MY_ACCESS_TOKEN, stk_cd, stk_nm)
-    print(bun_prices)
-    if not stk_cd in bun_prices:
+    if not stk_cd in gap_prices:
         print('getting bun_chart or bun_price for {} {} failed'.format(stk_cd, stk_nm));
         return
 
-    bun_price = bun_prices[stk_cd]
     price_index = get_price_index(int_stock['color'])
     stex = 'KRX'
     trde_tp = '0'
     if ordered[stk_cd] < 1 :
-        bp = bun_price['price'][price_index]
+        bp = gap_price['price'][price_index]
+        buy_rate = (float(gap_price.get('current_price', 0))-bp) / bp # 현재 가격과 매수 가격의 차이
+        if buy_rate >= 0.05 : # 매수 가격이랑 5%이상 차이가 난다면 매수 하지 않는다,
+            return
         ord_price = round_trunc(bp)
         ord_qty = str(bamount // ord_price)
         #ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trade_tp=trde_tp, cond_uv='')
@@ -857,10 +859,13 @@ def buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock):
         ordered[stk_cd] += 1
         print('price:{} current buy order for {} {} {} is {}'.format(ord_price, ACCT, stk_cd, stk_nm, ordered[stk_cd]))
     if ordered[stk_cd] < 2:
-        bp = bun_price['price'][price_index+1]
+        bp = gap_price['price'][price_index+1]
+        buy_rate = (float(gap_price.get('current_price', 0))-bp) / bp # 현재 가격과 매수 가격의 차이
+        if buy_rate >= 0.05 : # 매수 가격이랑 5%이상 차이가 난다면 매수 하지 않는다,
+            return
         ord_price = round_trunc(bp)
         ord_qty = str(bamount // ord_price)
-        #ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trade_tp=trde_tp, cond_uv='')
+        # ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trade_tp=trde_tp, cond_uv='')
         ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, ord_qty, str(ord_price), trde_tp=trde_tp, cond_uv='')
         print('2_buy_order_result: {}'.format(ret_status))
         test_ret_status(stk_cd, ret_status)
@@ -1060,18 +1065,6 @@ def fill_charts_for_CL(MY_ACCESS_TOKEN):
     except Exception as ex:
         print('806', ex)
         exit(0)
-
-
-def calculate_bun_prices(MY_ACCESS_TOKEN):
-    global bun_prices, bun_charts, interested_stocks
-    for stk_cd in interested_stocks:
-        if stk_cd in bun_prices:
-            continue
-        if stk_cd in bun_charts:
-            continue
-        chart = bun_charts[stk_cd]
-        bun_prices[stk_cd] = get_bun_price(chart)
-
 
 def save_auto_sell_to_json():
     """Save auto_sell_enabled to JSON file"""
@@ -2300,6 +2293,98 @@ async def delete_interested_stock_api(stock_code: str, proxy_path: str = "", tok
             return {"status": "error", "message": f"Stock code {stock_code} not found in interested list"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+def get_gap_price(token_for_api, stock_code):
+    try:
+        _day_chart = get_day_chart(token_for_api, stock_code)
+        day_data = _day_chart.get('stk_dt_pole_chart_qry', [])
+        # Get latest day's closing price
+        latest = day_data[0]  # Latest is first in response
+        cur_prc = latest.get('cur_prc', '0')
+        current_price = abs(int(cur_prc))
+    except Exception as e:
+        print(f"Error getting day chart for current price: {e}")
+
+    # Get last 16 days
+    high_16 = 0
+    high_index = 0
+    high_date = ''
+    if len(day_data) < 16 :
+        return {}
+
+    for data_idx in range(16) :
+        day = day_data[data_idx]
+        high_pric = int(day.get('high_pric', '0'))
+        if high_pric < 0:
+            high_pric = -high_pric
+        if high_pric > high_16:
+            high_16 = high_pric
+            high_index = data_idx
+            high_date = day['dt']
+
+    low_16 = float('inf')
+    last_16_days = day_data[high_index:high_index+16]
+    for day in last_16_days:
+        low_pric = int(day.get('low_pric', '0'))
+        if low_pric < 0:
+            low_pric = -low_pric
+        if low_pric < low_16:
+            low_16 = low_pric
+            low_date = day['dt']
+
+    # Calculate yellow line price: high - (high - low) * 4 / 10
+    gap = (high_16 - low_16) / 10
+    yellow_line_price = int(high_16 - gap * 4)
+
+    # Calculate gap rate: (current price - yellow price) / gap
+    gap_rate = ((current_price - yellow_line_price) / gap) * 100 if gap > 0 else 0
+
+    gap_price = {}
+    gap_price['high_16'] = high_16
+    gap_price['low_16'] = low_16
+    gap_price['yellow_line_price'] = yellow_line_price
+    gap_price['current_price'] = current_price
+    gap_price['gap'] = gap
+    gap_price['gap_rate'] = gap_rate
+    gap_price['high_date'] = high_date
+    gap_price['low_date'] = low_date
+    gap_price['price'] = [high_16 - gap * i for i in range(10)]
+
+    return gap_price
+
+
+@app.get("/api/stock-price-info/{stock_code}")
+@app.get("/stock/api/stock-price-info/{stock_code}")
+async def get_stock_price_info(stock_code: str, token: str = Cookie(None)):
+    """Get 16-day high/low, yellow line price, current price, and gap rate for a stock"""
+    # Check authentication
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+    
+    # Get current price from jango data
+    # Get token for API call
+    token_for_api = get_one_token()
+    gap_price = get_gap_price(token_for_api, stock_code)
+
+    return {
+        "status": "success",
+        "data": {
+            "stock_code": stock_code,
+            "high_16": gap_price['high_16'],
+            "low_16": gap_price['low_16'],
+            "yellow_line_price": gap_price['yellow_line_price'],
+            "current_price": gap_price['current_price'],
+            "gap": gap_price['gap'],
+            "gap_rate": gap_price['gap_rate'],
+            "high_date": gap_price['high_date'],
+            "low_date": gap_price['low_date'],
+        }
+    }
+
 
 @app.get("/health")
 async def health():

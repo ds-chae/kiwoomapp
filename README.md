@@ -266,3 +266,44 @@ python datagather.py
 20251228.
 let name the analysis as bounce analysis. modify datagather.py. make a csv file that contains bounce analysis dataset. the dataset contains 16 days peak date, high price, low price, its minute bounce low price, bounce high price, daily moving average values at daily paek date, trading amount of peak date. peak dates occur several times in one daily chart. as many peak date occur when 16 days window move. consider the peak date when trde_prica is greater then 150000. this csv building is done when user click 'Make CSV'. add 'Make CSV' button to /stock/data page.
 
+during merge minutes chart data and daily chart data, overwrite existing same datetime record by new downloaded chart data.
+
+when make csv file, follow this instruction.
+trace daily chart from old to new. test if that day's high price is 16 days highest price.
+if not highest, continue to next day.
+if highest, then test if that day's trading amount is larger then 150000.
+if not larger, continue to next day. if yes, then test bounce from that day using minutes chart. 
+if that date do not have corresponding minutes chart data including that data and consecutive 4 days, continue to next day.
+before test bounce get the difference between low and high price
+during 16 days to that day. calculatel the difference high minus low as dif16. name high price as h16, low price as l16.
+calculate (high - dif16/2) as touch_price. calculate (high-low)/5 as gap, then during 2 days after that day trace minutes chart to find low price go under touch_price.
+if low price do not go under touch_price in 2 days after high date, do not record this high date and continue to next day.
+if low price go down under touch_price in 2 days, call that low price as low_bounce. trace next minutes chart for 3 days that consequent high price go over (low_bounce + gap)
+and the high price go over touch_price. if the two go over conditions are met, tag that date as success, otherwise false.
+now save the stock code, success/failure, highest date, trading amount, gap/dif16,
+5 days moving average closing price of daily chart as ma5, 
+10 days moving average closing price of daily chart as ma10,
+20 days moving average closing price of daily chart as ma20, 
+60 days moving average closing price of daily chart as ma60, 
+120 days moving average closing price of daily chart as ma120.
+save ma5 / ma10 as ma5_10,
+save ma10 / ma20 as ma10_20,
+save ma20 / ma60 as ma20_60,
+save ma60 / ma120 as ma60_120.
+
+
+in making csv, do not merge all daily chart into one daily chart for one stock. just make csv per each daily chart, each stock code. do not merge all minutes into one minutes chart. use minutes chart with corresponding date part in file name.
+
+to make csv, days count is not calendar days, but count of data items. so, corresponding minutes chart data shod get from those date value in data. not in calendar days count.
+
+
+add one button "Look CSV" in /stock/data page. when user click that button, show a page simillar to charts page. the origianl charts page display all stocks chart under /char_data/day directory. but this look page shows csv file list to select. and when user select a csv file, it list stock code and name at left pane. then show chart at right pane. on right page, display daily chart in upper area, display minutes chart at lower page. as the csv file contain daily chart file name and minutes chart file name. thus the backend should read those files. in chart area draw a vertical lie at left of highest date in daily chart. and display S on success, F on failure at the left of the vertical line. in minutes chart fill the background of minutes chart that have highest date date value in cntr_tm. one day amount of minutes chart. on success background is light yellow, on failure light blue. do not add other actions not provided.
+
+modify autotr.py. save jango data when its content is changed. load jango data at initial startup. when jango data change, test if existing holdings are removed, that is sold. if sold, then change btype of that stock code in interested_stocks to 'SCL' if its previous btype is 'CL'. when change btype to 'SCL', cancel buy orders of that stock code.
+
+when compare jango data, do not compare deeply. compare stock code and amount are enough. do not save price, profit rate, etc.
+
+previoud jango should be updated when jango is changed.
+
+previous_jango_data_simplified is initialized at startup and dail_work iis called after that. why test if previous_jango_data_simplified is none every time?
+

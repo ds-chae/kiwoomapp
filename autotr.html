@@ -549,6 +549,85 @@
 			.miche-row.selected:hover {
 				background-color: #bbdefb;
 			}
+			/* Stock Price Info Dialog */
+			.stock-price-dialog {
+				display: none;
+				position: fixed;
+				z-index: 10000;
+				left: 0;
+				top: 0;
+				width: 100%;
+				height: 100%;
+				background-color: rgba(0, 0, 0, 0.5);
+				overflow: auto;
+			}
+			.stock-price-dialog.show {
+				display: flex;
+				align-items: center;
+				justify-content: center;
+			}
+			.stock-price-dialog-content {
+				background-color: #fff;
+				margin: 15% auto;
+				padding: 20px;
+				border: 1px solid #888;
+				border-radius: 8px;
+				width: 90%;
+				max-width: 500px;
+				box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+			}
+			.stock-price-dialog-header {
+				display: flex;
+				justify-content: space-between;
+				align-items: center;
+				margin-bottom: 20px;
+				padding-bottom: 10px;
+				border-bottom: 2px solid #667eea;
+			}
+			.stock-price-dialog-header h2 {
+				margin: 0;
+				color: #333;
+				font-size: 20px;
+			}
+			.stock-price-dialog-close {
+				color: #aaa;
+				font-size: 28px;
+				font-weight: bold;
+				cursor: pointer;
+				line-height: 1;
+			}
+			.stock-price-dialog-close:hover,
+			.stock-price-dialog-close:focus {
+				color: #000;
+			}
+			.stock-price-info-item {
+				display: flex;
+				justify-content: space-between;
+				padding: 10px 0;
+				border-bottom: 1px solid #eee;
+			}
+			.stock-price-info-item:last-child {
+				border-bottom: none;
+			}
+			.stock-price-info-label {
+				font-weight: 600;
+				color: #555;
+			}
+			.stock-price-info-value {
+				color: #333;
+				font-size: 16px;
+			}
+			.stock-price-dialog-loading {
+				text-align: center;
+				padding: 20px;
+				color: #666;
+			}
+			.stock-price-dialog-error {
+				text-align: center;
+				padding: 20px;
+				color: #e74c3c;
+			}
+
 			#miche-container {
 				overflow-x: auto;
 				-webkit-overflow-scrolling: touch;
@@ -2392,6 +2471,11 @@
 			
 			// Scroll to interested stocks section
 			document.getElementById('interested-stocks-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
+			
+			// Show dialog if btype is 'CL'
+			if (stockBtype === 'CL') {
+				showStockPriceDialog(stockCode, stockName);
+			}
 		}
 		
 		function updateInterestedStockBtype(stockCode, btype) {
@@ -2716,6 +2800,94 @@
 		loadAccountCheckboxes();
 		// Update mobile display after initial load
 		setTimeout(updateMobileDisplay, 500);
+		
+		function showStockPriceDialog(stockCode, stockName) {
+			const dialog = document.getElementById('stock-price-dialog');
+			const dialogTitle = document.getElementById('stock-price-dialog-title');
+			const dialogBody = document.getElementById('stock-price-dialog-body');
+			
+			// Set title
+			dialogTitle.textContent = `${stockName} (${stockCode}) - Price Information`;
+			
+			// Show dialog
+			dialog.classList.add('show');
+			
+			// Show loading
+			dialogBody.innerHTML = '<div class="stock-price-dialog-loading">Loading...</div>';
+			
+			// Fetch data
+			const apiPath = window.location.pathname.includes('/stock') ? './api/stock-price-info/' : '/api/stock-price-info/';
+			fetch(apiPath + stockCode, {
+				credentials: 'same-origin'
+			})
+			.then(response => response.json())
+			.then(result => {
+				if (result.status === 'success' && result.data) {
+					const data = result.data;
+					const html = `
+						<div class="stock-price-info-item">
+							<span class="stock-price-info-label">16-Day Highest Price:</span>
+							<span class="stock-price-info-value">${data.high_16.toLocaleString()}</span>
+						</div>
+						<div class="stock-price-info-item">
+							<span class="stock-price-info-label">16-Day Lowest Price:</span>
+							<span class="stock-price-info-value">${data.low_16.toLocaleString()}</span>
+						</div>
+						<div class="stock-price-info-item">
+							<span class="stock-price-info-label">Yellow Line Price:</span>
+							<span class="stock-price-info-value">${data.yellow_line_price.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+						</div>
+						<div class="stock-price-info-item">
+							<span class="stock-price-info-label">Current Price:</span>
+							<span class="stock-price-info-value">${data.current_price.toLocaleString()}</span>
+						</div>
+						<div class="stock-price-info-item">
+							<span class="stock-price-info-label">Gap:</span>
+							<span class="stock-price-info-value">${data.gap.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+						</div>
+						<div class="stock-price-info-item">
+							<span class="stock-price-info-label">Gap Rate:</span>
+							<span class="stock-price-info-value">${data.gap_rate.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+						</div>
+					`;
+					dialogBody.innerHTML = html;
+				} else {
+					dialogBody.innerHTML = `<div class="stock-price-dialog-error">Error: ${result.message || 'Unknown error'}</div>`;
+				}
+			})
+			.catch(error => {
+				console.error('Error fetching stock price info:', error);
+				dialogBody.innerHTML = `<div class="stock-price-dialog-error">Error: ${error.message}</div>`;
+			});
+		}
+		
+		function closeStockPriceDialog() {
+			const dialog = document.getElementById('stock-price-dialog');
+			dialog.classList.remove('show');
+		}
+		
+		// Close dialog when clicking outside
+		window.onclick = function(event) {
+			const dialog = document.getElementById('stock-price-dialog');
+			if (event.target === dialog) {
+				closeStockPriceDialog();
+			}
+		}
+
 		</script>
+	
+		<!-- Stock Price Info Dialog -->
+		<div id="stock-price-dialog" class="stock-price-dialog">
+			<div class="stock-price-dialog-content">
+				<div class="stock-price-dialog-header">
+					<h2 id="stock-price-dialog-title">Stock Price Information</h2>
+					<span class="stock-price-dialog-close" onclick="closeStockPriceDialog()">&times;</span>
+				</div>
+				<div id="stock-price-dialog-body">
+					<div class="stock-price-dialog-loading">Loading...</div>
+				</div>
+			</div>
+		</div>
+
 	</body>
 	</html>
