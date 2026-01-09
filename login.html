@@ -90,7 +90,7 @@
 	</head>
 	<body>
 		<div class="login-container">
-			<h1>Login</h1>
+			<h1>Login Stock</h1>
 			<div id="error-message" class="error-message"></div>
 			<form id="login-form">
 				<div class="form-group">
@@ -135,24 +135,20 @@
 					const result = await response.json();
 					
 					if (result.status === 'success' && result.token) {
-						// Cookie is set server-side, but also set client-side as backup
-						// This ensures compatibility across all browsers including mobile
-						const cookieValue = `token=${result.token}; path=/; max-age=${24 * 60 * 60}; SameSite=Lax`;
-						document.cookie = cookieValue;
-						
-						// Verify cookie was set
-						const cookies = document.cookie.split(';');
-						const hasToken = cookies.some(c => c.trim().startsWith('token='));
-						
-						if (hasToken) {
-							// Use replace instead of href to prevent back button issues
-							window.location.replace('/stock');
-						} else {
-							// Retry after a short delay if cookie not set
-							setTimeout(() => {
-								window.location.replace('/stock');
-							}, 500);
+						// Cookie should be set server-side via Set-Cookie header
+						// Also set client-side as backup for mobile compatibility
+						// Note: Some mobile browsers may not show cookie immediately in document.cookie
+						// but it will still be sent with requests
+						try {
+							const cookieValue = `token=${result.token}; path=/; max-age=${24 * 60 * 60}; SameSite=Lax`;
+							document.cookie = cookieValue;
+						} catch (e) {
+							console.log('Cookie setting error (may be normal on some browsers):', e);
 						}
+						
+						// Redirect immediately - cookie is set server-side via Set-Cookie header
+						// Even if document.cookie appears empty, the cookie will be sent with the next request
+						window.location.replace('/stock');
 					} else {
 						errorDiv.textContent = result.message || 'Login failed';
 						errorDiv.classList.add('show');

@@ -1583,11 +1583,13 @@ def create_token() -> str:
         'expiry': expiry,
         'created': datetime.now()
     }
+    print('token={}'.format(token))
     return token
 
 def verify_token(token: str) -> bool:
     """Verify if a token is valid"""
     if not token or token not in active_tokens:
+        print('invalid token={}'.format(token))
         return False
     
     token_data = active_tokens[token]
@@ -1654,11 +1656,22 @@ async def login(request: dict, proxy_path: str = ""):
     
     if username == LOGIN_USERNAME and password == LOGIN_PASSWORD:
         token = create_token()
-        return {
+        # Set cookie server-side using the SAME token as JSON response
+        # This ensures both cookie and JSON have the same token value
+        response = JSONResponse(content={
             "status": "success",
             "message": "Login successful",
             "token": token
-        }
+        })
+        response.set_cookie(
+            key="token",
+            value=token,  # Use the SAME token
+            path="/",
+            max_age=24 * 60 * 60,  # 24 hours
+            httponly=False,  # Allow JavaScript access
+            samesite="lax"  # Better mobile compatibility
+        )
+        return response
     else:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -2129,12 +2142,22 @@ def  color_kor_to_eng(color):
     return color
 
 
+def clear_ordered_count(stk_cd):
+    for key, value in key_list.items():
+        ACCT = value['ACCT']
+        ordered = order_count[ACCT]
+        ordered[stk_cd] = 0
+
+
 def set_interested_rate(stock_code, stock_name='', color=None,
                     btype='', bamount='0',
                     stime='', yyyymmdd='', sellprice='0',
                     sellrate='0', sellgap='0'):
     global interested_stocks
     try:
+        need_cancel_old_buy = False
+        need_clear_ordered_count = False
+
         if color and color == 'DELETE':
             if stock_code in interested_stocks:
                 del interested_stocks[stock_code]
@@ -2144,10 +2167,12 @@ def set_interested_rate(stock_code, stock_name='', color=None,
                 stock_name = get_stockname(stock_code)
 
             # Add or update the stock in interested list
+            old_btype = ''
             if stock_code not in interested_stocks:
                 stock = {}
             else:
                 stock = interested_stocks[stock_code]
+                old_btype = stock.get('btype', '')
 
             stock['stock_name'] = stock_name.strip()
             if color :
@@ -2155,6 +2180,11 @@ def set_interested_rate(stock_code, stock_name='', color=None,
                 stock['color'] = color.strip()
 
             if btype :
+                if btype == 'CL':
+                    need_clear_ordered_count = True
+                else: # btype != 'CL'
+                    if old_btype == 'CL':
+                        need_cancel_old_buy = True
                 stock['btype'] = btype.strip()
 
             if bamount is not None:
@@ -2177,8 +2207,13 @@ def set_interested_rate(stock_code, stock_name='', color=None,
                 stock['clprice'] = '0'
 
             interested_stocks[stock_code] = stock
+            if need_cancel_old_buy :
+                # Cancel buy orders for this stock
+                cancel_related_buy_order(stock_code)
+            if need_clear_ordered_count :
+                clear_ordered_count(stock_code)
 
-    # Save to file
+        # Save to file
         if save_interested_stocks_to_json():
             return {"status": "success", "message": f"Stock {stock_code} added/updated in interested list",
                 "data": interested_stocks}
