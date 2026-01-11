@@ -534,7 +534,9 @@ jango_token = {}
 
 def sell_jango(jango, market):
     global auto_sell_enabled, current_status, jango_token, now, working_status
-
+    global new_day
+    if not new_day:
+        return
     working_status = 'begin sell_jango()'
     for ACCT, j in jango.items():
         try:
@@ -783,7 +785,7 @@ gap_prices = {}
 
 def buy_cl_by_account(ACCT, MY_ACCESS_TOKEN):
     global order_count, working_status
-    global gap_prices
+    global gap_prices, new_day
 
     working_status = 'in buy_cl_by_account'
     for stk_cd in interested_stocks:
@@ -794,6 +796,8 @@ def buy_cl_by_account(ACCT, MY_ACCESS_TOKEN):
                 gap_prices[stk_cd] = get_gap_price(MY_ACCESS_TOKEN, stk_cd)
 
             buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_prices[stk_cd])
+        if not new_day:
+            break
     pass
 
 
@@ -849,28 +853,30 @@ def buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
         bp = gap_price['price'][price_index]
         buy_rate = (float(gap_price.get('current_price', 0))-bp) / bp # 현재 가격과 매수 가격의 차이
         if buy_rate >= 0.05 : # 매수 가격이랑 5%이상 차이가 난다면 매수 하지 않는다,
-            return
-        ord_price = round_trunc(bp)
-        ord_qty = str(bamount // ord_price)
-        #ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trade_tp=trde_tp, cond_uv='')
-        ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, ord_qty, str(ord_price), trde_tp=trde_tp, cond_uv='')
-        print('1_buy_order_result: {}'.format(ret_status))
-        test_ret_status(stk_cd, ret_status)
-        ordered[stk_cd] += 1
-        print('price:{} current buy order for {} {} {} is {}'.format(ord_price, ACCT, stk_cd, stk_nm, ordered[stk_cd]))
+            print('{} gap over skip for {} {} {} {}'.format(now, stk_cd, stk_nm, bp, buy_rate))
+        else:
+            ord_price = round_trunc(bp)
+            ord_qty = str(bamount // ord_price)
+            #ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trade_tp=trde_tp, cond_uv='')
+            ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, ord_qty, str(ord_price), trde_tp=trde_tp, cond_uv='')
+            print('1_buy_order_result: {}'.format(ret_status))
+            test_ret_status(stk_cd, ret_status)
+            ordered[stk_cd] += 1
+            print('price:{} current buy order for {} {} {} is {}'.format(ord_price, ACCT, stk_cd, stk_nm, ordered[stk_cd]))
     if ordered[stk_cd] < 2:
         bp = gap_price['price'][price_index+1]
         buy_rate = (float(gap_price.get('current_price', 0))-bp) / bp # 현재 가격과 매수 가격의 차이
         if buy_rate >= 0.05 : # 매수 가격이랑 5%이상 차이가 난다면 매수 하지 않는다,
-            return
-        ord_price = round_trunc(bp)
-        ord_qty = str(bamount // ord_price)
-        # ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trade_tp=trde_tp, cond_uv='')
-        ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, ord_qty, str(ord_price), trde_tp=trde_tp, cond_uv='')
-        print('2_buy_order_result: {}'.format(ret_status))
-        test_ret_status(stk_cd, ret_status)
-        ordered[stk_cd] += 1
-        print('price:{} current buy order for {} {} {} is {}'.format(ord_price, ACCT, stk_cd, stk_nm, ordered[stk_cd]))
+            print('{} gap over skip for {} {} {} {}'.format(now, stk_cd, stk_nm, bp, buy_rate))
+        else:
+            ord_price = round_trunc(bp)
+            ord_qty = str(bamount // ord_price)
+            # ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trade_tp=trde_tp, cond_uv='')
+            ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, ord_qty, str(ord_price), trde_tp=trde_tp, cond_uv='')
+            print('2_buy_order_result: {}'.format(ret_status))
+            test_ret_status(stk_cd, ret_status)
+            ordered[stk_cd] += 1
+            print('price:{} current buy order for {} {} {} is {}'.format(ord_price, ACCT, stk_cd, stk_nm, ordered[stk_cd]))
 
     pass
 
