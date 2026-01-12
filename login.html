@@ -140,7 +140,7 @@
 						// Note: Some mobile browsers may not show cookie immediately in document.cookie
 						// but it will still be sent with requests
 						try {
-							const cookieValue = `token=${result.token}; path=/; max-age=${24 * 60 * 60}; SameSite=Lax`;
+							const cookieValue = `stoken=${result.token}; path=/; max-age=${24 * 60 * 60}; SameSite=Lax`;
 							document.cookie = cookieValue;
 						} catch (e) {
 							console.log('Cookie setting error (may be normal on some browsers):', e);

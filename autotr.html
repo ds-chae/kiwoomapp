@@ -549,6 +549,112 @@
 			.miche-row.selected:hover {
 				background-color: #bbdefb;
 			}
+			/* Sell Price Edit Area */
+			.sell-price-edit-area {
+				display: none;
+				background-color: #f9f9f9;
+				border-top: 2px solid #667eea;
+				padding: 15px;
+			}
+			.sell-price-edit-area.show {
+				display: table-row;
+			}
+			.sell-price-edit-area td {
+				padding: 10px;
+				border-top: 1px solid #ddd;
+			}
+			.sell-price-edit-form {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 15px;
+				align-items: center;
+			}
+			.sell-price-edit-form label {
+				font-weight: 600;
+				color: #555;
+				margin-right: 5px;
+			}
+			.sell-price-edit-form input {
+				padding: 6px 10px;
+				border: 1px solid #ccc;
+				border-radius: 4px;
+				font-size: 14px;
+				width: 120px;
+				text-align: right;
+			}
+			.sell-price-edit-form input:focus {
+				outline: none;
+				border-color: #667eea;
+			}
+			.sell-price-edit-buttons {
+				display: flex;
+				gap: 10px;
+			}
+			.btn-apply-sell-price {
+				background: #667eea;
+				color: white;
+				border: none;
+				padding: 6px 16px;
+				border-radius: 4px;
+				cursor: pointer;
+				font-size: 14px;
+				font-weight: 600;
+				transition: background-color 0.2s;
+			}
+			.btn-apply-sell-price:hover {
+				background: #5568d3;
+			}
+			.btn-cancel-sell-price {
+				background: #95a5a6;
+				color: white;
+				border: none;
+				padding: 6px 16px;
+				border-radius: 4px;
+				cursor: pointer;
+				font-size: 14px;
+				font-weight: 600;
+				transition: background-color 0.2s;
+			}
+			.btn-cancel-sell-price:hover {
+				background: #7f8c8d;
+			}
+			@media (max-width: 768px) {
+				.sell-price-edit-form {
+					flex-direction: row;
+					flex-wrap: nowrap;
+					gap: 8px;
+					align-items: center;
+				}
+				.sell-price-edit-form > div {
+					display: flex;
+					flex-direction: column;
+					align-items: flex-start;
+					gap: 2px;
+				}
+				.sell-price-edit-form label {
+					font-size: 11px;
+					margin-right: 0;
+					white-space: nowrap;
+				}
+				.sell-price-edit-form input {
+					width: 60px;
+					min-width: 60px;
+					max-width: 60px;
+					padding: 4px 6px;
+					font-size: 12px;
+					text-align: right;
+				}
+				.sell-price-edit-buttons {
+					gap: 6px;
+				}
+				.btn-apply-sell-price,
+				.btn-cancel-sell-price {
+					padding: 4px 10px;
+					font-size: 12px;
+					white-space: nowrap;
+				}
+			}
+
 			/* Stock Price Info Dialog */
 			.stock-price-dialog {
 				display: none;
@@ -1099,6 +1205,149 @@
 			document.getElementById('interested-stock-gaprate-input').value = '';
 			
 			// Scroll to update section
+			
+			// Show/hide input area for editing sell price/rate/sellgap
+			// Remove any existing edit areas
+			document.querySelectorAll('.sell-price-edit-area').forEach(area => {
+				area.remove();
+			});
+			
+			// Check if edit area already exists for this row
+			const existingEditArea = rowElement.nextElementSibling;
+			if (existingEditArea && existingEditArea.classList.contains('sell-price-edit-area')) {
+				// Toggle: if already showing, hide it
+				existingEditArea.remove();
+			} else {
+				// Create new edit area
+				const editArea = document.createElement('tr');
+				editArea.className = 'sell-price-edit-area show';
+				
+				// Get sellgap, sellrate, and bamount from interested_stocks if available
+				let sellgap = '';
+				let sellrateFromAPI = '';
+				let bamount = '';
+				fetch('./api/interested-stocks?t=' + Date.now())
+					.then(response => response.json())
+					.then(result => {
+						if (result.status === 'success' && result.data && result.data[stockCode]) {
+							sellgap = result.data[stockCode].sellgap || '';
+							sellrateFromAPI = result.data[stockCode].sellrate || '';
+							bamount = result.data[stockCode].bamount || '';
+						}
+						
+						// Use sellrate from API if available, otherwise use from row attribute
+						const finalSellRate = sellrateFromAPI || sellRate || '';
+						
+						// Create edit form
+						editArea.innerHTML = `
+							<td colspan="7">
+								<div class="sell-price-edit-form">
+									<div>
+										<label>Sell Price:</label>
+										<input type="number" id="edit-sell-price-${stockCode}" placeholder="Price" step="0.01" value="${sellPrice || ''}">
+									</div>
+									<div>
+										<label>Sell Rate (%):</label>
+										<input type="number" id="edit-sell-rate-${stockCode}" placeholder="Rate" step="0.01" value="${finalSellRate || ''}">
+									</div>
+									<div>
+										<label>Sell Gap:</label>
+										<input type="number" id="edit-sell-gap-${stockCode}" placeholder="Gap" step="0.01" value="${sellgap || ''}">
+									</div>
+									<div>
+										<label>BAmount:</label>
+										<input type="number" id="edit-bamount-${stockCode}" placeholder="BAmount" step="1" value="${bamount || ''}">
+									</div>
+									<div class="sell-price-edit-buttons">
+										<button class="btn-apply-sell-price" onclick="applySellPriceEdit('${stockCode}', '${stockName}')">Apply</button>
+										<button class="btn-cancel-sell-price" onclick="cancelSellPriceEdit('${stockCode}')">Cancel</button>
+									</div>
+								</div>
+							</td>
+						`;
+						
+						// Insert after the clicked row
+						rowElement.parentNode.insertBefore(editArea, rowElement.nextSibling);
+						
+						// Add select-all on click for input fields
+						const priceInput = document.getElementById(`edit-sell-price-${stockCode}`);
+						const rateInput = document.getElementById(`edit-sell-rate-${stockCode}`);
+						const gapInput = document.getElementById(`edit-sell-gap-${stockCode}`);
+						const bamountInput = document.getElementById(`edit-bamount-${stockCode}`);
+						
+						if (priceInput) {
+							priceInput.addEventListener('click', function() { this.select(); });
+							priceInput.addEventListener('focus', function() { this.select(); });
+						}
+						if (rateInput) {
+							rateInput.addEventListener('click', function() { this.select(); });
+							rateInput.addEventListener('focus', function() { this.select(); });
+						}
+						if (gapInput) {
+							gapInput.addEventListener('click', function() { this.select(); });
+							gapInput.addEventListener('focus', function() { this.select(); });
+						}
+						if (bamountInput) {
+							bamountInput.addEventListener('click', function() { this.select(); });
+							bamountInput.addEventListener('focus', function() { this.select(); });
+						}
+					})
+					.catch(error => {
+						console.error('Error fetching sellgap and sellrate:', error);
+						// Still create edit area without sellgap and sellrate from API
+						// Use sellRate from row attribute as fallback
+						editArea.innerHTML = `
+							<td colspan="7">
+								<div class="sell-price-edit-form">
+									<div>
+										<label>Sell Price:</label>
+										<input type="number" id="edit-sell-price-${stockCode}" placeholder="Price" step="0.01" value="${sellPrice || ''}">
+									</div>
+									<div>
+										<label>Sell Rate (%):</label>
+										<input type="number" id="edit-sell-rate-${stockCode}" placeholder="Rate" step="0.01" value="${sellRate || ''}">
+									</div>
+									<div>
+										<label>Sell Gap:</label>
+										<input type="number" id="edit-sell-gap-${stockCode}" placeholder="Gap" step="0.01" value="">
+									</div>
+									<div>
+										<label>BAmount:</label>
+										<input type="number" id="edit-bamount-${stockCode}" placeholder="BAmount" step="1" value="">
+									</div>
+									<div class="sell-price-edit-buttons">
+										<button class="btn-apply-sell-price" onclick="applySellPriceEdit('${stockCode}', '${stockName}')">Apply</button>
+										<button class="btn-cancel-sell-price" onclick="cancelSellPriceEdit('${stockCode}')">Cancel</button>
+									</div>
+								</div>
+							</td>
+						`;
+						rowElement.parentNode.insertBefore(editArea, rowElement.nextSibling);
+						
+						// Add select-all on click for input fields
+						const priceInput = document.getElementById(`edit-sell-price-${stockCode}`);
+						const rateInput = document.getElementById(`edit-sell-rate-${stockCode}`);
+						const gapInput = document.getElementById(`edit-sell-gap-${stockCode}`);
+						const bamountInput = document.getElementById(`edit-bamount-${stockCode}`);
+						
+						if (priceInput) {
+							priceInput.addEventListener('click', function() { this.select(); });
+							priceInput.addEventListener('focus', function() { this.select(); });
+						}
+						if (rateInput) {
+							rateInput.addEventListener('click', function() { this.select(); });
+							rateInput.addEventListener('focus', function() { this.select(); });
+						}
+						if (gapInput) {
+							gapInput.addEventListener('click', function() { this.select(); });
+							gapInput.addEventListener('focus', function() { this.select(); });
+						}
+						if (bamountInput) {
+							bamountInput.addEventListener('click', function() { this.select(); });
+							bamountInput.addEventListener('focus', function() { this.select(); });
+						}
+					});
+			}
 		}
 		
 		function deleteRowSellPrice(stockCode, stockName) {
@@ -1324,10 +1573,20 @@
 
 							// Update Rows
 							const tbody = group.querySelector('tbody');
-							const existingRows = Array.from(tbody.rows);
+							// Get existing rows, but exclude edit areas (they don't have data-row-id)
+							const existingRows = Array.from(tbody.rows).filter(r => r.getAttribute('data-row-id') && !r.classList.contains('sell-price-edit-area'));
 							const rowMap = new Map();
 							existingRows.forEach(r => rowMap.set(r.getAttribute('data-row-id'), r));
 							const processedIds = new Set();
+							
+							// Map to track edit areas: rowId -> editArea element
+							const editAreaMap = new Map();
+							existingRows.forEach(r => {
+								const nextSibling = r.nextElementSibling;
+								if (nextSibling && nextSibling.classList.contains('sell-price-edit-area')) {
+									editAreaMap.set(r.getAttribute('data-row-id'), nextSibling);
+								}
+							});
 							
 							// Sort stocks ? Logic just iterates data order.
 							
@@ -1358,10 +1617,25 @@
 								
 								let row = rowMap.get(rowId);
 								if (row) {
+									// Check if there's an edit area after this row - preserve it
+									const editArea = editAreaMap.get(rowId);
+									
 									// Update existing row if content changed
-									// Comparing innerHTML might be expensive but robust.
-									// Or just set it.
-									if (row.innerHTML !== cellContent) {
+									// Instead of replacing innerHTML, update cells individually to preserve edit area
+									const cells = row.querySelectorAll('td');
+									if (cells.length >= 6) {
+										// Update cells individually
+										if (cells[0].innerHTML !== `<strong>${item.stock_code}</strong>`) cells[0].innerHTML = `<strong>${item.stock_code}</strong>`;
+										if (cells[1].textContent !== item.stock_name) cells[1].textContent = item.stock_name;
+										if (cells[2].textContent !== `${item.tradeable_qty} / ${rmndQty}`) cells[2].textContent = `${item.tradeable_qty} / ${rmndQty}`;
+										if (cells[3].textContent !== item.avg_buy_price) cells[3].textContent = item.avg_buy_price;
+										if (cells[4].className !== profitClass || cells[4].textContent !== item.profit_rate) {
+											cells[4].className = profitClass;
+											cells[4].textContent = item.profit_rate;
+										}
+										if (cells[5].textContent !== presetPrcRate) cells[5].textContent = presetPrcRate;
+									} else {
+										// Fallback: if cell count doesn't match, update innerHTML
 										row.innerHTML = cellContent;
 									}
 									// Update attributes always to be safe or check them
@@ -1371,6 +1645,16 @@
 									// Always set data-avg-buy-price to ensure it's present
 									row.setAttribute('data-avg-buy-price', item.avg_buy_price || '');
 									// onclick persists
+									
+									// Restore edit area if it existed
+									if (editArea && editArea.parentNode !== tbody) {
+										// Edit area was removed, re-insert it
+										row.parentNode.insertBefore(editArea, row.nextSibling);
+									} else if (editArea && editArea.nextElementSibling !== row && editArea.previousElementSibling !== row) {
+										// Edit area exists but is in wrong position, move it
+										editArea.remove();
+										row.parentNode.insertBefore(editArea, row.nextSibling);
+									}
 								} else {
 									// Create new row
 									row = document.createElement('tr');
@@ -1388,7 +1672,14 @@
 							
 							// Remove Deleted Rows
 							for (const [id, r] of rowMap) {
-								if (!processedIds.has(id)) r.remove();
+								if (!processedIds.has(id)) {
+									// Also remove any edit area that follows this row
+									const nextSibling = r.nextElementSibling;
+									if (nextSibling && nextSibling.classList.contains('sell-price-edit-area')) {
+										nextSibling.remove();
+									}
+									r.remove();
+								}
 							}
 						}
 					}
@@ -1478,7 +1769,7 @@
 			.then(response => response.json())
 			.then(result => {
 				// Clear cookie and redirect to login
-				document.cookie = 'token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+				document.cookie = 'stoken=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
 				const currentPath = window.location.pathname;
 				if (currentPath.includes('/stock')) {
 					window.location.href = '/stock/login';
@@ -1489,7 +1780,7 @@
 			.catch(error => {
 				console.error('Logout error:', error);
 				// Still redirect even if API call fails
-				document.cookie = 'token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+				document.cookie = 'stoken=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
 				const currentPath = window.location.pathname;
 				if (currentPath.includes('/stock')) {
 					window.location.href = '/stock/login';
@@ -1509,7 +1800,7 @@
 			.then(response => response.json())
 			.then(result => {
 				// Clear cookie and redirect to login
-				document.cookie = 'token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+				document.cookie = 'stoken=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
 				const currentPath = window.location.pathname;
 				if (currentPath.includes('/stock')) {
 					window.location.href = '/stock/login';
@@ -1520,7 +1811,7 @@
 			.catch(error => {
 				console.error('Logout error:', error);
 				// Still redirect even if API call fails
-				document.cookie = 'token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+				document.cookie = 'stoken=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
 				const currentPath = window.location.pathname;
 				if (currentPath.includes('/stock')) {
 					window.location.href = '/stock/login';
@@ -2094,6 +2385,149 @@
 			document.getElementById('interested-stock-gaprate-input').value = '';
 			
 			// Scroll to update section
+			
+			// Show/hide input area for editing sell price/rate/sellgap
+			// Remove any existing edit areas
+			document.querySelectorAll('.sell-price-edit-area').forEach(area => {
+				area.remove();
+			});
+			
+			// Check if edit area already exists for this row
+			const existingEditArea = rowElement.nextElementSibling;
+			if (existingEditArea && existingEditArea.classList.contains('sell-price-edit-area')) {
+				// Toggle: if already showing, hide it
+				existingEditArea.remove();
+			} else {
+				// Create new edit area
+				const editArea = document.createElement('tr');
+				editArea.className = 'sell-price-edit-area show';
+				
+				// Get sellgap, sellrate, and bamount from interested_stocks if available
+				let sellgap = '';
+				let sellrateFromAPI = '';
+				let bamount = '';
+				fetch('./api/interested-stocks?t=' + Date.now())
+					.then(response => response.json())
+					.then(result => {
+						if (result.status === 'success' && result.data && result.data[stockCode]) {
+							sellgap = result.data[stockCode].sellgap || '';
+							sellrateFromAPI = result.data[stockCode].sellrate || '';
+							bamount = result.data[stockCode].bamount || '';
+						}
+						
+						// Use sellrate from API if available, otherwise use from row attribute
+						const finalSellRate = sellrateFromAPI || sellRate || '';
+						
+						// Create edit form
+						editArea.innerHTML = `
+							<td colspan="7">
+								<div class="sell-price-edit-form">
+									<div>
+										<label>Sell Price:</label>
+										<input type="number" id="edit-sell-price-${stockCode}" placeholder="Price" step="0.01" value="${sellPrice || ''}">
+									</div>
+									<div>
+										<label>Sell Rate (%):</label>
+										<input type="number" id="edit-sell-rate-${stockCode}" placeholder="Rate" step="0.01" value="${finalSellRate || ''}">
+									</div>
+									<div>
+										<label>Sell Gap:</label>
+										<input type="number" id="edit-sell-gap-${stockCode}" placeholder="Gap" step="0.01" value="${sellgap || ''}">
+									</div>
+									<div>
+										<label>BAmount:</label>
+										<input type="number" id="edit-bamount-${stockCode}" placeholder="BAmount" step="1" value="${bamount || ''}">
+									</div>
+									<div class="sell-price-edit-buttons">
+										<button class="btn-apply-sell-price" onclick="applySellPriceEdit('${stockCode}', '${stockName}')">Apply</button>
+										<button class="btn-cancel-sell-price" onclick="cancelSellPriceEdit('${stockCode}')">Cancel</button>
+									</div>
+								</div>
+							</td>
+						`;
+						
+						// Insert after the clicked row
+						rowElement.parentNode.insertBefore(editArea, rowElement.nextSibling);
+						
+						// Add select-all on click for input fields
+						const priceInput = document.getElementById(`edit-sell-price-${stockCode}`);
+						const rateInput = document.getElementById(`edit-sell-rate-${stockCode}`);
+						const gapInput = document.getElementById(`edit-sell-gap-${stockCode}`);
+						const bamountInput = document.getElementById(`edit-bamount-${stockCode}`);
+						
+						if (priceInput) {
+							priceInput.addEventListener('click', function() { this.select(); });
+							priceInput.addEventListener('focus', function() { this.select(); });
+						}
+						if (rateInput) {
+							rateInput.addEventListener('click', function() { this.select(); });
+							rateInput.addEventListener('focus', function() { this.select(); });
+						}
+						if (gapInput) {
+							gapInput.addEventListener('click', function() { this.select(); });
+							gapInput.addEventListener('focus', function() { this.select(); });
+						}
+						if (bamountInput) {
+							bamountInput.addEventListener('click', function() { this.select(); });
+							bamountInput.addEventListener('focus', function() { this.select(); });
+						}
+					})
+					.catch(error => {
+						console.error('Error fetching sellgap and sellrate:', error);
+						// Still create edit area without sellgap and sellrate from API
+						// Use sellRate from row attribute as fallback
+						editArea.innerHTML = `
+							<td colspan="7">
+								<div class="sell-price-edit-form">
+									<div>
+										<label>Sell Price:</label>
+										<input type="number" id="edit-sell-price-${stockCode}" placeholder="Price" step="0.01" value="${sellPrice || ''}">
+									</div>
+									<div>
+										<label>Sell Rate (%):</label>
+										<input type="number" id="edit-sell-rate-${stockCode}" placeholder="Rate" step="0.01" value="${sellRate || ''}">
+									</div>
+									<div>
+										<label>Sell Gap:</label>
+										<input type="number" id="edit-sell-gap-${stockCode}" placeholder="Gap" step="0.01" value="">
+									</div>
+									<div>
+										<label>BAmount:</label>
+										<input type="number" id="edit-bamount-${stockCode}" placeholder="BAmount" step="1" value="">
+									</div>
+									<div class="sell-price-edit-buttons">
+										<button class="btn-apply-sell-price" onclick="applySellPriceEdit('${stockCode}', '${stockName}')">Apply</button>
+										<button class="btn-cancel-sell-price" onclick="cancelSellPriceEdit('${stockCode}')">Cancel</button>
+									</div>
+								</div>
+							</td>
+						`;
+						rowElement.parentNode.insertBefore(editArea, rowElement.nextSibling);
+						
+						// Add select-all on click for input fields
+						const priceInput = document.getElementById(`edit-sell-price-${stockCode}`);
+						const rateInput = document.getElementById(`edit-sell-rate-${stockCode}`);
+						const gapInput = document.getElementById(`edit-sell-gap-${stockCode}`);
+						const bamountInput = document.getElementById(`edit-bamount-${stockCode}`);
+						
+						if (priceInput) {
+							priceInput.addEventListener('click', function() { this.select(); });
+							priceInput.addEventListener('focus', function() { this.select(); });
+						}
+						if (rateInput) {
+							rateInput.addEventListener('click', function() { this.select(); });
+							rateInput.addEventListener('focus', function() { this.select(); });
+						}
+						if (gapInput) {
+							gapInput.addEventListener('click', function() { this.select(); });
+							gapInput.addEventListener('focus', function() { this.select(); });
+						}
+						if (bamountInput) {
+							bamountInput.addEventListener('click', function() { this.select(); });
+							bamountInput.addEventListener('focus', function() { this.select(); });
+						}
+					});
+			}
 		}
 		
 		function updateInterestedStocks() {
@@ -2871,6 +3305,61 @@
 			const dialog = document.getElementById('stock-price-dialog');
 			if (event.target === dialog) {
 				closeStockPriceDialog();
+			}
+		}
+
+		
+		function applySellPriceEdit(stockCode, stockName) {
+			const sellPrice = document.getElementById(`edit-sell-price-${stockCode}`).value.trim();
+			const sellRate = document.getElementById(`edit-sell-rate-${stockCode}`).value.trim();
+			const sellgap = document.getElementById(`edit-sell-gap-${stockCode}`).value.trim();
+			const bamount = document.getElementById(`edit-bamount-${stockCode}`).value.trim();
+			
+			// Prepare request data - use same format as interested-stocks endpoint
+			const requestData = {
+				stock_code: stockCode,
+				stock_name: stockName || null,
+				sellprice: sellPrice || '0',
+				sellrate: sellRate || '0',
+				sellgap: sellgap || '0',
+				bamount: bamount || null
+			};
+			
+			// Call API to update interested stocks (will create entry if doesn't exist)
+			fetch('./api/interested-stocks', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify(requestData)
+			})
+			.then(response => response.json())
+			.then(result => {
+				if (result.status === 'success') {
+					showMessage('Sell price/rate/gap updated successfully!', 'success');
+					// Remove the edit area
+					const editArea = document.querySelector(`#edit-sell-price-${stockCode}`).closest('.sell-price-edit-area');
+					if (editArea) {
+						editArea.remove();
+					}
+					// Refresh the table and interested stocks list
+					updateTable();
+					updateInterestedStocks();
+				} else {
+					showMessage('Error: ' + (result.message || 'Failed to update'), 'error');
+				}
+			})
+			.catch(error => {
+				console.error('Error updating sell price:', error);
+				showMessage('Error updating sell price: ' + error.message, 'error');
+			});
+		}
+		
+		function cancelSellPriceEdit(stockCode) {
+			// Remove the edit area
+			const editArea = document.querySelector(`#edit-sell-price-${stockCode}`).closest('.sell-price-edit-area');
+			if (editArea) {
+				editArea.remove();
 			}
 		}
 

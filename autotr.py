@@ -21,6 +21,7 @@ from ka10081 import get_day_chart
 from ka10100 import get_stockname
 
 now = datetime.now()
+today_yyyymmdd = now.strftime("%Y%m%d")
 
 # Interested stocks list
 INTERESTED_STOCKS_FILE = 'interested_stocks.json'
@@ -341,9 +342,9 @@ def get_upper_limit(MY_ACCESS_TOKEN, stk_cd):
         }
         try:
             response = fn_ka10007(token=MY_ACCESS_TOKEN, data=params)
-            print('calling fn_ka1007 in get_upper_limit succeeded')
-            rstk_cd = response['stk_cd']
-            if rstk_cd and len(rstk_cd) > 0 and rstk_cd[0] == 'A':
+            log_print(stk_cd, 'calling fn_ka1007 in get_upper_limit succeeded')
+            rstk_cd = response.get('stk_cd', ' ')
+            if rstk_cd[0] == 'A':
                 rstk_cd = rstk_cd[1:]
             if stk_cd == rstk_cd:
                 updown_list[stk_cd] = response
@@ -362,10 +363,9 @@ def get_upper_limit(MY_ACCESS_TOKEN, stk_cd):
         return 0
 
 
-def cancel_different_sell_order(now, ACCT, stk_cd, stk_nm, ord_uv):
+def cancel_different_sell_order(now, ACCT, stk_cd, stk_nm, new_price):
     global stored_miche_data
     cancel_count = 0
-    int_uv = int(ord_uv)
     miche = []
     if ACCT in stored_miche_data:
         if 'oso' in stored_miche_data[ACCT]:
@@ -375,12 +375,13 @@ def cancel_different_sell_order(now, ACCT, stk_cd, stk_nm, ord_uv):
         if m['stk_cd'] == stk_cd and m['io_tp_nm']  == '-매도' :
             oqty = m['ord_qty']
             oqp = int(m['ord_pric'])
-            if oqp != int_uv:
+            if oqp != new_price:
                 result = cancel_order_main(now, jango_token[ACCT], m['stex_tp_txt'], m['ord_no'], stk_cd)
-                print('cancel_different_sell_order ', result)
+                log_print(stk_cd, '{} cancel_different_sell_order {} {} old price={}, new price={}, result={}'.format(
+                          now, stk_cd, stk_nm, oqp, new_price, result))
                 cancel_count += 1
     if cancel_count != 0:
-        print('cancel_different_sell_order {} {} {} {} returns {}.'.format(ACCT, stk_cd, stk_nm, ord_uv, cancel_count))
+        log_print(stk_cd, 'cancel_different_sell_order {} {} {} {} returns {}.'.format(ACCT, stk_cd, stk_nm, new_price, cancel_count))
     return cancel_count
 
 
@@ -428,11 +429,11 @@ last_cl_price = {}
 def calculate_sell_price(MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk_nm):
     global bun_prices, last_get_bun_time, last_cl_price
 
-    ord_uv = '0'
+    ord_uv = 0
     if 'sellprice' in sell_cond:
         ord_uv = sell_cond['sellprice']
     if ord_uv != '0':
-        return ord_uv
+        return int(ord_uv)
 
     sellrate = float(sell_cond.get('sellrate', '0.0'))
     if sellrate != 0.0 :
@@ -441,8 +442,7 @@ def calculate_sell_price(MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk_nm):
         s_rate = s_rate_percent / 100.0
         s_price = pur_pric * (1.0 + s_rate)
         s_price = round_trunc(s_price)
-        ord_uv = str(s_price)
-        return ord_uv
+        return s_price
 
     sellgap = float(sell_cond.get('sellgap', '0.0')) / 100.
     if sellgap != 0.0 :
@@ -456,17 +456,18 @@ def calculate_sell_price(MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk_nm):
         if not stk_cd in gap_prices:
             gap_prices[stk_cd] = get_gap_price(MY_ACCESS_TOKEN, stk_cd)
         gap_price = gap_prices[stk_cd]
-        print('{} before get_low_after_high'.format(now))
+        log_print(stk_cd, '{} before get_low_after_high'.format(now))
         bun_chart = get_bun_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm)
         lowest = get_low_after_high(bun_chart)
-        print('{} get_low_after_high {} returns {}'.format(now, stk_nm, lowest))
+        log_print(stk_cd, '{} get_low_after_high {} returns {}'.format(now, stk_nm, lowest))
         if lowest != 0 :
             gap = float(gap_price['gap']) * 2
             cl_price = round_trunc(int(lowest + gap * sellgap))
-            last_cl_price[stk_cd] = str(cl_price)
-            return str(cl_price)
+            last_cl_price[stk_cd] = cl_price
+            log_print(stk_cd, '{} cl_price for {} {} is {}, gap={}, lowest={}, gaprate={}'.format(now, stk_cd, stk_nm, cl_price, gap, lowest, sellgap))
+            return cl_price
 
-    return '0'
+    return 0
 
 
 def call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond):
@@ -477,34 +478,31 @@ def call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_co
     pur_pric_str = indv.get('pur_pric', '0')
     pur_pric = float(pur_pric_str) if pur_pric_str else 0.0
 
-    ord_uv = calculate_sell_price(MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk_nm)
+    sell_price = calculate_sell_price(MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk_nm)
 
-    if ord_uv == '0': # price is not calculated
+    if sell_price == '0': # price is not calculated
         return
     upperlimit = get_upper_limit(MY_ACCESS_TOKEN, stk_cd)
-    if int(ord_uv) > upperlimit :
-        print('{} {} {} exceed upper limit {}'.format(stk_cd, stk_nm, ord_uv, upperlimit))
+    if sell_price > upperlimit :
+        log_print(stk_cd, '{} {} {} exceed upper limit {}'.format(stk_cd, stk_nm, sell_price, upperlimit))
         return
 
     # if any cancelled sell order, try next
-    cancel_count = cancel_different_sell_order(now, ACCT, stk_cd, stk_nm, ord_uv)
+    cancel_count = cancel_different_sell_order(now, ACCT, stk_cd, stk_nm, sell_price)
     if cancel_count > 0 :
         return
 
     trde_able_qty_int = int(trde_able_qty) if trde_able_qty else 0
     if trde_able_qty_int == 0:
         return
-    if isinstance(trde_able_qty, str) and len(trde_able_qty) > 4:
-        trde_able_qty = trde_able_qty[4:]
 
     working_status = 'call sell_order()'
     trde_tp = '0'  # 매매구분 0:보통 , 3:시장가 , 5:조건부지정가 , 81:장마감후시간외 , 61:장시작전시간외, 62:시간외단일가 , 6:최유리지정가 , 7:최우선지정가 , 10:보통(IOC) , 13:시장가(IOC) , 16:최유리(IOC) , 20:보통(FOK) , 23:시장가(FOK) , 26:최유리(FOK) , 28:스톱지정가,29:중간가,30:중간가(IOC),31:중간가(FOK)
+    log_print(stk_cd, 'sell_order({} {} qty={} price={})'.format(stk_cd, stk_nm, trde_able_qty_int, sell_price))
     ret_status = sell_order(MY_ACCESS_TOKEN, dmst_stex_tp=market, stk_cd=stk_cd,
-                            ord_qty=trde_able_qty, ord_uv=ord_uv, trde_tp=trde_tp, cond_uv='')
-    print('sell_order_result')
-    print(ret_status)
+                            ord_qty=str(trde_able_qty_int), ord_uv=str(sell_price), trde_tp=trde_tp, cond_uv='')
+    log_print(stk_cd, ret_status)
     test_ret_status(stk_cd, ret_status)
-    print('call_sell_order:{}'.format(stk_nm))
 
 
 wait_hour_change = False
@@ -722,7 +720,7 @@ def fn_kt10003(now, token, data, cont_yn='N', next_key=''):
     return response.json()
 
 def cancel_order_main(now, access_token, stex, ord_no, stk_cd):
-    print('cancel_order_main: ord_no={}'.format(ord_no))
+    log_print(stk_cd, 'cancel_order_main: ord_no={}'.format(ord_no))
     # 2. 요청 데이터
     params = {
         'dmst_stex_tp': stex, # 'KRX',  # 국내거래소구분 KRX,NXT,SOR
@@ -761,6 +759,43 @@ def cur_date():
     return formatted_date
 
 
+def log_print(stk_cd, msg):
+    """Append log message to file: logs/yyyymmdd/stock_code_stock_name.txt"""
+    global today_yyyymmdd, interested_stocks
+    
+    try:
+        # Get yyyymmdd from global variable
+        yyyymmdd = today_yyyymmdd
+        
+        # Get stock name from interested_stocks if available, otherwise use get_stockname
+        stk_nm = ''
+        if stk_cd in interested_stocks:
+            stk_nm = interested_stocks[stk_cd].get('stock_name', '')
+        
+        if not stk_nm:
+            try:
+                stk_nm = get_stockname(stk_cd)
+            except:
+                stk_nm = stk_cd  # Fallback to stock code if get_stockname fails
+        
+        # Create directory structure if it doesn't exist
+        log_dir = os.path.join('logs', yyyymmdd)
+        os.makedirs(log_dir, exist_ok=True)
+        
+        # Create log file name: stock_code_stock_name.txt
+        log_filename = f"{stk_cd}_{stk_nm}.txt"
+        log_filepath = os.path.join(log_dir, log_filename)
+        
+        # Append message to log file with timestamp
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        log_line = f"[{timestamp}] {msg}\n"
+        
+        with open(log_filepath, 'a', encoding='utf-8') as f:
+            f.write(log_line)
+            
+    except Exception as e:
+        # Don't fail silently, but don't crash the program either
+        print(f"Error in log_print for {stk_cd}: {e}")
 
 
 def buy_cl(now):
@@ -838,12 +873,12 @@ def buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
         ordered[stk_cd] = 1
     else:
         ordered[stk_cd] = 0
-    print('ordered count for {} {} {} is {}, bsum={}'.format(ACCT, stk_cd, stk_nm, ordered[stk_cd], bsum))
+    log_print(stk_cd, 'ordered count for {} {} {} is {}, bsum={}'.format(ACCT, stk_cd, stk_nm, ordered[stk_cd], bsum))
     if ordered[stk_cd] >= 2:
         return
 
     if not stk_cd in gap_prices:
-        print('getting bun_chart or bun_price for {} {} failed'.format(stk_cd, stk_nm));
+        log_print(stk_cd, 'getting bun_chart or bun_price for {} {} failed'.format(stk_cd, stk_nm));
         return
 
     price_index = get_price_index(int_stock['color'])
@@ -853,30 +888,32 @@ def buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
         bp = gap_price['price'][price_index]
         buy_rate = (float(gap_price.get('current_price', 0))-bp) / bp # 현재 가격과 매수 가격의 차이
         if buy_rate >= 0.05 : # 매수 가격이랑 5%이상 차이가 난다면 매수 하지 않는다,
-            print('{} gap over skip for {} {} {} {}'.format(now, stk_cd, stk_nm, bp, buy_rate))
+            log_print(stk_cd, '{} gap over skip for {} {} {} {}'.format(now, stk_cd, stk_nm, bp, buy_rate))
         else:
             ord_price = round_trunc(bp)
-            ord_qty = str(bamount // ord_price)
-            #ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trade_tp=trde_tp, cond_uv='')
-            ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, ord_qty, str(ord_price), trde_tp=trde_tp, cond_uv='')
-            print('1_buy_order_result: {}'.format(ret_status))
-            test_ret_status(stk_cd, ret_status)
+            ord_qty = bamount // ord_price
+            if ord_qty > 0 :
+                #ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trade_tp=trde_tp, cond_uv='')
+                ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trde_tp=trde_tp, cond_uv='')
+                log_print(stk_cd, '1_buy_order_result: {}'.format(ret_status))
+                test_ret_status(stk_cd, ret_status)
             ordered[stk_cd] += 1
-            print('price:{} current buy order for {} {} {} is {}'.format(ord_price, ACCT, stk_cd, stk_nm, ordered[stk_cd]))
+            log_print(stk_cd, 'price:{} current buy order for {} {} {} is {}'.format(ord_price, ACCT, stk_cd, stk_nm, ordered[stk_cd]))
     if ordered[stk_cd] < 2:
         bp = gap_price['price'][price_index+1]
         buy_rate = (float(gap_price.get('current_price', 0))-bp) / bp # 현재 가격과 매수 가격의 차이
         if buy_rate >= 0.05 : # 매수 가격이랑 5%이상 차이가 난다면 매수 하지 않는다,
-            print('{} gap over skip for {} {} {} {}'.format(now, stk_cd, stk_nm, bp, buy_rate))
+            log_print(stk_cd, '{} gap over skip for {} {} {} {}'.format(now, stk_cd, stk_nm, bp, buy_rate))
         else:
             ord_price = round_trunc(bp)
-            ord_qty = str(bamount // ord_price)
+            ord_qty = bamount // ord_price
             # ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trade_tp=trde_tp, cond_uv='')
-            ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, ord_qty, str(ord_price), trde_tp=trde_tp, cond_uv='')
-            print('2_buy_order_result: {}'.format(ret_status))
-            test_ret_status(stk_cd, ret_status)
+            if ord_qty > 0 :
+                ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trde_tp=trde_tp, cond_uv='')
+                log_print(stk_cd, '2_buy_order_result: {}'.format(ret_status))
+                test_ret_status(stk_cd, ret_status)
             ordered[stk_cd] += 1
-            print('price:{} current buy order for {} {} {} is {}'.format(ord_price, ACCT, stk_cd, stk_nm, ordered[stk_cd]))
+            log_print(stk_cd, 'price:{} current buy order for {} {} {} is {}'.format(ord_price, ACCT, stk_cd, stk_nm, ordered[stk_cd]))
 
     pass
 
@@ -950,12 +987,14 @@ def daily_work():
 
 def set_new_day(tf):
     global new_day, waiting_shown, no_working_shown, nxt_cancelled, ktx_first, current_status
-    global updown_list, access_token, now
+    global updown_list, access_token, now, today_yyyymmdd
+
     if tf:
         if new_day:
             return
         print('{} Setting new_day=True, clearing variables.'.format(now))
         now = datetime.now()
+        today_yyyymmdd = now.strftime("%Y%m%d")
         print('{} {} Setting new day=True'.format(cur_date(), now))
         new_day = True
         waiting_shown = False
@@ -1025,10 +1064,10 @@ def load_dictionaries_from_json():
         modified = False
         current_date = datetime.now().strftime("%Y%m%d")
         for stk in interested_stocks:
-            print('istk, stk={}'.format(stk))
+            log_print(stk, 'istk, stk={}'.format(stk))
             stock = interested_stocks[stk]
             stk_nm = stock.get('stock_name', '')
-            print('interested stock_name={}'.format(stk_nm))
+            log_print(stk, 'interested stock_name={}'.format(stk_nm))
             if stk_nm == '':
                 print('getting stock name for {}'.format(stk))
                 stk_nm = get_stockname(stk)
@@ -1042,7 +1081,7 @@ def load_dictionaries_from_json():
                 print('adding yyyymmdd={} for {}'.format(current_date, stk))
                 stock['yyyymmdd'] = current_date
                 modified = True
-            print('in istk', stock)
+            log_print(stk, 'in istk {} {} {}'.format(stock.get('btype', 'BT'), stock.get('color', 'NC'), stock.get('yyyymmdd', 'YMD')))
 
         if modified:
             save_interested_stocks_to_json()
@@ -1195,7 +1234,7 @@ def check_and_handle_sold_stocks(previous_jango_data, current_jango_data):
             
             # If previous btype was 'CL', change to 'SCL'
             if previous_btype == 'CL':
-                print(f"Stock {stk_cd} was sold and had btype='CL', changing to 'SCL'")
+                log_print(stk_cd, f"Stock {stk_cd} was sold and had btype='CL', changing to 'SCL'")
                 stock_info['btype'] = 'SCL'
                 modified = True
                 
@@ -1606,7 +1645,7 @@ def cleanup_expired_tokens():
     for token in expired_tokens:
         del active_tokens[token]
 
-async def get_current_user(token: str = Cookie(None)):
+async def get_current_user(token: str = Cookie(None, alias="stoken")):
     """Dependency to get current authenticated user"""
     if not token:
         raise HTTPException(
@@ -1663,7 +1702,7 @@ async def login(request: dict, proxy_path: str = ""):
             "token": token
         })
         response.set_cookie(
-            key="token",
+            key="stoken",
             value=token,  # Use the SAME token
             path="/",
             max_age=24 * 60 * 60,  # 24 hours
@@ -1680,12 +1719,12 @@ async def login(request: dict, proxy_path: str = ""):
 # Logout endpoint
 @app.post("/api/logout")
 @app.post("/{proxy_path:path}/api/logout")
-async def logout(token: str = Cookie(None)):
+async def logout(token: str = Cookie(None, alias="stoken")):
     """Handle logout by invalidating token"""
     if token and token in active_tokens:
         del active_tokens[token]
     response = RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
-    response.delete_cookie(key="token", path="/")
+    response.delete_cookie(key="stoken", path="/")
     return {"status": "success", "message": "Logged out successfully"}
 
 # Root redirect to login
@@ -1696,7 +1735,7 @@ async def root_redirect():
 
 @app.get("/stock", response_class=HTMLResponse)
 @app.get("/stock/", response_class=HTMLResponse)
-async def root(token: str = Cookie(None)):
+async def root(token: str = Cookie(None, alias="stoken")):
     """Display account information UI"""
     # Check authentication
     if not token or not verify_token(token):
@@ -1712,7 +1751,7 @@ async def root(token: str = Cookie(None)):
 
 @app.get("/api/accounts")
 @app.get("/stock/api/accounts")
-async def get_accounts_api(proxy_path: str = "", token: str = Cookie(None)):
+async def get_accounts_api(proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
     """API endpoint to get list of available accounts"""
     # Check authentication
     if not token or not verify_token(token):
@@ -1728,7 +1767,7 @@ async def get_accounts_api(proxy_path: str = "", token: str = Cookie(None)):
 
 @app.get("/api/account-data")
 @app.get("/stock/api/account-data")
-async def get_account_data_api(proxy_path: str = "", token: str = Cookie(None)):
+async def get_account_data_api(proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
     """API endpoint to get account data as JSON"""
     # Check authentication
     if not token or not verify_token(token):
@@ -1742,7 +1781,7 @@ async def get_account_data_api(proxy_path: str = "", token: str = Cookie(None)):
 
 @app.get("/api/miche-data")
 @app.get("/stock/api/miche-data")
-async def get_miche_data_api(proxy_path: str = "", token: str = Cookie(None)):
+async def get_miche_data_api(proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
     """API endpoint to get miche (unexecuted orders) data as JSON"""
     # Check authentication
     if not token or not verify_token(token):
@@ -1756,7 +1795,7 @@ async def get_miche_data_api(proxy_path: str = "", token: str = Cookie(None)):
 
 @app.post("/api/cancel-order")
 @app.post("/stock/api/cancel-order")
-async def cancel_order_api(request: dict, proxy_path: str = "", token: str = Cookie(None)):
+async def cancel_order_api(request: dict, proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
     global key_list
     """API endpoint to cancel an order"""
     # Check authentication
@@ -1770,7 +1809,7 @@ async def cancel_order_api(request: dict, proxy_path: str = "", token: str = Coo
         stex = request.get('stex')  # Exchange type: KRX, NXT, SOR
         ord_no = request.get('ord_no')
         stk_cd = request.get('stk_cd')
-        print('cancel_order_api ord_no={}'.format(ord_no))
+        log_print(stk_cd, 'cancel_order_api ord_no={}'.format(ord_no))
         if not all([acct, stex, ord_no, stk_cd]):
             return {"status": "error", "message": "Missing required parameters"}
         
@@ -1819,7 +1858,7 @@ def cancel_related_buy_order(stk_cd):
                     result = cancel_order_main(now, jango_token[ACCT], m['stex_tp_txt'], m['ord_no'], stk_cd)
                     print('cancel_related_buy_order ', result)
                     cancel_count += 1
-    print('cancel_related_buy_order {} returns {}.'.format(stk_cd, cancel_count))
+    log_print(stk_cd, 'cancel_related_buy_order {} returns {}.'.format(stk_cd, cancel_count))
     return cancel_count
 
 
@@ -1844,7 +1883,7 @@ def issue_buy_order(stk_cd, ord_uv, ord_qty, stex, trde_tp, account):
     ord_uv_str = str(ord_uv)
     ord_qty_str = str(ord_qty)
 
-    print('issue buy order for account {}: {}, {}, {}, {}, {}'.format(account, ord_uv_str, ord_uv, ord_qty, stex, trde_tp))
+    log_print(stk_cd, 'issue buy order for account {}: {}, {}, {}, {}, {}'.format(account, ord_uv_str, ord_uv, ord_qty, stex, trde_tp))
 
     # Place buy order
     ret_status = buy_order(
@@ -1857,7 +1896,7 @@ def issue_buy_order(stk_cd, ord_uv, ord_qty, stex, trde_tp, account):
         cond_uv=''
     )
 
-    print('buy_order_result for account {}: {}'.format(account, ret_status))
+    log_print(stk_cd, 'buy_order_result for account {}: {}'.format(account, ret_status))
 
     # Check return status
     if isinstance(ret_status, dict):
@@ -1870,7 +1909,7 @@ def issue_buy_order(stk_cd, ord_uv, ord_qty, stex, trde_tp, account):
 
 @app.post("/api/buy-order")
 @app.post("/stock/api/buy-order")
-async def buy_order_api(request: dict, proxy_path: str = "", token: str = Cookie(None)):
+async def buy_order_api(request: dict, proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
     """API endpoint to place a buy order for specified accounts"""
     # Check authentication
     if not token or not verify_token(token):
@@ -1894,7 +1933,7 @@ async def buy_order_api(request: dict, proxy_path: str = "", token: str = Cookie
             else:
                 accounts = []
 
-        print('buy_order_api: stk_cd={}, stk_nm={}, ord_uv={}, amount={}, accounts={} (type: {})'.format(
+        log_print(stk_cd, 'buy_order_api: stk_cd={}, stk_nm={}, ord_uv={}, amount={}, accounts={} (type: {})'.format(
             stk_cd, stk_nm, ord_uv, ord_amount, accounts, type(accounts).__name__))
         
         if not all([stk_cd, ord_uv, ord_qty]):
@@ -1959,7 +1998,7 @@ async def buy_order_api(request: dict, proxy_path: str = "", token: str = Cookie
 
 @app.get("/api/sell-prices")
 @app.get("/{proxy_path:path}/api/sell-prices")
-async def get_sell_prices_api(proxy_path: str = "", token: str = Cookie(None)):
+async def get_sell_prices_api(proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
     """API endpoint to get sell prices"""
     # Check authentication
     if not token or not verify_token(token):
@@ -1973,7 +2012,7 @@ async def get_sell_prices_api(proxy_path: str = "", token: str = Cookie(None)):
 
 @app.delete("/api/sell-prices/{stock_code}")
 @app.delete("/{proxy_path:path}/api/sell-prices/{stock_code}")
-async def delete_sell_prices_api(stock_code: str, proxy_path: str = "", token: str = Cookie(None)):
+async def delete_sell_prices_api(stock_code: str, proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
     """API endpoint to delete sell price/rate entry completely"""
     # Check authentication
     if not token or not verify_token(token):
@@ -2006,7 +2045,7 @@ async def delete_sell_prices_api(stock_code: str, proxy_path: str = "", token: s
 
 @app.post("/api/sell-prices")
 @app.post("/{proxy_path:path}/api/sell-prices")
-async def update_sell_prices_api(request: dict, proxy_path: str = "", token: str = Cookie(None)):
+async def update_sell_prices_api(request: dict, proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
     """API endpoint to update sell prices"""
     # Check authentication
     if not token or not verify_token(token):
@@ -2020,17 +2059,18 @@ async def update_sell_prices_api(request: dict, proxy_path: str = "", token: str
         stock_name = request.get('stock_name')
         price = request.get('price')
         rate = request.get('rate')
+        sellgap = request.get('sellgap', '0')
         
         if not stock_code:
             return {"status": "error", "message": "stock_code is required"}
 
-        return set_interested_rate(stock_code, stock_name=stock_name, sellprice=price, sellrate=rate)
+        return set_interested_rate(stock_code, stock_name=stock_name, sellprice=price, sellrate=rate, sellgap=sellgap)
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
 @app.get("/api/auto-sell")
 @app.get("/stock/api/auto-sell")
-async def get_auto_sell_api(proxy_path: str = "", token: str = Cookie(None)):
+async def get_auto_sell_api(proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
     """API endpoint to get auto sell flag status for all accounts"""
     # Check authentication
     if not token or not verify_token(token):
@@ -2043,7 +2083,7 @@ async def get_auto_sell_api(proxy_path: str = "", token: str = Cookie(None)):
 
 @app.post("/api/auto-sell")
 @app.post("/stock/api/auto-sell")
-async def set_auto_sell_api(request: dict, proxy_path: str = "", token: str = Cookie(None)):
+async def set_auto_sell_api(request: dict, proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
     """API endpoint to set auto sell flag for a specific account"""
     # Check authentication
     if not token or not verify_token(token):
@@ -2077,7 +2117,7 @@ async def set_auto_sell_api(request: dict, proxy_path: str = "", token: str = Co
 
 @app.get("/api/interested-stocks")
 @app.get("/{proxy_path:path}/api/interested-stocks")
-async def get_interested_stocks_api(proxy_path: str = "", token: str = Cookie(None)):
+async def get_interested_stocks_api(proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
     """API endpoint to get interested stocks list"""
     # Check authentication
     if not token or not verify_token(token):
@@ -2226,7 +2266,7 @@ def set_interested_rate(stock_code, stock_name='', color=None,
 @app.post("/api/interested-stocks")
 @app.post("/{proxy_path:path}/api/interested-stocks")
 async def add_interested_stock_api(request: dict, proxy_path: str = "",
-                                   token: str = Cookie(None),
+                                   token: str = Cookie(None, alias="stoken"),
                                    pctoken: str | None = Cookie(default=None),):
     """API endpoint to add a stock to interested stocks list"""
     f = False
@@ -2274,7 +2314,7 @@ async def add_interested_stock_api(request: dict, proxy_path: str = "",
 
 @app.delete("/api/interested-stocks/{stock_code}")
 @app.delete("/{proxy_path:path}/api/interested-stocks/{stock_code}")
-async def delete_interested_stock_api(stock_code: str, proxy_path: str = "", token: str = Cookie(None)):
+async def delete_interested_stock_api(stock_code: str, proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
     """API endpoint to remove a stock from interested stocks list"""
     # Check authentication
     if not token or not verify_token(token):
@@ -2362,7 +2402,7 @@ def get_gap_price(token_for_api, stock_code):
 
 @app.get("/api/stock-price-info/{stock_code}")
 @app.get("/stock/api/stock-price-info/{stock_code}")
-async def get_stock_price_info(stock_code: str, token: str = Cookie(None)):
+async def get_stock_price_info(stock_code: str, token: str = Cookie(None, alias="stoken")):
     """Get 16-day high/low, yellow line price, current price, and gap rate for a stock"""
     # Check authentication
     if not token or not verify_token(token):
