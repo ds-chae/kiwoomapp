@@ -1,6 +1,5 @@
 import traceback
 import copy
-
 import requests
 import json
 import os
@@ -9,6 +8,7 @@ from dotenv import load_dotenv
 from au1001 import get_token, get_key_list, get_one_token
 import time as time_module
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from fastapi import FastAPI, HTTPException, status, Cookie, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 import uvicorn
@@ -165,12 +165,11 @@ def fn_kt00018(log_jango, token, data, cont_yn='N', next_key=''):
         'api-id': 'kt00018', # TR¸í
     }
 
-    # 3. http POST ¿äÃ»
     response = requests.post(url, headers=headers, json=data)
 
-    # 4. ÀÀ´ä »óÅÂ ÄÚµå¿Í µ¥ÀÌÅÍ Ãâ·Â
+# 4. ÀÀ´ä »óÅÂ ÄÚµå¿Í µ¥ÀÌÅÍ Ãâ·Â
     if log_jango:
-        print('get_jango => Code:', response.status_code)
+        print('get_jango => Code: {}'.format(response.status_code))
         #print('get_jango => Header:', json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4, ensure_ascii=False))
         #print('get_jango => Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON ÀÀ´äÀ» ÆÄ½ÌÇÏ¿© Ãâ·Â
         #print('get_jango => Finish:')
@@ -218,28 +217,42 @@ def get_jango(market = 'KRX'):
         get_jango_count = 0
 
     jango = {}
+    
+    # Prepare tasks for parallel execution
+    tasks = []
     for k, key in key_list.items():
         acct = key['ACCT']
         MY_ACCESS_TOKEN = get_token(key['AK'], key['SK'])  # 접근토큰
         jango_token[acct] = MY_ACCESS_TOKEN
-        j = call_fn_kt00018(log_jango, market, acct, MY_ACCESS_TOKEN)
-        j['ACCT'] = acct
-        jango[acct] = j
+        tasks.append((acct, log_jango, market, MY_ACCESS_TOKEN))
+    
+    start = time_module.time()
+    # Execute all calls in parallel and wait for completion
+    with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
+        futures = {}
+        for acct, log_jango_val, market_val, token in tasks:
+            future = executor.submit(call_fn_kt00018, log_jango_val, market_val, acct, token)
+            futures[future] = acct
+        
+        # Wait for all tasks to complete and collect results
+        for future in as_completed(futures):
+            acct = futures[future]
+            try:
+                j = future.result()
+                j['ACCT'] = acct
+                jango[acct] = j
+            except Exception as e:
+                print(f"Error getting jango for account {acct}: {e}")
+                traceback.print_exc()
+                # Create error response for this account
+                jango[acct] = {"return_code": -1, "return_msg": str(e), "ACCT": acct}
 
-    # set lowest using jango cur_pric
-    for acct, j in jango.items():
-        acnt_evlt_remn_indv_tot = j.get("acnt_evlt_remn_indv_tot", [])
-
-        for indv in acnt_evlt_remn_indv_tot:
-            stk_cd = indv.get('stk_cd', '')
-            stk_nm = indv.get('stk_nm', '')
-            if stk_cd[0] == 'A':
-                stk_cd = stk_cd[1:]
-            cur_prc = int(indv.get('cur_prc','0'))
-            if cur_prc < 0 :
-                cur_prc = -cur_prc
+    elapsed = time_module.time() - start
+    if log_jango:
+        print('get_jango => elapsed={:.3f} seconds'.format(elapsed))
 
     return jango
+
 
 def call_fn_kt00018(log_jango, market, ACCT, MY_ACCESS_TOKEN):
     params = {
@@ -452,11 +465,11 @@ def calculate_sell_price(MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk_nm):
             if seconds < 15 :
                 return last_cl_price.get(stk_cd, 0)
 
-        last_get_bun_time[stk_cd] = now
         if not stk_cd in gap_prices:
             gap_prices[stk_cd] = get_gap_price(MY_ACCESS_TOKEN, stk_cd)
         gap_price = gap_prices[stk_cd]
         log_print(stk_cd, '{} before get_low_after_high'.format(now))
+        last_get_bun_time[stk_cd] = now
         bun_chart = get_bun_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm)
         lowest = get_low_after_high(bun_chart)
         log_print(stk_cd, '{} get_low_after_high {} returns {}'.format(now, stk_nm, lowest))
@@ -950,7 +963,7 @@ def daily_work():
     
     if jango_data_changed:
         # Save new jango data only when differences are found
-        save_jango_data_to_json(new_jango_data)
+        save_jango_data_to_json(current_stocks)
         
         # Check for sold stocks before updating previous data
         if previous_jango_data_simplified:
@@ -1136,43 +1149,24 @@ def save_interested_stocks_to_json():
         return False
 
 def extract_stock_codes_and_amounts(jango_data):
-    """Extract stock codes and amounts (quantities) from jango data"""
-    stock_data = {}  # {stock_code: total_amount}
-    try:
-        if isinstance(jango_data, dict):
-            iterator = jango_data.values()
-        else:
-            iterator = jango_data
-        
-        for account in iterator:
-            if account.get("return_code") != 0:
-                continue
-            
-            acnt_evlt_remn_indv_tot = account.get("acnt_evlt_remn_indv_tot", [])
-            
-            for stock in acnt_evlt_remn_indv_tot:
-                stk_cd = stock.get('stk_cd', '')
-                # Remove 'A' prefix if present
-                if stk_cd and stk_cd[0] == 'A':
-                    stk_cd_clean = stk_cd[1:]
-                else:
-                    stk_cd_clean = stk_cd
-                
-                if stk_cd_clean:
-                    # Get quantity (try rmnd_qty first, then trde_able_qty)
-                    qty = int(stock.get('rmnd_qty', '0'))
-                    stock_data[stk_cd_clean] = qty
-    except Exception as e:
-        print(f"Error extracting stock codes and amounts from jango data: {e}")
-    
-    return stock_data
+    """Extract stock codes and amounts from jango data: {account: {stock_code: amount}}"""
+    result = {}
+    for acct, account in jango_data.items():
+        if account.get("return_code") != 0:
+            continue
+        stocks = {}
+        for stock in account.get("acnt_evlt_remn_indv_tot", []):
+            stk_cd = stock.get('stk_cd', '')
+            if stk_cd:
+                if stk_cd[0] == 'A':
+                    stk_cd = stk_cd[1:]
+                stocks[stk_cd] = int(stock.get('rmnd_qty', '0'))
+        result[acct] = stocks
+    return result
 
-def save_jango_data_to_json(jango_data):
-    """Save jango data to JSON file (only stock codes and amounts)"""
+def save_jango_data_to_json(stock_data):
+    """Save jango data to JSON file: {account: {stock_code: amount}}"""
     try:
-        # Extract only stock codes and amounts
-        stock_data = extract_stock_codes_and_amounts(jango_data)
-        
         with open(JANGO_DATA_FILE, 'w', encoding='utf-8') as f:
             json.dump(stock_data, f, indent=2, ensure_ascii=False)
         print(f"Saved jango data (stock codes and amounts) to {JANGO_DATA_FILE}")
@@ -1182,43 +1176,50 @@ def save_jango_data_to_json(jango_data):
         return False
 
 def load_jango_data_from_json():
-    """Load jango data from JSON file (stock codes and amounts format)"""
+    """Load jango data from JSON file: {account: {stock_code: amount}}"""
     try:
         if os.path.exists(JANGO_DATA_FILE):
             with open(JANGO_DATA_FILE, 'r', encoding='utf-8') as f:
-                stock_data = json.load(f)
-                print(f"Loaded jango data (stock codes and amounts) from {JANGO_DATA_FILE}")
-                return stock_data
-        else:
-            print(f"Jango data file {JANGO_DATA_FILE} does not exist")
-            return {}
+                data = json.load(f)
+                # Ignore old format - if values are not dicts, return empty
+                if data and isinstance(next(iter(data.values())), dict):
+                    return {acct: {k: int(v) for k, v in stocks.items()} for acct, stocks in data.items()}
+                else:
+                    print(f"Old format in {JANGO_DATA_FILE}, ignoring")
+                    return {}
+        return {}
     except Exception as e:
         print(f"Error loading jango data: {e}")
         return {}
 
 def get_stock_codes_from_jango(jango_data):
     """Extract all stock codes from jango data (for backward compatibility)"""
-    stock_data = extract_stock_codes_and_amounts(jango_data)
-    return set(stock_data.keys())
+    account_stock_data = extract_stock_codes_and_amounts(jango_data)
+    # Aggregate all stock codes across all accounts
+    all_stock_codes = set()
+    for acct, stocks in account_stock_data.items():
+        all_stock_codes.update(stocks.keys())
+    return all_stock_codes
 
 def check_and_handle_sold_stocks(previous_jango_data, current_jango_data):
-    """Check if any stocks were sold and handle btype changes"""
+    """Check if any stocks were sold and handle btype changes - account by account"""
     global interested_stocks
     
-    # previous_jango_data and current_jango_data are dicts of {stock_code: amount}
-    # Extract stock codes and amounts from current jango data (full format)
+    # previous_jango_data and current_jango_data are {account: {stock_code: amount}}
     current_stocks = extract_stock_codes_and_amounts(current_jango_data) if current_jango_data else {}
-    
-    # previous_jango_data is already in simplified format {stock_code: amount}
     previous_stocks = previous_jango_data if previous_jango_data else {}
     
-    # Find stocks that were in previous holdings but not in current (sold)
-    # or stocks where amount decreased to 0
+    # Check account by account - find stocks that were sold in each account
     sold_stocks = set()
-    for stk_cd, prev_amount in previous_stocks.items():
-        current_amount = current_stocks.get(stk_cd, 0)
-        if prev_amount > 0 and current_amount == 0:
-            sold_stocks.add(stk_cd)
+    for acct in previous_stocks:
+        prev_account_stocks = previous_stocks.get(acct, {})
+        curr_account_stocks = current_stocks.get(acct, {})
+        
+        # For each stock in this account, check if it was sold (prev > 0, curr == 0)
+        for stk_cd, prev_amt in prev_account_stocks.items():
+            curr_amt = curr_account_stocks.get(stk_cd, 0)
+            if prev_amt > 0 and curr_amt == 0:
+                sold_stocks.add(stk_cd)
     
     if not sold_stocks:
         return
@@ -1245,6 +1246,7 @@ def check_and_handle_sold_stocks(previous_jango_data, current_jango_data):
     if modified:
         save_interested_stocks_to_json()
         print("Updated interested_stocks after handling sold stocks")
+
 
 def get_account_holdings_stock_codes():
     """Get set of all stock codes currently in account holdings"""
@@ -1295,8 +1297,9 @@ def cleanup_old_interested_stocks():
         
         # Iterate through interested_stocks
         for stock_code, stock_info in interested_stocks.items():
+            if stock_code in holdings_stock_codes:
+                continue
             yyyymmdd = stock_info.get('yyyymmdd', '')
-            
             # Skip if yyyymmdd is missing or invalid
             if not yyyymmdd or len(yyyymmdd) != 8 or not yyyymmdd.isdigit():
                 continue
@@ -1307,27 +1310,19 @@ def cleanup_old_interested_stocks():
             except ValueError:
                 print(f"Invalid date format in interested_stocks for {stock_code}: {yyyymmdd}")
                 continue
-            
-            # Calculate days passed
-            days_passed = (current_date - stock_date).days
-            
-            # Check if 10 days have passed
-            if days_passed >= 10:
-                # Check if stock is NOT in account holdings
-                if stock_code not in holdings_stock_codes:
-                    stocks_to_delete.append(stock_code)
-                    print(f"Marking {stock_code} ({stock_info.get('stock_name', '')}) for deletion: {days_passed} days old, not in holdings")
+
+            days_passed = (current_date - stock_date).days # Calculate days passed
+            if days_passed >= 10: # Check if 10 days have passed
+                stocks_to_delete.append(stock_code)
+                print(f"Marking {stock_code} ({stock_info.get('stock_name', '')}) for deletion: {days_passed} days old, not in holdings")
         
         # Delete marked stocks
         if stocks_to_delete:
             for stock_code in stocks_to_delete:
                 del interested_stocks[stock_code]
                 print(f"Deleted {stock_code} from interested_stocks (10+ days old, not in holdings)")
-            
-            # Save if any deletions occurred
-            if stocks_to_delete:
-                save_interested_stocks_to_json()
-                print(f"Cleanup completed: deleted {len(stocks_to_delete)} old interested stocks")
+            save_interested_stocks_to_json()
+            print(f"Cleanup completed: deleted {len(stocks_to_delete)} old interested stocks")
         else:
             print("Cleanup completed: no old interested stocks to delete")
         
@@ -1393,7 +1388,7 @@ async def lifespan(app: FastAPI):
         if jango_data_changed:
             print('{} jango changed.'.format(now))
             # Save jango data to file only when differences are found
-            save_jango_data_to_json(stored_jango_data)
+            save_jango_data_to_json(current_stocks)
             
             # Check for sold stocks if we had previous data
             if previous_jango_data_simplified:
