@@ -470,7 +470,17 @@ def calculate_sell_price(MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk_nm):
         gap_price = gap_prices[stk_cd]
         log_print(stk_cd, '{} before get_low_after_high'.format(now))
         last_get_bun_time[stk_cd] = now
-        bun_chart = get_bun_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm)
+        # Try to use bun_charts dict first, otherwise call get_bun_chart
+        bun_chart = None
+        try:
+            with bun_charts_lock:
+                bun_chart = bun_charts.get(stk_cd)
+        except:
+            pass
+        if bun_chart is None:
+            return 0 # if bun_chart is not queried yet, return pric 0
+            # bun_chart = get_bun_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm)
+
         lowest = get_low_after_high(bun_chart)
         log_print(stk_cd, '{} get_low_after_high {} returns {}'.format(now, stk_nm, lowest))
         if lowest != 0 :
@@ -492,9 +502,9 @@ def call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_co
     pur_pric = float(pur_pric_str) if pur_pric_str else 0.0
 
     sell_price = calculate_sell_price(MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk_nm)
-
-    if sell_price == '0': # price is not calculated
+    if sell_price == 0: # price is not calculated
         return
+
     upperlimit = get_upper_limit(MY_ACCESS_TOKEN, stk_cd)
     if sell_price > upperlimit :
         log_print(stk_cd, '{} {} {} exceed upper limit {}'.format(stk_cd, stk_nm, sell_price, upperlimit))
@@ -1001,6 +1011,7 @@ def daily_work():
 def set_new_day(tf):
     global new_day, waiting_shown, no_working_shown, nxt_cancelled, ktx_first, current_status
     global updown_list, access_token, now, today_yyyymmdd
+    global bun_charts, bun_charts_lock
 
     if tf:
         if new_day:
@@ -1019,6 +1030,9 @@ def set_new_day(tf):
         updown_list = {}
         init_order_count()
         access_token = {}
+        with bun_charts_lock:
+            bun_charts = {}
+
     else:
         if not new_day:
             return
@@ -1106,11 +1120,13 @@ def load_dictionaries_from_json():
 
 
 bun_charts = {}
+bun_charts_lock = threading.Lock()  # Lock for bun_charts dict
 bun_prices = {}
 
 # fill minutes chart if btype is 'CL'
+"""
 def fill_charts_for_CL(MY_ACCESS_TOKEN):
-    global bun_charts, interested_stocks
+    global bun_charts, bun_charts_lock, interested_stocks
     try:
         for stk_cd, stock in interested_stocks.items():
             btype = stock.get('btype', '')
@@ -1119,10 +1135,13 @@ def fill_charts_for_CL(MY_ACCESS_TOKEN):
             if stk_cd in bun_charts:
                 continue
             stk_nm = stock['stock_name']
-            bun_charts[stk_cd] = get_bun_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm)
+            with bun_charts_lock:
+                bun_charts[stk_cd] = get_bun_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm)
     except Exception as ex:
         print('806', ex)
         exit(0)
+"""
+
 
 def save_auto_sell_to_json():
     """Save auto_sell_enabled to JSON file"""
@@ -1352,11 +1371,71 @@ def background_timer_thread():
                 break
             time_module.sleep(0.1)
 
+bun_charts_thread = None
+bun_charts_thread_stop_event = threading.Event()
+
+def update_bun_charts_thread():
+    """Background thread that updates bun_charts dict in parallel for stocks with btype 'CL'"""
+    global bun_charts, bun_charts_lock, interested_stocks, bun_charts_thread_stop_event
+    
+    while not bun_charts_thread_stop_event.is_set():
+        try:
+            # Get token for API calls
+            MY_ACCESS_TOKEN = get_one_token()
+            
+            # Get list of stocks with btype 'CL'
+            cl_stocks = []
+            # Don't hold lock while iterating interested_stocks - it's not needed
+            for stk_cd, stock in interested_stocks.items():
+                if stock.get('btype', '') == 'CL':
+                    stk_nm = stock.get('stock_name', '')
+                    if stk_nm:
+                        cl_stocks.append((stk_cd, stk_nm))
+            
+            if cl_stocks:
+                # Query minutes charts in parallel (limit to 4 simultaneous threads)
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+                max_workers = min(3, len(cl_stocks))
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {}
+                    for stk_cd, stk_nm in cl_stocks:
+                        future = executor.submit(get_bun_chart, MY_ACCESS_TOKEN, stk_cd, stk_nm)
+                        futures[future] = stk_cd
+                    
+                    # Collect results and update bun_charts dict
+                    updated_charts = {}
+                    for future in as_completed(futures):
+                        stk_cd = futures[future]
+                        try:
+                            bun_chart = future.result()
+                            updated_charts[stk_cd] = bun_chart
+                        except Exception as e:
+                            print(f"Error getting bun_chart for {stk_cd}: {e}")
+                    
+                    # Update bun_charts dict with lock
+                    with bun_charts_lock:
+                        bun_charts.update(updated_charts)
+            
+            # Sleep for 15 seconds before next update
+            for _ in range(150):  # Check every 0.1 seconds for 15 seconds total
+                if bun_charts_thread_stop_event.is_set():
+                    break
+                time_module.sleep(0.1)
+                
+        except Exception as e:
+            print(f"Error in update_bun_charts_thread: {e}")
+            traceback.print_exc()
+            # Sleep on error too
+            for _ in range(150):
+                if bun_charts_thread_stop_event.is_set():
+                    break
+                time_module.sleep(0.1)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan event handler for startup and shutdown"""
     global stored_jango_data, stored_miche_data, background_thread, thread_stop_event
-    global previous_jango_data_simplified
+    global previous_jango_data_simplified, bun_charts_thread, bun_charts_thread_stop_event
 
     # Startup
     print("Starting application...")
@@ -1366,7 +1445,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"Error loading dictionaries: {e}")
 
-    fill_charts_for_CL(get_one_token())
+    #fill_charts_for_CL(get_one_token()) # bun_charts is filled by thread.
 
     # Initialize stored jango data - first try to load from file, then update
     print("Initializing jango data...")
@@ -1427,16 +1506,45 @@ async def lifespan(app: FastAPI):
         print(f"Error starting background timer thread: {e}")
         # Don't raise - allow app to start even if thread fails
     
+    # Start bun_charts update thread
+    print("Starting bun_charts update thread...")
+    try:
+        bun_charts_thread_stop_event.clear()
+        bun_charts_thread = threading.Thread(
+            target=update_bun_charts_thread,
+            daemon=False,
+            name="BunChartsUpdateThread"
+        )
+        bun_charts_thread.start()
+        print("Bun charts update thread started successfully")
+    except Exception as e:
+        print(f"Error starting bun_charts update thread: {e}")
+    
     print("Application startup complete")
     yield
     
     # Shutdown
     print("Shutting down application...")
+    
+    # Stop bun_charts update thread
+    print("Stopping bun_charts update thread...")
+    try:
+        bun_charts_thread_stop_event.set()
+        if bun_charts_thread and bun_charts_thread.is_alive():
+            bun_charts_thread.join(timeout=5)
+            if bun_charts_thread.is_alive():
+                print("Warning: Bun charts thread did not stop within timeout")
+            else:
+                print("Bun charts thread stopped successfully")
+    except Exception as e:
+        print(f"Error stopping bun_charts thread: {e}")
+    
+    # Stop background timer thread
     try:
         if background_thread and background_thread.is_alive():
             print("Stopping background timer thread...")
             thread_stop_event.set()
-            background_thread.join(timeout=5.0)  # Wait up to 5 seconds for thread to finish
+            background_thread.join(timeout=5.0)
             if background_thread.is_alive():
                 print("Warning: Background thread did not stop within timeout")
             else:
