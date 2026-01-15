@@ -534,7 +534,7 @@ wait_hour_change = False
 def test_ret_status(stk_cd, ret_status):
     global now, wait_hour_change
     if not isinstance(ret_status, dict):
-        return
+        return ''
 
     rcde = ret_status.get('return_code')
     rmsg = ret_status.get('return_msg', '')
@@ -549,7 +549,7 @@ def test_ret_status(stk_cd, ret_status):
             print(rmsg)
             wait_hour_change = True
         print(now, rcde)
-
+    return rcde
 
 jango_token = {}
 
@@ -694,6 +694,7 @@ oso 미체결 LIST    N
 - stop_pric 스톱가 String  N   20  스톱지정가주문 스톱가
 """
 
+# 매수 매도를 가리지 않고, NXT 거래라면 무조건 취소한다.
 def cancel_nxt_trade(now):
     miche = get_miche()
     for m in miche.values():
@@ -821,7 +822,7 @@ def log_print(stk_cd, msg):
         print(f"Error in log_print for {stk_cd}: {e}")
 
 
-def buy_cl(now):
+def buy_cl(now, stex):
     global order_count, interested_stocks, gap_prices, bun_charts
     global stored_jango_data, stored_miche_data, key_list
 
@@ -837,11 +838,11 @@ def buy_cl(now):
 
         #ACCT = key['ACCT']
         MY_ACCESS_TOKEN = get_token(key['AK'], key['SK'])  # 접근토큰
-        buy_cl_by_account(ACCT, MY_ACCESS_TOKEN)
+        buy_cl_by_account(ACCT, MY_ACCESS_TOKEN, stex)
 
 gap_prices = {}
 
-def buy_cl_by_account(ACCT, MY_ACCESS_TOKEN):
+def buy_cl_by_account(ACCT, MY_ACCESS_TOKEN, stex):
     global order_count, working_status
     global gap_prices, new_day
 
@@ -853,13 +854,13 @@ def buy_cl_by_account(ACCT, MY_ACCESS_TOKEN):
             if not stk_cd in gap_prices:
                 gap_prices[stk_cd] = get_gap_price(MY_ACCESS_TOKEN, stk_cd)
 
-            buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_prices[stk_cd])
+            buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_prices[stk_cd])
         if not new_day:
             break
     pass
 
 
-def buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
+def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
     global working_status, order_count, now
     stk_nm = int_stock['stock_name']
 
@@ -905,7 +906,6 @@ def buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
         return
 
     price_index = get_price_index(int_stock['color'])
-    stex = 'KRX'
     trde_tp = '0'
     if ordered[stk_cd] < 1 :
         bp = gap_price['price'][price_index]
@@ -919,8 +919,8 @@ def buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
                 #ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trade_tp=trde_tp, cond_uv='')
                 ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trde_tp=trde_tp, cond_uv='')
                 log_print(stk_cd, '1_buy_order_result: {}'.format(ret_status))
-                test_ret_status(stk_cd, ret_status)
-            ordered[stk_cd] += 1
+                if test_ret_status(stk_cd, ret_status) == 200 :
+                    ordered[stk_cd] += 1
             log_print(stk_cd, 'price:{} current buy order for {} {} {} is {}'.format(ord_price, ACCT, stk_cd, stk_nm, ordered[stk_cd]))
     if ordered[stk_cd] < 2:
         bp = gap_price['price'][price_index+1]
@@ -934,8 +934,8 @@ def buy_cl_stk_cd(ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
             if ord_qty > 0 :
                 ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trde_tp=trde_tp, cond_uv='')
                 log_print(stk_cd, '2_buy_order_result: {}'.format(ret_status))
-                test_ret_status(stk_cd, ret_status)
-            ordered[stk_cd] += 1
+                if test_ret_status(stk_cd, ret_status) == 200 :
+                    ordered[stk_cd] += 1
             log_print(stk_cd, 'price:{} current buy order for {} {} {} is {}'.format(ord_price, ACCT, stk_cd, stk_nm, ordered[stk_cd]))
 
     pass
@@ -986,12 +986,13 @@ def daily_work():
     if is_between(now, nxt_start_time, nxt_end_time):
         current_status = 'NXT'
         sell_jango(stored_jango_data, 'NXT')
-    elif is_between(now, nxt_end_time, krx_start_time):
+        buy_cl(now, 'NXT')
+    elif is_between(now, nxt_end_time, krx_start_time): # NXT 끝나고 KRX 시작 전
         current_status = 'NXT->KRX'
         if not nxt_cancelled:
             nxt_cancelled = True
             cancel_nxt_trade(now)
-    elif is_between(now, krx_start_time, nxt_fin_time):
+    elif is_between(now, krx_start_time, nxt_fin_time): # KRX 거래소 시작시간과 NXT 종료 시간 사이
         if is_between(now, krx_start_time, krx_end_time):
             current_status = 'KRX'
             if not krx_first:
@@ -999,7 +1000,7 @@ def daily_work():
                 krx_first = True
             sell_jango(stored_jango_data, 'KRX')
             working_status='calling buy_cl'
-            buy_cl(now)
+            buy_cl(now, 'KRX')
         else:
             current_status = 'NXT'
     else:
