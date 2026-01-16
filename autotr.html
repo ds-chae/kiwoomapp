@@ -426,26 +426,27 @@
 				display: inline-block;
 			}
 			#interested-stocks-container table {
-				min-width: 600px;
+				min-width: 700px;
 				width: auto;
 			}
-			/* Increase stock name width in interested stocks section (2nd column) to prevent wrapping */
+			/* yyyymmdd column (2nd column) */
 			#interested-stocks-container table th:nth-child(2),
 			#interested-stocks-container table td:nth-child(2) {
+				width: 90px;
+				max-width: 90px;
+				min-width: 90px;
+				white-space: nowrap;
+				overflow: hidden;
+			}
+			/* Increase stock name width in interested stocks section (3rd column) to prevent wrapping */
+			#interested-stocks-container table th:nth-child(3),
+			#interested-stocks-container table td:nth-child(3) {
 				width: 200px;
 				min-width: 200px;
 				white-space: nowrap;
 				overflow: hidden;
 			}
 			/* Fix column widths in interested stocks section */
-			#interested-stocks-container table th:nth-child(3),
-			#interested-stocks-container table td:nth-child(3) {
-				width: 60px;
-				max-width: 60px;
-				min-width: 60px;
-				white-space: nowrap;
-				overflow: hidden;
-			}
 			#interested-stocks-container table th:nth-child(4),
 			#interested-stocks-container table td:nth-child(4) {
 				width: 60px;
@@ -454,6 +455,39 @@
 				white-space: nowrap;
 				overflow: hidden;
 			}
+			#interested-stocks-container table th:nth-child(5),
+			#interested-stocks-container table td:nth-child(5) {
+				width: 60px;
+				max-width: 60px;
+				min-width: 60px;
+				white-space: nowrap;
+				overflow: hidden;
+			}
+			#interested-stocks-container table th:nth-child(7),
+			#interested-stocks-container table td:nth-child(7) {
+				width: 80px;
+				max-width: 80px;
+				min-width: 80px;
+				white-space: nowrap;
+				overflow: hidden;
+			}
+			#interested-stocks-container table th:nth-child(8),
+			#interested-stocks-container table td:nth-child(8) {
+				width: 50px;
+				max-width: 50px;
+				min-width: 50px;
+				white-space: nowrap;
+				overflow: hidden;
+			}
+			#interested-stocks-container table th:nth-child(9),
+			#interested-stocks-container table td:nth-child(9) {
+				width: 40px;
+				max-width: 40px;
+				min-width: 40px;
+				white-space: nowrap;
+				overflow: hidden;
+			}
+			/* Fix BAmount column width to 8 digits */
 			#interested-stocks-container table th:nth-child(6),
 			#interested-stocks-container table td:nth-child(6) {
 				width: 80px;
@@ -462,34 +496,9 @@
 				white-space: nowrap;
 				overflow: hidden;
 			}
-			#interested-stocks-container table th:nth-child(7),
-			#interested-stocks-container table td:nth-child(7) {
-				width: 50px;
-				max-width: 50px;
-				min-width: 50px;
-				white-space: nowrap;
-				overflow: hidden;
-			}
-			#interested-stocks-container table th:nth-child(8),
-			#interested-stocks-container table td:nth-child(8) {
-				width: 40px;
-				max-width: 40px;
-				min-width: 40px;
-				white-space: nowrap;
-				overflow: hidden;
-			}
-			/* Fix BAmount column width to 8 digits */
-			#interested-stocks-container table th:nth-child(5),
-			#interested-stocks-container table td:nth-child(5) {
-				width: 80px;
-				max-width: 80px;
-				min-width: 80px;
-				white-space: nowrap;
-				overflow: hidden;
-			}
 			/* Fix Action column width to 6 digits */
-			#interested-stocks-container table th:nth-child(9),
-			#interested-stocks-container table td:nth-child(9) {
+			#interested-stocks-container table th:nth-child(10),
+			#interested-stocks-container table td:nth-child(10) {
 				width: 60px;
 				max-width: 60px;
 				min-width: 60px;
@@ -2553,6 +2562,7 @@
 										<thead>
 											<tr>
 												<th>Code</th>
+												<th>yyyymmdd</th>
 												<th>Name</th>
 												<th>COLOR</th>
 												<th>BType</th>
@@ -2565,7 +2575,7 @@
 										</thead>
 										<tbody>
 											<tr>
-												<td colspan="9" style="text-align: center; padding: 20px; color: #7f8c8d;">
+												<td colspan="10" style="text-align: center; padding: 20px; color: #7f8c8d;">
 													No interested stocks added yet
 												</td>
 											</tr>
@@ -2582,6 +2592,7 @@
 									<thead>
 										<tr>
 											<th>Code</th>
+											<th>yyyymmdd</th>
 											<th>Name</th>
 											<th>COLOR</th>
 											<th>BType</th>
@@ -2609,6 +2620,7 @@
 						for (const stockCode of stockCodes) {
 							const stockInfo = interestedStocksData[stockCode];
 							const stockName = stockInfo.stock_name || '-';
+							const stockYyyymmdd = stockInfo.yyyymmdd || '-';
 							const stockColor = stockInfo.color || '';
 							const stockBtype = stockInfo.btype || '';
 							const stockBamount = stockInfo.bamount || '';
@@ -2636,8 +2648,9 @@
 							}
 							
 							htmlContent += `
-								<tr data-stock-code="${stockCode}" data-stock-name="${stockName}" data-stock-color="${stockColor}" data-stock-btype="${stockBtype}" data-stock-bamount="${stockBamount}" data-stock-price="${stockPrice}" data-stock-rate="${stockRate}" data-stock-gaprate="${stockGaprate}" onclick="selectInterestedStockRow(this)">
+								<tr data-stock-code="${stockCode}" data-stock-name="${stockName}" data-stock-yyyymmdd="${stockYyyymmdd}" data-stock-color="${stockColor}" data-stock-btype="${stockBtype}" data-stock-bamount="${stockBamount}" data-stock-price="${stockPrice}" data-stock-rate="${stockRate}" data-stock-gaprate="${stockGaprate}" onclick="selectInterestedStockRow(this)">
 									<td><strong>${stockCode}</strong></td>
+									<td>${stockYyyymmdd}</td>
 									<td>${stockName}</td>
 									<td>${colorDisplay}</td>
 									<td>${stockBtype || '-'}</td>
@@ -2672,6 +2685,7 @@
 									<thead>
 										<tr>
 											<th>Code</th>
+											<th>yyyymmdd</th>
 											<th>Name</th>
 											<th>COLOR</th>
 											<th>BType</th>
@@ -2684,7 +2698,7 @@
 									</thead>
 									<tbody>
 										<tr>
-											<td colspan="9" style="text-align: center; padding: 20px; color: #7f8c8d;">
+											<td colspan="10" style="text-align: center; padding: 20px; color: #7f8c8d;">
 												Error loading interested stocks
 											</td>
 										</tr>

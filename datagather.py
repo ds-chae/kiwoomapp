@@ -22,6 +22,65 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CHART_DIR = os.path.join(BASE_DIR, 'chart_data', 'day')
 INTERESTED_STOCKS_FILE = os.path.join(BASE_DIR, 'interested_stocks.json')
 LAST_RUN_FILE = os.path.join(BASE_DIR, 'last_gathering_time.json')
+LOGS_DIR = os.path.join(BASE_DIR, 'logs')
+
+
+def _safe_join_logs(rel_path: str) -> str | None:
+    """Return absolute path under LOGS_DIR or None if invalid/escape attempt."""
+    if not rel_path:
+        return None
+    rel_path = rel_path.replace('\\', '/')
+    # prevent absolute paths
+    if rel_path.startswith('/') or rel_path.startswith('..'):
+        return None
+    full = os.path.abspath(os.path.join(LOGS_DIR, rel_path))
+    root = os.path.abspath(LOGS_DIR)
+    if not (full == root or full.startswith(root + os.sep)):
+        return None
+    return full
+
+
+def _build_logs_tree(base_dir: str) -> dict:
+    """Build a nested tree of logs directory."""
+    def build_node(abs_path: str) -> dict:
+        name = os.path.basename(abs_path) or abs_path
+        rel = os.path.relpath(abs_path, base_dir).replace('\\', '/')
+        if os.path.isdir(abs_path):
+            children = []
+            try:
+                entries = list(os.listdir(abs_path))
+            except Exception:
+                entries = []
+            # Sort: date-like dirs (YYYYMMDD) desc first, then other dirs asc, then files asc
+            def _is_date_dir(entry_name: str) -> bool:
+                return len(entry_name) == 8 and entry_name.isdigit()
+
+            def _sort_key(entry_name: str):
+                child_abs = os.path.join(abs_path, entry_name)
+                is_dir = os.path.isdir(child_abs)
+                is_date = _is_date_dir(entry_name)
+                # group: 0=date dir, 1=other dir, 2=file
+                group = 0 if (is_dir and is_date) else (1 if is_dir else 2)
+                # date dirs: sort descending by numeric value
+                if group == 0:
+                    return (group, -int(entry_name))
+                return (group, entry_name.lower())
+
+            entries.sort(key=_sort_key)
+            for e in entries:
+                # skip hidden
+                if e.startswith('.'):
+                    continue
+                child_abs = os.path.join(abs_path, e)
+                # allow directories and .txt files
+                if os.path.isdir(child_abs) or e.lower().endswith('.txt'):
+                    children.append(build_node(child_abs))
+            return {"type": "dir", "name": name, "path": rel, "children": children}
+        return {"type": "file", "name": name, "path": rel}
+
+    if not os.path.exists(base_dir):
+        return {"type": "dir", "name": "logs", "path": "", "children": []}
+    return build_node(base_dir)
 
 # Global status tracking
 status_info = {
@@ -774,6 +833,7 @@ async def root():
                 <a href="./analysis" class="btn-charts" style="margin-left: 10px;">🌳 Bounce Analysis</a>
                 <button onclick="makeCSV()" class="btn-charts" style="margin-left: 10px; border: none; cursor: pointer;">📄 Make CSV</button>
                 <a href="./lookcsv" class="btn-charts" style="margin-left: 10px;">📋 Look CSV</a>
+                <a href="./logs" class="btn-charts" style="margin-left: 10px;">🧾 Logs</a>
             </div>
             <div class="content">
                 <div class="status-card">
@@ -816,6 +876,177 @@ async def root():
     </html>
     """
     return HTMLResponse(content=html_content)
+
+
+@app.get("/logs", response_class=HTMLResponse)
+@app.get("/stock/data/logs", response_class=HTMLResponse)
+@app.get("/stock/data/logs/", response_class=HTMLResponse)
+async def logs_page():
+    """Display log viewer page."""
+    html_content = """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Log Viewer</title>
+        <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f5f5f5; height: 100vh; overflow: hidden; }
+            .container { height: 100vh; display: flex; flex-direction: column; }
+            .header { padding: 10px 16px; background: white; border-bottom: 1px solid #ddd; display: flex; align-items: center; gap: 12px; }
+            .header a { text-decoration: none; color: #667eea; font-weight: 600; }
+            .title { font-size: 16px; font-weight: 700; color: #333; }
+            .two-pane { flex: 1; min-height: 0; display: flex; gap: 10px; padding: 10px; }
+            .left { width: 340px; background: white; border: 1px solid #ddd; border-radius: 6px; overflow: auto; padding: 10px; }
+            .right { flex: 1; background: white; border: 1px solid #ddd; border-radius: 6px; overflow: auto; padding: 10px; }
+            .tree ul { list-style: none; padding-left: 14px; }
+            .tree li { padding: 2px 0; }
+            .node { cursor: pointer; user-select: none; font-size: 13px; color: #333; }
+            .node.dir::before { content: "▸ "; color: #666; }
+            .node.dir.open::before { content: "▾ "; }
+            .node.file::before { content: "📄 "; }
+            .node:hover { background: #f3f4ff; }
+            pre { white-space: pre; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; line-height: 1.35; }
+            .muted { color: #888; font-size: 12px; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <a href="./">← Back</a>
+                <div class="title">🧾 Log Viewer</div>
+                <div class="muted" id="status"></div>
+            </div>
+            <div class="two-pane">
+                <div class="left">
+                    <div class="tree" id="tree"></div>
+                </div>
+                <div class="right">
+                    <pre id="content" class="muted">Select a log file from the left.</pre>
+                </div>
+            </div>
+        </div>
+        <script>
+            // Cache-bust the page itself
+            (function ensureCacheBuster() {
+                try {
+                    const url = new URL(window.location.href);
+                    if (!url.searchParams.has('t')) {
+                        url.searchParams.set('t', String(Date.now()));
+                        window.location.replace(url.toString());
+                    }
+                } catch (e) {}
+            })();
+
+            const statusEl = document.getElementById('status');
+            const treeEl = document.getElementById('tree');
+            const contentEl = document.getElementById('content');
+
+            function setStatus(msg) { statusEl.textContent = msg || ''; }
+
+            function escapeText(s) {
+                return (s ?? '').toString();
+            }
+
+            function renderNode(node) {
+                const li = document.createElement('li');
+                const label = document.createElement('div');
+                label.className = 'node ' + (node.type === 'dir' ? 'dir' : 'file');
+                label.textContent = node.name;
+                li.appendChild(label);
+
+                if (node.type === 'dir') {
+                    const ul = document.createElement('ul');
+                    ul.style.display = 'none';
+                    li.appendChild(ul);
+                    label.addEventListener('click', () => {
+                        const isOpen = ul.style.display !== 'none';
+                        ul.style.display = isOpen ? 'none' : 'block';
+                        label.classList.toggle('open', !isOpen);
+                        if (!isOpen && ul.childNodes.length === 0) {
+                            (node.children || []).forEach(child => ul.appendChild(renderNode(child)));
+                        }
+                    });
+                } else {
+                    label.addEventListener('click', async () => {
+                        setStatus('Loading ' + node.path + ' ...');
+                        try {
+                            const resp = await fetch('./api/logs/file?path=' + encodeURIComponent(node.path) + '&t=' + Date.now());
+                            const data = await resp.json();
+                            if (data.status === 'success') {
+                                contentEl.classList.remove('muted');
+                                contentEl.textContent = escapeText(data.content);
+                                setStatus(node.path);
+                            } else {
+                                contentEl.classList.add('muted');
+                                contentEl.textContent = 'Error: ' + (data.message || 'unknown');
+                                setStatus('Error');
+                            }
+                        } catch (e) {
+                            contentEl.classList.add('muted');
+                            contentEl.textContent = 'Error: ' + e.message;
+                            setStatus('Error');
+                        }
+                    });
+                }
+                return li;
+            }
+
+            async function loadTree() {
+                setStatus('Loading tree...');
+                try {
+                    const resp = await fetch('./api/logs/tree?t=' + Date.now());
+                    const data = await resp.json();
+                    if (data.status !== 'success') throw new Error(data.message || 'failed');
+                    const root = data.tree;
+                    treeEl.innerHTML = '';
+                    const ul = document.createElement('ul');
+                    (root.children || []).forEach(child => ul.appendChild(renderNode(child)));
+                    treeEl.appendChild(ul);
+                    setStatus('');
+                } catch (e) {
+                    treeEl.innerHTML = '<div class="muted">Failed to load logs tree: ' + e.message + '</div>';
+                    setStatus('Error');
+                }
+            }
+
+            loadTree();
+        </script>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
+
+
+@app.get("/api/logs/tree")
+@app.get("/stock/data/api/logs/tree")
+async def logs_tree_api():
+    """Return logs directory tree."""
+    try:
+        tree = _build_logs_tree(LOGS_DIR)
+        return JSONResponse(content={"status": "success", "tree": tree})
+    except Exception as e:
+        return JSONResponse(content={"status": "error", "message": str(e)})
+
+
+@app.get("/api/logs/file")
+@app.get("/stock/data/api/logs/file")
+async def logs_file_api(path: str = Query("")):
+    """Return log file content (text)."""
+    try:
+        full = _safe_join_logs(path)
+        if not full or not os.path.exists(full):
+            return JSONResponse(content={"status": "error", "message": "File not found"})
+        if os.path.isdir(full):
+            return JSONResponse(content={"status": "error", "message": "Path is a directory"})
+        if not full.lower().endswith('.txt'):
+            return JSONResponse(content={"status": "error", "message": "Only .txt files allowed"})
+        with open(full, 'r', encoding='utf-8', errors='replace') as f:
+            content = f.read()
+        return JSONResponse(content={"status": "success", "content": content})
+    except Exception as e:
+        return JSONResponse(content={"status": "error", "message": str(e)})
 
 @app.get("/api/status")
 @app.get("/stock/data/api/status")
@@ -890,7 +1121,7 @@ async def charts_page():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Chart Viewer</title>
+        <title>Chart ViewerX</title>
         <style>
             * {
                 margin: 0;
@@ -1014,6 +1245,7 @@ async def charts_page():
                 overflow-x: scroll; /* Always show scrollbar */
                 overflow-y: hidden;
                 scroll-behavior: smooth;
+                position: relative;
             }
             .chart-container::-webkit-scrollbar {
                 height: 12px;
@@ -1086,6 +1318,14 @@ async def charts_page():
                 color: #999;
                 font-size: 16px;
             }
+            .minute-hover-canvas {
+                /* pinned overlay; stays visible while horizontal scrolling */
+                position: sticky;
+                left: 6px;
+                top: 6px;
+                z-index: 9999;
+                pointer-events: none;
+            }
         </style>
     </head>
     <body>
@@ -1132,6 +1372,7 @@ async def charts_page():
                 </div>
                 <div class="chart-container">
                     <div class="chart-title">Minute Chart</div>
+                    <canvas id="minute-hover-canvas" class="minute-hover-canvas" width="240" height="38"></canvas>
                     <div class="chart-wrapper">
                         <div class="candlestick-chart">
                             <canvas id="minute-chart"></canvas>
@@ -1144,8 +1385,22 @@ async def charts_page():
             </div>
         </div>
         <script>
+            // Cache-bust the page itself (fixes stale HTML/JS from browser cache)
+            (function ensureCacheBuster() {
+                try {
+                    const url = new URL(window.location.href);
+                    if (!url.searchParams.has('t')) {
+                        url.searchParams.set('t', String(Date.now()));
+                        window.location.replace(url.toString());
+                    }
+                } catch (e) {
+                    // ignore
+                }
+            })();
+
             let dailyChartData = null;
             let minuteChartData = null;
+            let minuteHoverInitialized = false;
             
             function selectStock(stockCode, dateStr) {
                 document.querySelectorAll('.stock-item').forEach(item => {
@@ -1636,6 +1891,19 @@ async def charts_page():
                         
                         ctx.stroke();
                     }
+
+                    // Store hover meta for minute chart cursor readout (date + yellow value)
+                    try {
+                        window.__minuteChartHover = {
+                            labels: priceData.map(p => p.label),
+                            yellowValues: calculatedPoints.map(p => p.value),
+                            leftMargin: leftMargin,
+                            poleSpacing: poleSpacing,
+                            poleWidth: poleWidth
+                        };
+                    } catch (e) {
+                        // ignore
+                    }
                 }
                 
                 // Draw day change lines for minute charts (if timestamp format is YYYYMMDDHHMMSS)
@@ -1750,8 +2018,83 @@ async def charts_page():
                 if (candlestickCanvas) {
                     drawVolumeChart('minute-volume-chart', data, getLabel, candlestickCanvas.width);
                 }
+                setupMinuteChartHover();
                 // Scroll to rightmost (latest) data
                 scrollChartToRight('minute-chart');
+            }
+
+            function formatMinuteLabel(label) {
+                // label is expected to be YYYYMMDDHHMMSS (or shorter)
+                if (!label) return '';
+                if (label.length >= 12) {
+                    const y = label.substring(0, 4);
+                    const m = label.substring(4, 6);
+                    const d = label.substring(6, 8);
+                    const hh = label.substring(8, 10);
+                    const mm = label.substring(10, 12);
+                    return `${y}-${m}-${d} ${hh}:${mm}`;
+                }
+                if (label.length === 8) {
+                    const y = label.substring(0, 4);
+                    const m = label.substring(4, 6);
+                    const d = label.substring(6, 8);
+                    return `${y}-${m}-${d}`;
+                }
+                return label;
+            }
+
+            function setupMinuteChartHover() {
+                if (minuteHoverInitialized) return;
+                const canvas = document.getElementById('minute-chart');
+                const hoverCanvas = document.getElementById('minute-hover-canvas');
+                if (!canvas || !hoverCanvas) return;
+                const hctx = hoverCanvas.getContext('2d');
+                if (!hctx) return;
+
+                const handleMove = (clientX, offsetX) => {
+                    const meta = window.__minuteChartHover;
+                    if (!meta || !meta.labels || !meta.yellowValues) return;
+
+                    const x = (typeof offsetX === 'number')
+                        ? offsetX
+                        : (clientX - canvas.getBoundingClientRect().left);
+                    const idxRaw = (x - meta.leftMargin - (meta.poleWidth / 2)) / meta.poleSpacing;
+                    let idx = Math.round(idxRaw);
+                    if (idx < 0) idx = 0;
+                    if (idx >= meta.labels.length) idx = meta.labels.length - 1;
+
+                    const label = meta.labels[idx] || '';
+                    const yv = meta.yellowValues[idx];
+                    const yvText = (typeof yv === 'number' && !isNaN(yv)) ? Math.round(yv).toLocaleString() : '-';
+
+                    // Draw pinned overlay text on overlay canvas
+                    hctx.clearRect(0, 0, hoverCanvas.width, hoverCanvas.height);
+                    hctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+                    hctx.fillRect(0, 0, hoverCanvas.width, hoverCanvas.height);
+                    hctx.fillStyle = '#fff';
+                    hctx.font = '12px monospace';
+                    hctx.textBaseline = 'top';
+                    hctx.fillText(formatMinuteLabel(label), 6, 4);
+                    hctx.fillText(`YL: ${yvText}`, 6, 20);
+                };
+
+                // Mouse + pointer (covers trackpad/pen, and some mobile browsers)
+                canvas.addEventListener('mousemove', (evt) => handleMove(evt.clientX, evt.offsetX));
+                canvas.addEventListener('pointermove', (evt) => handleMove(evt.clientX, evt.offsetX));
+                // Touch fallback
+                canvas.addEventListener('touchmove', (evt) => {
+                    if (!evt.touches || evt.touches.length === 0) return;
+                    handleMove(evt.touches[0].clientX, undefined);
+                }, { passive: true });
+
+                canvas.addEventListener('mouseleave', () => {
+                    hctx.clearRect(0, 0, hoverCanvas.width, hoverCanvas.height);
+                });
+                canvas.addEventListener('pointerleave', () => {
+                    hctx.clearRect(0, 0, hoverCanvas.width, hoverCanvas.height);
+                });
+
+                minuteHoverInitialized = true;
             }
             
             function drawVolumeChart(canvasId, data, getLabel, candlestickWidth) {
@@ -2572,6 +2915,7 @@ async def lookcsv_page():
                 flex-direction: column;
                 min-height: 0;
                 margin-bottom: 10px;
+                position: relative;
             }
             .chart-container:last-child {
                 margin-bottom: 0;
@@ -2587,6 +2931,7 @@ async def lookcsv_page():
                 flex-direction: column;
                 flex: 1;
                 min-height: 0;
+                position: relative;
             }
             .candlestick-chart {
                 flex: 4;
@@ -2607,6 +2952,14 @@ async def lookcsv_page():
                 display: block;
                 width: auto;
                 height: 100%;
+            }
+            .minute-hover-canvas {
+                /* pinned overlay; stays visible while horizontal scrolling */
+                position: sticky;
+                left: 6px;
+                top: 6px;
+                z-index: 9999;
+                pointer-events: none;
             }
         </style>
     </head>
@@ -2638,6 +2991,7 @@ async def lookcsv_page():
                     </div>
                     <div class="chart-container">
                         <div class="chart-wrapper">
+                            <canvas id="minute-hover-canvas" class="minute-hover-canvas" width="240" height="38"></canvas>
                             <div class="candlestick-chart">
                                 <canvas id="minute-chart"></canvas>
                             </div>
@@ -2650,12 +3004,26 @@ async def lookcsv_page():
             </div>
         </div>
         <script>
+            // Cache-bust the page itself (fixes stale HTML/JS from browser cache)
+            (function ensureCacheBuster() {
+                try {
+                    const url = new URL(window.location.href);
+                    if (!url.searchParams.has('t')) {
+                        url.searchParams.set('t', String(Date.now()));
+                        window.location.replace(url.toString());
+                    }
+                } catch (e) {
+                    // ignore
+                }
+            })();
+
             let csvData = null;
             let selectedCsvFile = null;
             let dailyChartData = null;
             let minuteChartData = null;
             let highestDate = '';
             let successFailure = '';
+            let minuteHoverInitialized = false;
             
             // Load CSV file list
             function loadCsvList() {
@@ -3145,6 +3513,19 @@ async def lookcsv_page():
                         
                         ctx.stroke();
                     }
+
+                    // Store hover meta for minute chart cursor readout (date + yellow value)
+                    try {
+                        window.__minuteChartHover = {
+                            labels: priceData.map(p => p.label),
+                            yellowValues: calculatedPoints.map(p => p.value),
+                            leftMargin: leftMargin,
+                            poleSpacing: poleSpacing,
+                            poleWidth: poleWidth
+                        };
+                    } catch (e) {
+                        // ignore
+                    }
                 }
                 
                 // Draw day change lines for minute charts (if timestamp format is YYYYMMDDHHMMSS)
@@ -3328,6 +3709,7 @@ async def lookcsv_page():
                 if (candlestickCanvas) {
                     drawVolumeChartCSV('minute-volume-chart', data, getLabel, candlestickCanvas.width);
                 }
+                setupMinuteChartHover();
                 // Scroll to background fill position
                 if (scrollPos !== null && scrollPos !== undefined) {
                     const wrapper = candlestickCanvas ? candlestickCanvas.closest('.chart-wrapper') : null;
@@ -3338,6 +3720,78 @@ async def lookcsv_page():
                         }, 100);
                     }
                 }
+            }
+
+            function formatMinuteLabel(label) {
+                // label is expected to be YYYYMMDDHHMMSS (or shorter)
+                if (!label) return '';
+                if (label.length >= 12) {
+                    const y = label.substring(0, 4);
+                    const m = label.substring(4, 6);
+                    const d = label.substring(6, 8);
+                    const hh = label.substring(8, 10);
+                    const mm = label.substring(10, 12);
+                    return `${y}-${m}-${d} ${hh}:${mm}`;
+                }
+                if (label.length === 8) {
+                    const y = label.substring(0, 4);
+                    const m = label.substring(4, 6);
+                    const d = label.substring(6, 8);
+                    return `${y}-${m}-${d}`;
+                }
+                return label;
+            }
+
+            function setupMinuteChartHover() {
+                if (minuteHoverInitialized) return;
+                const canvas = document.getElementById('minute-chart');
+                const hoverCanvas = document.getElementById('minute-hover-canvas');
+                if (!canvas || !hoverCanvas) return;
+                const hctx = hoverCanvas.getContext('2d');
+                if (!hctx) return;
+
+                const handleMove = (clientX, offsetX) => {
+                    const meta = window.__minuteChartHover;
+                    if (!meta || !meta.labels || !meta.yellowValues) return;
+
+                    const x = (typeof offsetX === 'number')
+                        ? offsetX
+                        : (clientX - canvas.getBoundingClientRect().left);
+                    const idxRaw = (x - meta.leftMargin - (meta.poleWidth / 2)) / meta.poleSpacing;
+                    let idx = Math.round(idxRaw);
+                    if (idx < 0) idx = 0;
+                    if (idx >= meta.labels.length) idx = meta.labels.length - 1;
+
+                    const label = meta.labels[idx] || '';
+                    const yv = meta.yellowValues[idx];
+                    const yvText = (typeof yv === 'number' && !isNaN(yv)) ? Math.round(yv).toLocaleString() : '-';
+
+                    // Draw pinned overlay text on overlay canvas
+                    hctx.clearRect(0, 0, hoverCanvas.width, hoverCanvas.height);
+                    hctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+                    hctx.fillRect(0, 0, hoverCanvas.width, hoverCanvas.height);
+                    hctx.fillStyle = '#fff';
+                    hctx.font = '12px monospace';
+                    hctx.textBaseline = 'top';
+                    hctx.fillText(formatMinuteLabel(label), 6, 4);
+                    hctx.fillText(`YL: ${yvText}`, 6, 20);
+                };
+
+                canvas.addEventListener('mousemove', (evt) => handleMove(evt.clientX, evt.offsetX));
+                canvas.addEventListener('pointermove', (evt) => handleMove(evt.clientX, evt.offsetX));
+                canvas.addEventListener('touchmove', (evt) => {
+                    if (!evt.touches || evt.touches.length === 0) return;
+                    handleMove(evt.touches[0].clientX, undefined);
+                }, { passive: true });
+
+                canvas.addEventListener('mouseleave', () => {
+                    hctx.clearRect(0, 0, hoverCanvas.width, hoverCanvas.height);
+                });
+                canvas.addEventListener('pointerleave', () => {
+                    hctx.clearRect(0, 0, hoverCanvas.width, hoverCanvas.height);
+                });
+
+                minuteHoverInitialized = true;
             }
             
             // Initialize

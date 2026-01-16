@@ -280,7 +280,9 @@ def print_j(j):
             ord_uv = '10560'
             if rmnd_qty != '0':
                 trde_tp = '0' # 매매구분 0:보통 , 3:시장가 , 5:조건부지정가 , 81:장마감후시간외 , 61:장시작전시간외, 62:시간외단일가 , 6:최유리지정가 , 7:최우선지정가 , 10:보통(IOC) , 13:시장가(IOC) , 16:최유리(IOC) , 20:보통(FOK) , 23:시장가(FOK) , 26:최유리(FOK) , 28:스톱지정가,29:중간가,30:중간가(IOC),31:중간가(FOK)
-                ret_status = sell_order(TOKEN, dmst_stex_tp='NXT', stk_cd=bal_rt['stk_cd'], ord_qty=rmnd_qty, ord_uv=ord_uv, trde_tp=trde_tp, cond_uv='')
+                stk_cd = bal_rt['stk_cd']
+                log_print(stk_cd, 'sell_order NXT, qty={} price={}'.format(rmnd_qty, ord_uv))
+                ret_status = sell_order(TOKEN, dmst_stex_tp='NXT', stk_cd=stk_cd, ord_qty=rmnd_qty, ord_uv=ord_uv, trde_tp=trde_tp, cond_uv='')
                 print('sell_order_result')
                 print(ret_status)
                 rcde = ret_status['return_code']
@@ -390,11 +392,11 @@ def cancel_different_sell_order(now, ACCT, stk_cd, stk_nm, new_price):
             oqp = int(m['ord_pric'])
             if oqp != new_price:
                 result = cancel_order_main(now, jango_token[ACCT], m['stex_tp_txt'], m['ord_no'], stk_cd)
-                log_print(stk_cd, '{} cancel_different_sell_order {} {} old price={}, new price={}, result={}'.format(
-                          now, stk_cd, stk_nm, oqp, new_price, result))
+                log_print(stk_cd, 'cancel_different_sell_order old price={}, new price={}, result={}'.format(
+                          oqp, new_price, result))
                 cancel_count += 1
     if cancel_count != 0:
-        log_print(stk_cd, 'cancel_different_sell_order {} {} {} {} returns {}.'.format(ACCT, stk_cd, stk_nm, new_price, cancel_count))
+        log_print(stk_cd, 'cancel_different_sell_order ACCT={} np={} count={}.'.format(ACCT, new_price, cancel_count))
     return cancel_count
 
 
@@ -468,7 +470,7 @@ def calculate_sell_price(MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk_nm):
         if not stk_cd in gap_prices:
             gap_prices[stk_cd] = get_gap_price(MY_ACCESS_TOKEN, stk_cd)
         gap_price = gap_prices[stk_cd]
-        log_print(stk_cd, '{} before get_low_after_high'.format(now))
+        log_print(stk_cd, ' before get_low_after_high')
         last_get_bun_time[stk_cd] = now
         # Try to use bun_charts dict first, otherwise call get_bun_chart
         bun_chart = None
@@ -482,12 +484,12 @@ def calculate_sell_price(MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk_nm):
             # bun_chart = get_bun_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm)
 
         lowest = get_low_after_high(bun_chart)
-        log_print(stk_cd, '{} get_low_after_high {} returns {}'.format(now, stk_nm, lowest))
+        log_print(stk_cd, 'get_low_after_high {} returns {}'.format(stk_nm, lowest))
         if lowest != 0 :
             gap = float(gap_price['gap']) * 2
             cl_price = round_trunc(int(lowest + gap * sellgap))
             last_cl_price[stk_cd] = cl_price
-            log_print(stk_cd, '{} cl_price for {} {} is {}, gap={}, lowest={}, gaprate={}'.format(now, stk_cd, stk_nm, cl_price, gap, lowest, sellgap))
+            log_print(stk_cd, ' cl_price is {}, gap={}, lowest={}, gaprate={}'.format(cl_price, gap, lowest, sellgap))
             return cl_price
 
     return 0
@@ -507,7 +509,7 @@ def call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_co
 
     upperlimit = get_upper_limit(MY_ACCESS_TOKEN, stk_cd)
     if sell_price > upperlimit :
-        log_print(stk_cd, '{} {} {} exceed upper limit {}'.format(stk_cd, stk_nm, sell_price, upperlimit))
+        log_print(stk_cd, ' {} exceed upper limit {}'.format(sell_price, upperlimit))
         return
 
     # if any cancelled sell order, try next
@@ -521,7 +523,7 @@ def call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_co
 
     working_status = 'call sell_order()'
     trde_tp = '0'  # 매매구분 0:보통 , 3:시장가 , 5:조건부지정가 , 81:장마감후시간외 , 61:장시작전시간외, 62:시간외단일가 , 6:최유리지정가 , 7:최우선지정가 , 10:보통(IOC) , 13:시장가(IOC) , 16:최유리(IOC) , 20:보통(FOK) , 23:시장가(FOK) , 26:최유리(FOK) , 28:스톱지정가,29:중간가,30:중간가(IOC),31:중간가(FOK)
-    log_print(stk_cd, 'sell_order({} {} qty={} price={})'.format(stk_cd, stk_nm, trde_able_qty_int, sell_price))
+    log_print(stk_cd, 'sell_order market={} qty={} price={}'.format(market, trde_able_qty_int, sell_price))
     ret_status = sell_order(MY_ACCESS_TOKEN, dmst_stex_tp=market, stk_cd=stk_cd,
                             ord_qty=str(trde_able_qty_int), ord_uv=str(sell_price), trde_tp=trde_tp, cond_uv='')
     log_print(stk_cd, ret_status)
@@ -694,8 +696,8 @@ oso 미체결 LIST    N
 - stop_pric 스톱가 String  N   20  스톱지정가주문 스톱가
 """
 
-# 매수 매도를 가리지 않고, NXT 거래라면 무조건 취소한다.
-def cancel_nxt_trade(now):
+# KRX, NXT에 따라서 매수 매도를 가리지 않고 무조건 취소한다.
+def cancel_all_trade(now, stex):
     miche = get_miche()
     for m in miche.values():
         if 'oso' in m:
@@ -704,10 +706,12 @@ def cancel_nxt_trade(now):
                 stex_tp = o['stex_tp']
                 ord_no = o['ord_no']
                 stk_cd = o['stk_cd']
-                if stex_tp == '1': # KRX
-                    #cancel_order_main(now, m['TOKEN'], 'KRX', ord_no, stk_cd)
+                if stex == 'KRX' and stex_tp == '1': # KRX를 취소한다.
+                    log_print(stk_cd, 'cancel KRX order {} {}'.format(o['io_tp_nm'], ord_no))
+                    cancel_order_main(now, m['TOKEN'], 'KRX', ord_no, stk_cd)
                     pass
-                elif stex_tp == '2': # NXT
+                elif stex == 'NXT' and stex_tp == '2': # NXT를 취소한다.
+                    log_print(stk_cd, 'cancel NXT order {} {}'.format(o['io_tp_nm'], ord_no))
                     cancel_order_main(now, m['TOKEN'], 'NXT', ord_no, stk_cd)
         pass
 
@@ -769,7 +773,7 @@ nxt_fin_time = time(20, 0)
 
 new_day = False
 nxt_cancelled = False
-krx_first = False
+krx_cancelled = False
 not_nxt_cd = {}
 
 def cur_date():
@@ -897,12 +901,12 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
         ordered[stk_cd] = 1
     else:
         ordered[stk_cd] = 0
-    log_print(stk_cd, 'ordered count for {} {} {} is {}, bsum={}'.format(ACCT, stk_cd, stk_nm, ordered[stk_cd], bsum))
+    log_print(stk_cd, 'ordered count for {} is {}, bsum={}'.format(ACCT, ordered[stk_cd], bsum))
     if ordered[stk_cd] >= 2:
         return
 
     if not stk_cd in gap_prices:
-        log_print(stk_cd, 'getting bun_chart or bun_price for {} {} failed'.format(stk_cd, stk_nm));
+        log_print(stk_cd, 'getting bun_chart or bun_price failed');
         return
 
     price_index = get_price_index(int_stock['color'])
@@ -917,12 +921,13 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
             ord_qty = bamount // ord_price
             if ord_qty > 0 :
                 #ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trade_tp=trde_tp, cond_uv='')
+                log_print(stk_cd, 'buy_order market={}, qty={} price={}'.format(stex, ord_qty, ord_price))
                 ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trde_tp=trde_tp, cond_uv='')
                 log_print(stk_cd, '1_buy_order_result: {}'.format(ret_status))
                 if test_ret_status(stk_cd, ret_status) == 200 :
                     ordered[stk_cd] += 1
-            log_print(stk_cd, 'price:{} current buy order for {} {} {} is {}'.format(ord_price, ACCT, stk_cd, stk_nm, ordered[stk_cd]))
-    if ordered[stk_cd] < 2:
+            log_print(stk_cd, 'price:{} current buy order for {} is {}'.format(ord_price, ACCT, ordered[stk_cd]))
+    if 1 <= ordered[stk_cd] < 2:
         bp = gap_price['price'][price_index+1]
         buy_rate = (float(gap_price.get('current_price', 0))-bp) / bp # 현재 가격과 매수 가격의 차이
         if buy_rate >= 0.05 : # 매수 가격이랑 5%이상 차이가 난다면 매수 하지 않는다,
@@ -932,6 +937,7 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
             ord_qty = bamount // ord_price
             # ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trade_tp=trde_tp, cond_uv='')
             if ord_qty > 0 :
+                log_print(stk_cd, 'buy_order market={}, qty={} price={}'.format(stex, ord_qty, ord_price))
                 ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trde_tp=trde_tp, cond_uv='')
                 log_print(stk_cd, '2_buy_order_result: {}'.format(ret_status))
                 if test_ret_status(stk_cd, ret_status) == 200 :
@@ -946,8 +952,8 @@ working_status = 'initial'
 get_miche_failed = True
 
 def daily_work():
-    global new_day, krx_first, current_status, now
-    global nxt_start_time, nxt_end_time, krx_start_time,nxt_cancelled, krx_end_time, nxt_fin_time
+    global new_day, current_status, now
+    global nxt_start_time, nxt_end_time, krx_start_time,nxt_cancelled, krx_cancelled,  krx_end_time, nxt_fin_time
     global stored_jango_data, stored_miche_data, get_miche_failed, working_status
     global previous_jango_data_simplified
 
@@ -991,18 +997,21 @@ def daily_work():
         current_status = 'NXT->KRX'
         if not nxt_cancelled:
             nxt_cancelled = True
-            cancel_nxt_trade(now)
-    elif is_between(now, krx_start_time, nxt_fin_time): # KRX 거래소 시작시간과 NXT 종료 시간 사이
-        if is_between(now, krx_start_time, krx_end_time):
-            current_status = 'KRX'
-            if not krx_first:
-                print('{} krx_first get_jango and sell_jango.'.format(now))
-                krx_first = True
-            sell_jango(stored_jango_data, 'KRX')
-            working_status='calling buy_cl'
-            buy_cl(now, 'KRX')
+            cancel_all_trade(now, 'NXT')
+    elif is_between(now, krx_start_time, krx_end_time):
+        current_status = 'KRX'
+        sell_jango(stored_jango_data, 'KRX')
+        working_status='calling buy_cl KRX'
+        buy_cl(now, 'KRX')
+    elif is_between(now, krx_end_time, nxt_fin_time):  # KRX 거래소 시작시간과 NXT 종료 시간 사이
+        current_status = 'NXT'
+        if not krx_cancelled:
+            krx_cancelled = True
+            cancel_all_trade(now, 'KRX')
         else:
-            current_status = 'NXT'
+            sell_jango(stored_jango_data, 'NXT')
+            working_status='calling buy_cl NXT'
+            buy_cl(now, 'NXT')
     else:
         if (new_day):
             set_new_day(False)
@@ -1010,7 +1019,7 @@ def daily_work():
 
 
 def set_new_day(tf):
-    global new_day, waiting_shown, no_working_shown, nxt_cancelled, ktx_first, current_status
+    global new_day, waiting_shown, no_working_shown, nxt_cancelled, krx_cancelled, ktx_first, current_status
     global updown_list, access_token, now, today_yyyymmdd
     global bun_charts, bun_charts_lock
 
@@ -1025,6 +1034,7 @@ def set_new_day(tf):
         waiting_shown = False
         no_working_shown = False
         nxt_cancelled = False
+        krx_cancelled = False
         ktx_first = False
         current_status = 'NEW'
         not_nxt_cd = {}
@@ -1942,6 +1952,7 @@ async def cancel_order_api(request: dict, proxy_path: str = "", token: str = Coo
             stex = stex_map[stex]
         
         now = datetime.now()
+        log_print(stk_cd, 'cancel from WEB market={} order={}'.format(stex, ord_no))
         cancel_order_main(now, access_token, stex, ord_no, stk_cd)
         
         return {"status": "success", "message": "Order cancellation requested"}
@@ -1959,10 +1970,10 @@ def cancel_related_buy_order(stk_cd):
             for m in oso:
                 #print('io_tp_nm=', m['io_tp_nm'])
                 if m['stk_cd'] == stk_cd and m['io_tp_nm']  == '+매수' :
+                    log_print(stk_cd, 'cancel_related_buy_order {}'.format(m['ord_no']))
                     result = cancel_order_main(now, jango_token[ACCT], m['stex_tp_txt'], m['ord_no'], stk_cd)
                     print('cancel_related_buy_order ', result)
                     cancel_count += 1
-    log_print(stk_cd, 'cancel_related_buy_order {} returns {}.'.format(stk_cd, cancel_count))
     return cancel_count
 
 
@@ -2564,7 +2575,7 @@ async def cancel_nxt_trade_endpoint():
     """Cancel NXT trades"""
     try:
         now = datetime.now()
-        cancel_nxt_trade(now)
+        cancel_all_trade(now, 'NXT')
         return {"status": "success", "message": "Cancel NXT trade executed"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
