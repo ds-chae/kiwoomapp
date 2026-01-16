@@ -1,4 +1,5 @@
 import traceback
+import traceback
 import copy
 import requests
 import json
@@ -872,10 +873,12 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
     ordered = order_count[ACCT]
     if stk_cd in ordered and ordered[stk_cd] >= 2:
         return
+
     bamount = int(int_stock.get('bamount', '0'))
     if bamount <= 0 :
         return
 
+    hold_count = 0
     bsum = 0
     myjango = stored_jango_data[ACCT] if (ACCT in stored_jango_data) else {}
     acnt_evlt_remn_indv_tot = myjango['acnt_evlt_remn_indv_tot']
@@ -897,10 +900,14 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
             bsum += int(oqty)*int(oqp)
     if bsum >= bamount * 2 * 0.85:
         ordered[stk_cd] = 2
+        hold_count = 2
     elif bsum >= bamount * 1 * 0.85:
         ordered[stk_cd] = 1
+        hold_count = 1
     else:
         ordered[stk_cd] = 0
+        hold_count = 0
+
     log_print(stk_cd, 'ordered count for {} is {}, bsum={}'.format(ACCT, ordered[stk_cd], bsum))
     if ordered[stk_cd] >= 2:
         return
@@ -911,7 +918,7 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
 
     price_index = get_price_index(int_stock['color'])
     trde_tp = '0'
-    if ordered[stk_cd] < 1 :
+    if ordered[stk_cd] < 1 and hold_count < 1 : # 보유량이 없고 주문 사실도 없다면
         bp = gap_price['price'][price_index]
         buy_rate = (float(gap_price.get('current_price', 0))-bp) / bp # 현재 가격과 매수 가격의 차이
         if buy_rate >= 0.05 : # 매수 가격이랑 5%이상 차이가 난다면 매수 하지 않는다,
@@ -927,7 +934,7 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
                 if test_ret_status(stk_cd, ret_status) == 200 :
                     ordered[stk_cd] += 1
             log_print(stk_cd, 'price:{} current buy order for {} is {}'.format(ord_price, ACCT, ordered[stk_cd]))
-    if 1 <= ordered[stk_cd] < 2:
+    if hold_count >= 1 and ordered[stk_cd] < 2: # 하나 보유하고 주문은 아직 둘이 아니면
         bp = gap_price['price'][price_index+1]
         buy_rate = (float(gap_price.get('current_price', 0))-bp) / bp # 현재 가격과 매수 가격의 차이
         if buy_rate >= 0.05 : # 매수 가격이랑 5%이상 차이가 난다면 매수 하지 않는다,
