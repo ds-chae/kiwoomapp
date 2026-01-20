@@ -21,6 +21,24 @@ from ka10080 import get_bun_chart, get_price_index
 from ka10081 import get_day_chart
 from ka10100 import get_stockname
 
+
+def get_bun_chart_throttled(MY_ACCESS_TOKEN, stk_cd, stk_nm):
+    """Call get_bun_chart then sleep 0.5s to throttle requests."""
+    bun = get_bun_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm)
+    time_module.sleep(0.5)
+    return bun
+
+
+def get_day_chart_throttled(MY_ACCESS_TOKEN, stk_cd, stk_nm):
+    day = get_day_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm)
+    time_module.sleep(0.5)
+    return day
+
+# Daily chart cache (filled by minute chart thread)
+daily_charts = {}  # {(stock_code, date_str_or_None): {data:any, ts:float}}
+daily_charts_lock = threading.Lock()
+DAILY_CHART_TTL_SECONDS = 15
+
 now = datetime.now()
 today_yyyymmdd = now.strftime("%Y%m%d")
 
@@ -401,19 +419,17 @@ def cancel_different_sell_order(now, ACCT, stk_cd, stk_nm, new_price):
     return cancel_count
 
 
-def get_low_after_high(chart):
+def get_low_after_high(stk_cd, chart):
+    chartlen = len(chart)
+    if chartlen < 416 :
+        log_print(stk_cd, "get_low_after_high, chartlen < 416, return 0")
+        return 0
+
+    # find high
     high_index = 0
     low_index = 0
     high_price = 0
-    low_price = 0
-    chartlen = len(chart)
-    if chartlen < 416 :
-        return 0
-
-    prd = 416
-    i = 0
-    # find high
-    while i < prd:
+    for i in range(416):
         buntick = chart[i]
         hpc = int(buntick['high_pric'])
         if hpc < 0:
@@ -421,22 +437,21 @@ def get_low_after_high(chart):
         if hpc > high_price:
             high_index = i
             high_price = hpc
-        i += 1
-    i = high_index
 
     # find lowest price after high price
-    hidx = high_index - 1
     low_price = int(chart[high_index]['low_pric'])
     if low_price < 0:
         low_price = -low_price
-    while hidx >= 0:
-        tlpc = int(chart[hidx]['low_pric'])
+    for hidx in range(high_index):
+        buntick = chart[hidx]
+        tlpc = int(buntick['low_pric'])
         if tlpc < 0:
             tlpc = -tlpc
         if low_price > tlpc:
             low_price = tlpc
-        hidx -= 1
-    return low_price
+            low_time = buntick['cntr_tm']
+
+    return low_price, low_time
 
 last_get_bun_time = {}
 last_cl_price = {}
@@ -466,11 +481,16 @@ def calculate_sell_price(MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk_nm):
             last_bun_time = last_get_bun_time[stk_cd]
             seconds = (now - last_bun_time).total_seconds()
             if seconds < 15 :
-                return last_cl_price.get(stk_cd, 0)
+                if stk_cd in last_cl_price:
+                    return last_cl_price.get(stk_cd, 0)
 
-        if not stk_cd in gap_prices:
-            gap_prices[stk_cd] = get_gap_price(MY_ACCESS_TOKEN, stk_cd)
-        gap_price = gap_prices[stk_cd]
+        try:
+            if not stk_cd in gap_prices:
+                gap_prices[stk_cd] = get_gap_price(MY_ACCESS_TOKEN, stk_cd, stk_nm)
+            gap_price = gap_prices[stk_cd]
+        except Exception as e1:
+            log_print(stk_cd, 'get_gap_price gen Error {}'.format(e1))
+            return 0
         log_print(stk_cd, ' before get_low_after_high')
         last_get_bun_time[stk_cd] = now
         # Try to use bun_charts dict first, otherwise call get_bun_chart
@@ -478,14 +498,16 @@ def calculate_sell_price(MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk_nm):
         try:
             with bun_charts_lock:
                 bun_chart = bun_charts.get(stk_cd)
+                bun_time = bun_times.get(stk_cd)
         except:
             pass
         if bun_chart is None:
+            log_print(stk_cd, 'before get_low_after_high, bun_chart is None, return 0')
             return 0 # if bun_chart is not queried yet, return pric 0
             # bun_chart = get_bun_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm)
 
-        lowest = get_low_after_high(bun_chart)
-        log_print(stk_cd, 'get_low_after_high {} returns {}'.format(stk_nm, lowest))
+        lowest, low_time = get_low_after_high(stk_cd, bun_chart)
+        log_print(stk_cd, 'get_low_after_high {} returns {} last time bun_chart={}, low_time={}'.format(stk_nm, lowest, bun_time, low_time))
         if lowest != 0 :
             gap = float(gap_price['gap']) * 2
             cl_price = round_trunc(int(lowest + gap * sellgap))
@@ -504,8 +526,12 @@ def call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_co
     pur_pric_str = indv.get('pur_pric', '0')
     pur_pric = float(pur_pric_str) if pur_pric_str else 0.0
 
-    sell_price = calculate_sell_price(MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk_nm)
-    if sell_price == 0: # price is not calculated
+    try:
+        sell_price = calculate_sell_price(MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk_nm)
+        if sell_price == 0: # price is not calculated
+            return
+    except Exception as ex:
+        log_print(stk_cd, 'Error in calculate_sell_price :{}'.format(ex))
         return
 
     upperlimit = get_upper_limit(MY_ACCESS_TOKEN, stk_cd)
@@ -649,7 +675,7 @@ def get_miche():
         # 3. API 실행
         m = fn_ka10075(token=MY_ACCESS_TOKEN, data=params)
         m['ACCT'] = ACCT
-
+        m['TOKEN'] = MY_ACCESS_TOKEN
         if 'oso' in m:
             for order in m['oso']:
                 cur_prc = order.get('cur_prc', '0')
@@ -843,11 +869,11 @@ def buy_cl(now, stex):
 
         #ACCT = key['ACCT']
         MY_ACCESS_TOKEN = get_token(key['AK'], key['SK'])  # 접근토큰
-        buy_cl_by_account(ACCT, MY_ACCESS_TOKEN, stex)
+        buy_cl_by_account(ACCT, MY_ACCESS_TOKEN, stex, '')
 
 gap_prices = {}
 
-def buy_cl_by_account(ACCT, MY_ACCESS_TOKEN, stex):
+def buy_cl_by_account(ACCT, MY_ACCESS_TOKEN, stex, stk_nm):
     global order_count, working_status
     global gap_prices, new_day
 
@@ -857,7 +883,7 @@ def buy_cl_by_account(ACCT, MY_ACCESS_TOKEN, stex):
         btype = int_stock.get('btype', '')
         if btype == 'CL':
             if not stk_cd in gap_prices:
-                gap_prices[stk_cd] = get_gap_price(MY_ACCESS_TOKEN, stk_cd)
+                gap_prices[stk_cd] = get_gap_price(MY_ACCESS_TOKEN, stk_cd, stk_nm)
 
             buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_prices[stk_cd])
         if not new_day:
@@ -1020,6 +1046,7 @@ def daily_work():
             working_status='calling buy_cl NXT'
             buy_cl(now, 'NXT')
     else:
+        current_status = 'OFF'
         if (new_day):
             set_new_day(False)
             print('{} {} Setting new day=False'.format(cur_date(), now))
@@ -1140,6 +1167,7 @@ def load_dictionaries_from_json():
 bun_charts = {}
 bun_charts_lock = threading.Lock()  # Lock for bun_charts dict
 bun_prices = {}
+bun_times = {}
 
 # fill minutes chart if btype is 'CL'
 """
@@ -1154,7 +1182,7 @@ def fill_charts_for_CL(MY_ACCESS_TOKEN):
                 continue
             stk_nm = stock['stock_name']
             with bun_charts_lock:
-                bun_charts[stk_cd] = get_bun_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm)
+                bun_charts[stk_cd] = get_bun_chart_throttled(MY_ACCESS_TOKEN, stk_cd, stk_nm)
     except Exception as ex:
         print('806', ex)
         exit(0)
@@ -1392,62 +1420,84 @@ def background_timer_thread():
 bun_charts_thread = None
 bun_charts_thread_stop_event = threading.Event()
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+def query_bun_charts(MY_ACCESS_TOKEN, cl_stocks):
+    bun_now = datetime.now()
+    for stk_cd, stk_nm in cl_stocks:
+        bun_times[stk_cd] = bun_now
+    # Query minutes charts in parallel (limit to 4 simultaneous threads)
+    max_workers = min(4, len(cl_stocks))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {}
+        for stk_cd, stk_nm in cl_stocks:
+            future = executor.submit(get_bun_chart_throttled, MY_ACCESS_TOKEN, stk_cd, stk_nm)
+            futures[future] = stk_cd
+
+        # Collect results and update bun_charts dict
+        updated_charts = {}
+        for future in as_completed(futures):
+            stk_cd = futures[future]
+            try:
+                bun_chart = future.result()
+                updated_charts[stk_cd] = bun_chart
+            except Exception as e:
+                print(f"Error getting bun_chart for {stk_cd}: {e}")
+
+    with bun_charts_lock:
+        bun_charts.update(updated_charts)
+
+
+
+def query_day_charts(MY_ACCESS_TOKEN, cl_stocks):
+    max_workers = min(4, len(cl_stocks))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {}
+        for stk_cd, stk_nm in cl_stocks:
+            future = executor.submit(get_day_chart_throttled, MY_ACCESS_TOKEN, stk_cd, stk_nm)
+            futures[future] = stk_cd
+
+        updated_daily_charts = {}
+        for future in as_completed(futures):
+            stk_cd = futures[future]
+            try:
+                day_chart = future.result()
+                updated_daily_charts[stk_cd] = day_chart
+            except Exception as e:
+                print(f"Error getting day_chart for {stk_cd}: {e}")
+
+        with daily_charts_lock:
+            now_ts = time_module.time()
+            for _stk, _day in updated_daily_charts.items():
+                daily_charts[(_stk, None)] = {'data': _day, 'ts': now_ts}
+
+
 def update_bun_charts_thread():
     """Background thread that updates bun_charts dict in parallel for stocks with btype 'CL'"""
     global bun_charts, bun_charts_lock, interested_stocks, bun_charts_thread_stop_event
     
     while not bun_charts_thread_stop_event.is_set():
-        try:
-            # Get token for API calls
-            MY_ACCESS_TOKEN = get_one_token()
+        # Get token for API calls
+        MY_ACCESS_TOKEN = get_one_token()
+        
+        # Get list of stocks with btype 'CL'
+        cl_stocks = []
+        # Don't hold lock while iterating interested_stocks - it's not needed
+        for stk_cd, stock in interested_stocks.items():
+            if stock.get('btype', '') == 'CL':
+                stk_nm = stock.get('stock_name', '')
+                if stk_nm:
+                    cl_stocks.append((stk_cd, stk_nm))
             
-            # Get list of stocks with btype 'CL'
-            cl_stocks = []
-            # Don't hold lock while iterating interested_stocks - it's not needed
-            for stk_cd, stock in interested_stocks.items():
-                if stock.get('btype', '') == 'CL':
-                    stk_nm = stock.get('stock_name', '')
-                    if stk_nm:
-                        cl_stocks.append((stk_cd, stk_nm))
-            
-            if cl_stocks:
-                # Query minutes charts in parallel (limit to 4 simultaneous threads)
-                from concurrent.futures import ThreadPoolExecutor, as_completed
-                max_workers = min(3, len(cl_stocks))
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    futures = {}
-                    for stk_cd, stk_nm in cl_stocks:
-                        future = executor.submit(get_bun_chart, MY_ACCESS_TOKEN, stk_cd, stk_nm)
-                        futures[future] = stk_cd
-                    
-                    # Collect results and update bun_charts dict
-                    updated_charts = {}
-                    for future in as_completed(futures):
-                        stk_cd = futures[future]
-                        try:
-                            bun_chart = future.result()
-                            updated_charts[stk_cd] = bun_chart
-                        except Exception as e:
-                            print(f"Error getting bun_chart for {stk_cd}: {e}")
-                    
-                    # Update bun_charts dict with lock
-                    with bun_charts_lock:
-                        bun_charts.update(updated_charts)
-            
-            # Sleep for 15 seconds before next update
-            for _ in range(150):  # Check every 0.1 seconds for 15 seconds total
-                if bun_charts_thread_stop_event.is_set():
-                    break
-                time_module.sleep(0.1)
-                
-        except Exception as e:
-            print(f"Error in update_bun_charts_thread: {e}")
-            traceback.print_exc()
-            # Sleep on error too
-            for _ in range(150):
-                if bun_charts_thread_stop_event.is_set():
-                    break
-                time_module.sleep(0.1)
+        query_bun_charts(MY_ACCESS_TOKEN, cl_stocks)
+        query_day_charts(MY_ACCESS_TOKEN, cl_stocks)
+
+        # Sleep for 15 seconds before next update
+        for _ in range(150):  # Check every 0.1 seconds for 15 seconds total
+            if bun_charts_thread_stop_event.is_set():
+                break
+            time_module.sleep(0.1)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -2029,6 +2079,19 @@ def issue_buy_order(stk_cd, ord_uv, ord_qty, stex, trde_tp, account):
     return ret_status
 
 
+def active_market():
+    now = datetime.now()
+    if is_between(now, nxt_start_time, nxt_end_time):
+        return 'NXT'
+    if is_between(now, nxt_end_time, krx_start_time):  # NXT 끝나고 KRX 시작 전
+        return ''
+    if is_between(now, krx_start_time, krx_end_time):
+        return 'KRX'
+    if is_between(now, krx_end_time, nxt_fin_time):  # KRX 거래소 시작시간과 NXT 종료 시간 사이
+        return 'NXT'
+    return ''
+
+
 @app.post("/api/buy-order")
 @app.post("/stock/api/buy-order")
 async def buy_order_api(request: dict, proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
@@ -2071,7 +2134,10 @@ async def buy_order_api(request: dict, proxy_path: str = "", token: str = Cookie
         if stk_cd and stk_cd[0] == 'A':
             stk_cd = stk_cd[1:]
         
-        stex = 'KRX'
+        stex = active_market()
+        if stex == '':
+            return {"status": "error", "message": "Market is not active."}
+
         trde_tp = '0'
 
         # If no accounts specified, use all accounts
@@ -2360,6 +2426,9 @@ def set_interested_rate(stock_code, stock_name='', color=None,
 
             if yyyymmdd:
                 stock['yyyymmdd'] = yyyymmdd.strip()
+            else:
+                if not 'yyyymmdd' in stock:
+                    stock['yyyymmdd'] = cur_date() # dsc
 
             stock['sellprice'] = sellprice
             stock['sellrate'] = sellrate
@@ -2463,16 +2532,21 @@ async def delete_interested_stock_api(stock_code: str, proxy_path: str = "", tok
         return {"status": "error", "message": str(e)}
 
 
-def get_gap_price(token_for_api, stock_code):
-    try:
-        _day_chart = get_day_chart(token_for_api, stock_code)
-        day_data = _day_chart.get('stk_dt_pole_chart_qry', [])
-        # Get latest day's closing price
-        latest = day_data[0]  # Latest is first in response
-        cur_prc = latest.get('cur_prc', '0')
-        current_price = abs(int(cur_prc))
-    except Exception as e:
-        print(f"Error getting day chart for current price: {e}")
+def get_gap_price(token_for_api, stk_cd, stk_nm):
+    data = None
+    with daily_charts_lock:
+        entry = daily_charts.get(stk_cd)
+        if not entry:
+            return {}
+        data = copy.deepcopy(entry.get('data'))
+    if not data:
+        return {}
+
+    day_data = data.get('stk_dt_pole_chart_qry', [])
+    # Get latest day's closing price
+    latest = day_data[0]  # Latest is first in response
+    cur_prc = latest.get('cur_prc', '0')
+    current_price = abs(int(cur_prc))
 
     # Get last 16 days
     high_16 = 0
@@ -2536,7 +2610,7 @@ async def get_stock_price_info(stock_code: str, token: str = Cookie(None, alias=
     # Get current price from jango data
     # Get token for API call
     token_for_api = get_one_token()
-    gap_price = get_gap_price(token_for_api, stock_code)
+    gap_price = get_gap_price(token_for_api, stock_code, '')
 
     return {
         "status": "success",

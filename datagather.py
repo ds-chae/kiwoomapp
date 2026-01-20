@@ -898,8 +898,8 @@ async def logs_page():
             .header a { text-decoration: none; color: #667eea; font-weight: 600; }
             .title { font-size: 16px; font-weight: 700; color: #333; }
             .two-pane { flex: 1; min-height: 0; display: flex; gap: 10px; padding: 10px; }
-            .left { width: 340px; background: white; border: 1px solid #ddd; border-radius: 6px; overflow: auto; padding: 10px; }
-            .right { flex: 1; background: white; border: 1px solid #ddd; border-radius: 6px; overflow: auto; padding: 10px; }
+            .left { width: 340px; background: white; border: 1px solid #ddd; border-radius: 6px; overflow: auto; -webkit-overflow-scrolling: touch; padding: 10px; }
+            .right { flex: 1; background: white; border: 1px solid #ddd; border-radius: 6px; overflow: auto; -webkit-overflow-scrolling: touch; padding: 10px; }
             .tree ul { list-style: none; padding-left: 14px; }
             .tree li { padding: 2px 0; }
             .node { cursor: pointer; user-select: none; font-size: 13px; color: #333; }
@@ -907,8 +907,13 @@ async def logs_page():
             .node.dir.open::before { content: "▾ "; }
             .node.file::before { content: "📄 "; }
             .node:hover { background: #f3f4ff; }
-            pre { white-space: pre; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; line-height: 1.35; }
+            pre { white-space: pre; overflow-x: auto; -webkit-overflow-scrolling: touch; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; line-height: 1.35; }
             .muted { color: #888; font-size: 12px; }
+            @media (max-width: 768px) {
+                .two-pane { flex-direction: column; }
+                .left { width: 100%; max-height: 35vh; }
+                .right { width: 100%; }
+            }
         </style>
     </head>
     <body>

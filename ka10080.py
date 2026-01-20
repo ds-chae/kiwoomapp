@@ -119,7 +119,7 @@ def fn_ka10080(token, data, cont_yn='N', next_key=''):
 
 def get_bun_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm):
 	params = {
-		'stk_cd': stk_cd, # 종목코드 거래소별 종목코드 (KRX:039490,NXT:039490_NX,SOR:039490_AL)
+		'stk_cd': stk_cd + '_AL', # 종목코드 거래소별 종목코드 (KRX:039490,NXT:039490_NX,SOR:039490_AL)
 		'tic_scope': '15', # 틱범위 1:1분, 3:3분, 5:5분, 10:10분, 15:15분, 30:30분, 45:45분, 60:60분
 		'upd_stkpc_tp': '1', # 수정주가구분 0 or 1
 	}
