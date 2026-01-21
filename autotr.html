@@ -1104,7 +1104,10 @@
 							<input type="number" id="buy-amount-input" placeholder="amount" step="1" min="1" maxlength="8" />
 						</div>
 						<div class="form-group">
-							<label>Account</label>
+							<label style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+								<span>Account</span>
+								<button type="button" id="buy-all-accounts-btn" style="padding:4px 10px; border:1px solid #ccc; border-radius:6px; background:#fff; cursor:pointer; font-size:12px;">ALL</button>
+							</label>
 							<div id="buy-account-checkboxes" style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center; min-height: 42px; padding: 10px 0;">
 								<!-- Account checkboxes will be populated here -->
 							</div>
@@ -1118,6 +1121,23 @@
 			</div>
 		</div>
 		<script>
+		function checkAllBuyAccounts() {
+			document.querySelectorAll('#buy-account-checkboxes input[type="checkbox"]').forEach(cb => {
+				cb.checked = true;
+			});
+		}
+
+		function setupBuyAllAccountsButton() {
+			const btn = document.getElementById('buy-all-accounts-btn');
+			if (!btn) return;
+			// avoid double-binding if script runs twice
+			if (btn.__bound) return;
+			btn.__bound = true;
+			btn.addEventListener('click', () => {
+				checkAllBuyAccounts();
+			});
+		}
+
 		
 		function getProfitClass(profitRate) {
 			const profitValue = parseFloat(profitRate.replace('%', '').replace('+', ''));
@@ -1375,7 +1395,20 @@
 					'Content-Type': 'application/json',
 				}
 			})
-			.then(response => response.json())
+			.then(async (response) => {
+				let data = {};
+				try {
+					data = await response.json();
+				} catch (e) {
+					data = {};
+				}
+				if (response.status === 401) {
+					const loginPath = window.location.pathname.includes('/stock') ? '/stock/login' : '/login';
+					window.location.href = loginPath;
+					return { status: 'error', message: 'Not authenticated' };
+				}
+				return data;
+			})
 			.then(result => {
 				if (result.status === 'success') {
 					showMessage('Sell price/rate deleted successfully!', 'success');
@@ -1752,7 +1785,20 @@
 				},
 				body: JSON.stringify({ account: account, enabled: selectedMode })
 			})
-			.then(response => response.json())
+			.then(async (response) => {
+				let data = {};
+				try {
+					data = await response.json();
+				} catch (e) {
+					data = {};
+				}
+				if (response.status === 401) {
+					const loginPath = window.location.pathname.includes('/stock') ? '/stock/login' : '/login';
+					window.location.href = loginPath;
+					return { status: 'error', message: 'Not authenticated' };
+				}
+				return data;
+			})
 			.then(result => {
 				if (result.status === 'success') {
 					updateAccountAutoSellSelect(account, result.enabled);
@@ -1775,7 +1821,20 @@
 					'Content-Type': 'application/json',
 				}
 			})
-			.then(response => response.json())
+			.then(async (response) => {
+				let data = {};
+				try {
+					data = await response.json();
+				} catch (e) {
+					data = {};
+				}
+				if (response.status === 401) {
+					const loginPath = window.location.pathname.includes('/stock') ? '/stock/login' : '/login';
+					window.location.href = loginPath;
+					return { status: 'error', message: 'Not authenticated' };
+				}
+				return data;
+			})
 			.then(result => {
 				// Clear cookie and redirect to login
 				document.cookie = 'stoken=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
@@ -1806,7 +1865,20 @@
 					'Content-Type': 'application/json',
 				}
 			})
-			.then(response => response.json())
+			.then(async (response) => {
+				let data = {};
+				try {
+					data = await response.json();
+				} catch (e) {
+					data = {};
+				}
+				if (response.status === 401) {
+					const loginPath = window.location.pathname.includes('/stock') ? '/stock/login' : '/login';
+					window.location.href = loginPath;
+					return { status: 'error', message: 'Not authenticated' };
+				}
+				return data;
+			})
 			.then(result => {
 				// Clear cookie and redirect to login
 				document.cookie = 'stoken=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
@@ -2130,6 +2202,7 @@
 			
 			fetch('./api/cancel-order', {
 				method: 'POST',
+				credentials: 'same-origin',
 				headers: {
 					'Content-Type': 'application/json',
 				},
@@ -2140,7 +2213,20 @@
 					stk_cd: stkCd
 				})
 			})
-			.then(response => response.json())
+			.then(async (response) => {
+				let data = {};
+				try {
+					data = await response.json();
+				} catch (e) {
+					data = {};
+				}
+				if (response.status === 401) {
+					const loginPath = window.location.pathname.includes('/stock') ? '/stock/login' : '/login';
+					window.location.href = loginPath;
+					return { status: 'error', message: 'Not authenticated' };
+				}
+				return data;
+			})
 			.then(result => {
 				if (result.status === 'success') {
 					// Refresh miche data after a short delay
@@ -2776,7 +2862,20 @@
 				},
 				body: JSON.stringify(data)
 			})
-			.then(response => response.json())
+			.then(async (response) => {
+				let data = {};
+				try {
+					data = await response.json();
+				} catch (e) {
+					data = {};
+				}
+				if (response.status === 401) {
+					const loginPath = window.location.pathname.includes('/stock') ? '/stock/login' : '/login';
+					window.location.href = loginPath;
+					return { status: 'error', message: 'Not authenticated' };
+				}
+				return data;
+			})
 			.then(result => {
 				if (result.status === 'success') {
 					showMessage('Stock added/updated in interested list successfully!', 'success');
@@ -2836,7 +2935,20 @@
 				},
 				body: JSON.stringify(data)
 			})
-			.then(response => response.json())
+			.then(async (response) => {
+				let data = {};
+				try {
+					data = await response.json();
+				} catch (e) {
+					data = {};
+				}
+				if (response.status === 401) {
+					const loginPath = window.location.pathname.includes('/stock') ? '/stock/login' : '/login';
+					window.location.href = loginPath;
+					return { status: 'error', message: 'Not authenticated' };
+				}
+				return data;
+			})
 			.then(result => {
 				if (result.status === 'success') {
 					// Update immediately
@@ -2866,7 +2978,20 @@
 					'Content-Type': 'application/json',
 				}
 			})
-			.then(response => response.json())
+			.then(async (response) => {
+				let data = {};
+				try {
+					data = await response.json();
+				} catch (e) {
+					data = {};
+				}
+				if (response.status === 401) {
+					const loginPath = window.location.pathname.includes('/stock') ? '/stock/login' : '/login';
+					window.location.href = loginPath;
+					return { status: 'error', message: 'Not authenticated' };
+				}
+				return data;
+			})
 			.then(result => {
 				if (result.status === 'success') {
 					showMessage('Stock removed from interested list successfully!', 'success');
@@ -2951,7 +3076,20 @@
 				},
 				body: JSON.stringify(data)
 			})
-			.then(response => response.json())
+			.then(async (response) => {
+				let data = {};
+				try {
+					data = await response.json();
+				} catch (e) {
+					data = {};
+				}
+				if (response.status === 401) {
+					const loginPath = window.location.pathname.includes('/stock') ? '/stock/login' : '/login';
+					window.location.href = loginPath;
+					return { status: 'error', message: 'Not authenticated' };
+				}
+				return data;
+			})
 			.then(result => {
 				if (result.status === 'success') {
 					// Update immediately
@@ -3007,12 +3145,26 @@
 			
 			fetch('./api/buy-order', {
 				method: 'POST',
+				credentials: 'same-origin',
 				headers: {
 					'Content-Type': 'application/json',
 				},
 				body: JSON.stringify(buyData)
 			})
-			.then(response => response.json())
+			.then(async (response) => {
+				let data = {};
+				try {
+					data = await response.json();
+				} catch (e) {
+					data = {};
+				}
+				if (response.status === 401) {
+					const loginPath = window.location.pathname.includes('/stock') ? '/stock/login' : '/login';
+					window.location.href = loginPath;
+					return { status: 'error', message: 'Not authenticated' };
+				}
+				return data;
+			})
 			.then(result => {
 				if (result.status === 'success') {
 					showMessage(result.message || `Buy order placed: ${amount} shares of ${stockName || stockCode} at ${price}`, 'success');
@@ -3059,7 +3211,20 @@
 				},
 				body: JSON.stringify(data)
 			})
-			.then(response => response.json())
+			.then(async (response) => {
+				let data = {};
+				try {
+					data = await response.json();
+				} catch (e) {
+					data = {};
+				}
+				if (response.status === 401) {
+					const loginPath = window.location.pathname.includes('/stock') ? '/stock/login' : '/login';
+					window.location.href = loginPath;
+					return { status: 'error', message: 'Not authenticated' };
+				}
+				return data;
+			})
 			.then(result => {
 				if (result.status === 'success') {
 					// Update immediately
@@ -3105,6 +3270,7 @@
 							label.appendChild(span);
 							checkboxesContainer.appendChild(label);
 						});
+					setupBuyAllAccountsButton();
 					}
 				})
 				.catch(error => {
@@ -3268,7 +3434,20 @@
 			fetch(apiPath + stockCode, {
 				credentials: 'same-origin'
 			})
-			.then(response => response.json())
+			.then(async (response) => {
+				let data = {};
+				try {
+					data = await response.json();
+				} catch (e) {
+					data = {};
+				}
+				if (response.status === 401) {
+					const loginPath = window.location.pathname.includes('/stock') ? '/stock/login' : '/login';
+					window.location.href = loginPath;
+					return { status: 'error', message: 'Not authenticated' };
+				}
+				return data;
+			})
 			.then(result => {
 				if (result.status === 'success' && result.data) {
 					const data = result.data;
@@ -3347,7 +3526,20 @@
 				},
 				body: JSON.stringify(requestData)
 			})
-			.then(response => response.json())
+			.then(async (response) => {
+				let data = {};
+				try {
+					data = await response.json();
+				} catch (e) {
+					data = {};
+				}
+				if (response.status === 401) {
+					const loginPath = window.location.pathname.includes('/stock') ? '/stock/login' : '/login';
+					window.location.href = loginPath;
+					return { status: 'error', message: 'Not authenticated' };
+				}
+				return data;
+			})
 			.then(result => {
 				if (result.status === 'success') {
 					showMessage('Sell price/rate/gap updated successfully!', 'success');

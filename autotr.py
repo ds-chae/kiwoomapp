@@ -5,7 +5,8 @@ import requests
 import json
 import os
 from datetime import datetime, timedelta, time, date
-from dotenv import load_dotenv
+# load_dotenv is not required, as it is called in au1001
+# from dotenv import load_dotenv
 from au1001 import get_token, get_key_list, get_one_token
 import time as time_module
 import threading
@@ -54,6 +55,7 @@ LOGIN_USERNAME = os.getenv('LOGIN_USERNAME')
 LOGIN_PASSWORD = os.getenv('LOGIN_PASSWORD')
 SECRET_KEY = os.getenv('SECRET_KEY', secrets.token_urlsafe(32))
 TOKEN_EXPIRY_HOURS = 24
+env_pctoken = os.getenv('PCTOKEN')
 
 # In-memory token storage (in production, use Redis or database)
 active_tokens = {}
@@ -893,6 +895,9 @@ def buy_cl_by_account(ACCT, MY_ACCESS_TOKEN, stex, stk_nm):
 
 def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
     global working_status, order_count, now
+    if not gap_price:
+        return
+
     stk_nm = int_stock['stock_name']
 
     working_status = 'in buy_cl_stk_cd'
@@ -948,7 +953,7 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
         bp = gap_price['price'][price_index]
         buy_rate = (float(gap_price.get('current_price', 0))-bp) / bp # 현재 가격과 매수 가격의 차이
         if buy_rate >= 0.05 : # 매수 가격이랑 5%이상 차이가 난다면 매수 하지 않는다,
-            log_print(stk_cd, '{} gap over skip for {} {} {} {}'.format(now, stk_cd, stk_nm, bp, buy_rate))
+            log_print(stk_cd, '{} gap over skip 1 for {} {} {} {}'.format(now, stk_cd, stk_nm, bp, buy_rate))
         else:
             ord_price = round_trunc(bp)
             ord_qty = bamount // ord_price
@@ -964,7 +969,7 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
         bp = gap_price['price'][price_index+1]
         buy_rate = (float(gap_price.get('current_price', 0))-bp) / bp # 현재 가격과 매수 가격의 차이
         if buy_rate >= 0.05 : # 매수 가격이랑 5%이상 차이가 난다면 매수 하지 않는다,
-            log_print(stk_cd, '{} gap over skip for {} {} {} {}'.format(now, stk_cd, stk_nm, bp, buy_rate))
+            log_print(stk_cd, '{} gap over skip 2 for {} {} {} {}'.format(now, stk_cd, stk_nm, bp, buy_rate))
         else:
             ord_price = round_trunc(bp)
             ord_qty = bamount // ord_price
@@ -1149,8 +1154,8 @@ def load_dictionaries_from_json():
                 stock['color'] = color_kor_to_eng(stock['color'])
             # Add yyyymmdd field if empty or missing
             yyyymmdd = stock.get('yyyymmdd', '')
-            if yyyymmdd == '':
-                print('adding yyyymmdd={} for {}'.format(current_date, stk))
+            if len(yyyymmdd) < 8 :
+                log_print(stk, 'adding yyyymmdd from {} to {} for {}'.format(yyyymmdd, current_date, stk))
                 stock['yyyymmdd'] = current_date
                 modified = True
             log_print(stk, 'in istk {} {} {}'.format(stock.get('btype', 'BT'), stock.get('color', 'NC'), stock.get('yyyymmdd', 'YMD')))
@@ -1469,7 +1474,7 @@ def query_day_charts(MY_ACCESS_TOKEN, cl_stocks):
         with daily_charts_lock:
             now_ts = time_module.time()
             for _stk, _day in updated_daily_charts.items():
-                daily_charts[(_stk, None)] = {'data': _day, 'ts': now_ts}
+                daily_charts[_stk] = {'data': _day, 'ts': now_ts}
 
 
 def update_bun_charts_thread():
@@ -1975,44 +1980,77 @@ async def cancel_order_api(request: dict, proxy_path: str = "", token: str = Coo
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated"
         )
+
+    def _resolve_cancel_exchange(acct_no: str, orig_ord_no: str, stock_code: str) -> str:
+        """Resolve exchange (KRX/NXT/SOR) from stored miche data if possible."""
+        global stored_miche_data
+        miche = stored_miche_data.get(acct_no) if isinstance(stored_miche_data, dict) else None
+        oso = miche.get("oso", []) if isinstance(miche, dict) else []
+        for o in oso:
+            try:
+                if o.get("ord_no") == orig_ord_no and o.get("stk_cd") == stock_code:
+                    stex_tp_txt = (o.get("stex_tp_txt") or "").strip().upper()
+                    if stex_tp_txt in {"KRX", "NXT", "SOR"}:
+                        return stex_tp_txt
+                    stex_tp = (o.get("stex_tp") or "").strip()
+                    stex_map_local = {"1": "KRX", "2": "NXT", "3": "SOR"}
+                    if stex_tp in stex_map_local:
+                        return stex_map_local[stex_tp]
+            except Exception:
+                continue
+        return ""
+
     try:
-        acct = request.get('acct')  # Account number
-        stex = request.get('stex')  # Exchange type: KRX, NXT, SOR
-        ord_no = request.get('ord_no')
-        stk_cd = request.get('stk_cd')
-        log_print(stk_cd, 'cancel_order_api ord_no={}'.format(ord_no))
-        if not all([acct, stex, ord_no, stk_cd]):
+        acct = (request.get("acct") or "").strip()  # Account number
+        stex = request.get("stex")  # 'KRX'/'NXT'/'SOR' or stex_tp ('0','1','2','3')
+        stex = stex.strip() if isinstance(stex, str) else ""
+        ord_no = str(request.get("ord_no") or "").strip()
+        stk_cd = str(request.get("stk_cd") or "").strip()
+
+        log_print(stk_cd, "cancel_order_api ord_no={}".format(ord_no))
+        if not all([acct, ord_no, stk_cd]):
             return {"status": "error", "message": "Missing required parameters"}
-        
+
         # Validate order number - check if it's not empty or all zeros
-        ord_no_clean = ord_no.strip().lstrip('0') if ord_no else ''
+        ord_no_clean = ord_no.strip().lstrip("0") if ord_no else ""
         if not ord_no_clean:
             return {"status": "error", "message": "Invalid order number (empty or zeros)"}
-        
+
         # Retrieve token from backend using account number
         access_token = None
         for k, key in key_list.items():
-            if key['ACCT'] == acct:
-                access_token = get_token(key['AK'], key['SK'])
+            if (key.get("ACCT") or "").strip() == acct:
+                access_token = get_token(key["AK"], key["SK"])
                 break
-        
+
         if not access_token:
             return {"status": "error", "message": "Account not found or unable to retrieve token"}
-        
+
         # Remove 'A' prefix from stock code if present
-        if stk_cd and stk_cd[0] == 'A':
+        if stk_cd and stk_cd[0] == "A":
             stk_cd = stk_cd[1:]
-        
-        # Map stex_tp to exchange string
-        stex_map = {'0': 'KRX', '1': 'KRX', '2': 'NXT'}
-        if stex in stex_map:
-            stex = stex_map[stex]
-        
+
+        # Resolve exchange
+        stex_upper = stex.upper() if stex else ""
+        if stex_upper in {"KRX", "NXT", "SOR"}:
+            stex = stex_upper
+        else:
+            # If UI sends numeric stex_tp, map it. Treat '0'(통합) as unknown and try to resolve from miche.
+            stex_map = {"1": "KRX", "2": "NXT", "3": "SOR"}
+            if stex in stex_map:
+                stex = stex_map[stex]
+            else:
+                resolved = _resolve_cancel_exchange(acct, ord_no, stk_cd)
+                if resolved:
+                    stex = resolved
+                else:
+                    return {"status": "error", "message": "Unable to resolve exchange for cancellation (stex)"}
+
         now = datetime.now()
         log_print(stk_cd, 'cancel from WEB market={} order={}'.format(stex, ord_no))
-        cancel_order_main(now, access_token, stex, ord_no, stk_cd)
-        
-        return {"status": "success", "message": "Order cancellation requested"}
+        result = cancel_order_main(now, access_token, stex, ord_no, stk_cd)
+
+        return {"status": "success", "message": "Order cancellation requested", "data": result}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -2102,6 +2140,30 @@ async def buy_order_api(request: dict, proxy_path: str = "", token: str = Cookie
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated"
         )
+
+    def _is_success_return_code(rc) -> bool:
+        """Kiwoom APIs in this codebase sometimes use int codes (0/200) or strings ('0'/'0000').
+        Treat common successful codes as success.
+        """
+        if rc is None:
+            return False
+        try:
+            if isinstance(rc, str):
+                rc_s = rc.strip()
+                if rc_s in {"0", "0000", "200"}:
+                    return True
+                # numeric string
+                if rc_s.isdigit() and int(rc_s) == 0:
+                    return True
+            # numeric
+            if isinstance(rc, (int, float)):
+                rc_i = int(rc)
+                if rc_i in (0, 200):
+                    return True
+        except Exception:
+            return False
+        return False
+
     try:
         stk_cd = request.get('stock_code')
         stk_nm = request.get('stock_name')
@@ -2109,31 +2171,29 @@ async def buy_order_api(request: dict, proxy_path: str = "", token: str = Cookie
         ord_amount = int(request.get('amount'))
         ord_qty = ord_amount // ord_uv
         accounts = request.get('accounts', [])  # List of accounts
-        
+
         # Ensure accounts is a list (handle case where it might be a string or other type)
         if not isinstance(accounts, list):
             if isinstance(accounts, str):
-                # If it's a string, split by comma
                 accounts = [acc.strip() for acc in accounts.split(',') if acc.strip()]
             else:
                 accounts = []
 
         log_print(stk_cd, 'buy_order_api: stk_cd={}, stk_nm={}, ord_uv={}, amount={}, accounts={} (type: {})'.format(
             stk_cd, stk_nm, ord_uv, ord_amount, accounts, type(accounts).__name__))
-        
+
         if not all([stk_cd, ord_uv, ord_qty]):
             return {"status": "error", "message": "Missing required parameters: stock_code, price, amount"}
-        
-        # Validate price and amount
+
         if ord_uv <= 0:
-                return {"status": "error", "message": "Price must be greater than 0"}
+            return {"status": "error", "message": "Price must be greater than 0"}
         if ord_qty <= 0:
-                return {"status": "error", "message": "Amount must be greater than 0"}
+            return {"status": "error", "message": "Amount must be greater than 0"}
 
         # Remove 'A' prefix from stock code if present
         if stk_cd and stk_cd[0] == 'A':
             stk_cd = stk_cd[1:]
-        
+
         stex = active_market()
         if stex == '':
             return {"status": "error", "message": "Market is not active."}
@@ -2144,40 +2204,40 @@ async def buy_order_api(request: dict, proxy_path: str = "", token: str = Cookie
         if not accounts or len(accounts) == 0:
             accounts = list(key_list.keys())
         print('buy_order_api accounts={}'.format(accounts))
-        # Execute buy order for each account individually
+
         results = []
         for account in accounts:
             try:
                 ret_status = issue_buy_order(stk_cd, ord_uv, ord_qty, stex, trde_tp, account=account)
+                rc = ret_status.get('return_code') if isinstance(ret_status, dict) else None
+                ok = _is_success_return_code(rc)
                 results.append({
-                    "account": account,
-                    "status": "success" if isinstance(ret_status, dict) and ret_status.get('return_code') == '0000' else "error",
-                    "data": ret_status
+                    'account': account,
+                    'status': 'success' if ok else 'error',
+                    'data': ret_status
                 })
             except Exception as e:
                 print('buy_order_api exception for account {}: {}'.format(account, e))
                 results.append({
-                    "account": account,
-                    "status": "error",
-                    "message": str(e)
+                    'account': account,
+                    'status': 'error',
+                    'message': str(e)
                 })
-        
-        # Check if all orders succeeded
+
         all_success = all(r.get('status') == 'success' for r in results)
         if all_success:
             return {
-                "status": "success",
-                "message": f"Buy orders placed for {len(results)} account(s): {ord_qty} shares of {stk_nm or stk_cd} at {ord_uv}",
-                "data": results
+                'status': 'success',
+                'message': f"Buy orders placed for {len(results)} account(s): {ord_qty} shares of {stk_nm or stk_cd} at {ord_uv}",
+                'data': results
             }
-        else:
-            # Some failed
-            failed_accounts = [r['account'] for r in results if r.get('status') != 'success']
-            return {
-                "status": "partial",
-                "message": f"Some buy orders failed for accounts: {', '.join(failed_accounts)}",
-                "data": results
-            }
+
+        failed_accounts = [r['account'] for r in results if r.get('status') != 'success']
+        return {
+            'status': 'partial',
+            'message': f"Some buy orders failed for accounts: {', '.join(failed_accounts)}",
+            'data': results
+        }
 
     except Exception as e:
         print('buy_order_api exception: {}'.format(e))
@@ -2459,6 +2519,7 @@ def set_interested_rate(stock_code, stock_name='', color=None,
 async def add_interested_stock_api(request: dict, proxy_path: str = "",
                                    token: str = Cookie(None, alias="stoken"),
                                    pctoken: str | None = Cookie(default=None),):
+    global env_pctoken
     """API endpoint to add a stock to interested stocks list"""
     f = False
     # Check authentication
@@ -2468,7 +2529,7 @@ async def add_interested_stock_api(request: dict, proxy_path: str = "",
         if pctoken:
             print('pctoken={}'.format(pctoken))
 
-    if pctoken and pctoken == 'allow_interest_pc':
+    if pctoken and pctoken == env_pctoken:
         pass
     else:
         if not token or not verify_token(token):
@@ -2490,10 +2551,13 @@ async def add_interested_stock_api(request: dict, proxy_path: str = "",
         sellrate = request.get('sellrate', '0')
         sellgap = request.get('sellgap', '0')
 
-        print('stime = {}, yyyymmdd = {}'.format(stime, yyyymmdd))
-
         if not stock_code:
             return {"status": "error", "message": "stock_code is required"}
+
+        if pctoken:
+            log_print(stock_code, 'pctoken True stime = {}, yyyymmdd = {}'.format(stime, yyyymmdd))
+        else:
+            log_print(stock_code, 'pctoken False stime = {}, yyyymmdd = {}'.format(stime, yyyymmdd))
 
         return set_interested_rate(stock_code, stock_name, color=color,
                             btype = btype, bamount = bamount,
