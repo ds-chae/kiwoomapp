@@ -1082,6 +1082,7 @@ def set_new_day(tf):
         access_token = {}
         with bun_charts_lock:
             bun_charts = {}
+        not_nxt_cd = {}
 
     else:
         if not new_day:
