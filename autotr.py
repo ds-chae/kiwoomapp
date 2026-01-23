@@ -471,10 +471,11 @@ def calculate_sell_price(MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk_nm):
     sellrate = float(sell_cond.get('sellrate', '0.0'))
     if sellrate != 0.0 :
         # sellrate is stored as-is (percentage), divide by 100 for calculation
-        s_rate_percent = sellrate
-        s_rate = s_rate_percent / 100.0
+        s_rate = sellrate / 100.0
         s_price = pur_pric * (1.0 + s_rate)
         s_price = round_trunc(s_price)
+        if s_price <= pur_pric:
+            return 0
         return s_price
 
     sellgap = float(sell_cond.get('sellgap', '0.0')) / 100.
@@ -526,7 +527,7 @@ def call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_co
     trde_able_qty = indv.get("trde_able_qty", "0")
     rmnd_qty = indv.get('rmnd_qty', "0")
     pur_pric_str = indv.get('pur_pric', '0')
-    pur_pric = float(pur_pric_str) if pur_pric_str else 0.0
+    pur_pric = int(pur_pric_str) if pur_pric_str else 0
 
     try:
         sell_price = calculate_sell_price(MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk_nm)
@@ -556,23 +557,45 @@ def call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_co
     ret_status = sell_order(MY_ACCESS_TOKEN, dmst_stex_tp=market, stk_cd=stk_cd,
                             ord_qty=str(trde_able_qty_int), ord_uv=str(sell_price), trde_tp=trde_tp, cond_uv='')
     log_print(stk_cd, ret_status)
-    test_ret_status(stk_cd, ret_status)
+    test_ret_status('SELL', stk_cd, ret_status)
 
 
 wait_hour_change = False
 
 
-def test_ret_status(stk_cd, ret_status):
-    global now, wait_hour_change
+def _normalize_stk_cd(stk_cd) -> str:
+    """Normalize stock code across different API shapes.
+    - trim whitespace
+    - drop leading 'A'
+    - drop exchange suffix (e.g. '_NX') for dictionary keys
+    """
+    if stk_cd is None:
+        return ""
+    s = str(stk_cd).strip()
+    if s.startswith("A"):
+        s = s[1:]
+    if "_" in s:
+        s = s.split("_", 1)[0]
+    return s
+
+
+def test_ret_status(sell_buy, stk_cd, ret_status):
+    global now, wait_hour_change, not_nxt_cd
     if not isinstance(ret_status, dict):
         return ''
 
+    stk_cd_key = _normalize_stk_cd(stk_cd)
     rcde = ret_status.get('return_code')
     rmsg = ret_status.get('return_msg', '')
     if rmsg and len(rmsg) > 13:
         code = rmsg[7:13]
         if code == '507615':
-            not_nxt_cd[stk_cd] = True
+            log_print(stk_cd_key or stk_cd, '{} 507615 NXT 거래불가'.format(sell_buy))
+            if stk_cd_key:
+                not_nxt_cd[stk_cd_key] = True
+            else:
+                not_nxt_cd[stk_cd] = True
+            print(stk_cd, '{} 507615 NXT 거래불가. not_nxt_cd={}'.format(sell_buy, not_nxt_cd))
         if code == '571489':
             set_new_day(False)
             print('No trading day, set new_day to False')
@@ -586,7 +609,7 @@ jango_token = {}
 
 def sell_jango(jango, market):
     global auto_sell_enabled, current_status, jango_token, now, working_status
-    global new_day
+    global new_day, not_nxt_cd
     if not new_day:
         return
     working_status = 'begin sell_jango()'
@@ -604,12 +627,12 @@ def sell_jango(jango, market):
             acnt_evlt_remn_indv_tot = j.get("acnt_evlt_remn_indv_tot", [])
 
             for indv in acnt_evlt_remn_indv_tot:
-                stk_cd = indv.get('stk_cd', '')
+                stk_cd = _normalize_stk_cd(indv.get('stk_cd', ''))
                 stk_nm = indv.get('stk_nm', '')
-                if stk_cd and len(stk_cd) > 0 and stk_cd[0] == 'A':
-                    stk_cd = stk_cd[1:]
-                    
-                if stk_cd in not_nxt_cd and market == 'NXT':
+
+                nxt_no = not_nxt_cd.get(stk_cd, False)
+                print('in sell_jango stk_cd={}, market={}, not_nxt_cd={}'.format(stk_cd, market, not_nxt_cd))
+                if nxt_no and market == 'NXT':
                     continue
                     
                 if stk_cd not in interested_stocks:
@@ -735,13 +758,14 @@ def cancel_all_trade(now, stex):
                 stex_tp = o['stex_tp']
                 ord_no = o['ord_no']
                 stk_cd = o['stk_cd']
-                if stex == 'KRX' and stex_tp == '1': # KRX를 취소한다.
-                    log_print(stk_cd, 'cancel KRX order {} {}'.format(o['io_tp_nm'], ord_no))
-                    cancel_order_main(now, m['TOKEN'], 'KRX', ord_no, stk_cd)
-                    pass
-                elif stex == 'NXT' and stex_tp == '2': # NXT를 취소한다.
-                    log_print(stk_cd, 'cancel NXT order {} {}'.format(o['io_tp_nm'], ord_no))
-                    cancel_order_main(now, m['TOKEN'], 'NXT', ord_no, stk_cd)
+                if o['io_tp_nm'] == '-매도':
+                    if stex == 'KRX' and stex_tp == '1': # KRX를 취소한다.
+                        log_print(stk_cd, 'cancel KRX order {} {}'.format(o['io_tp_nm'], ord_no))
+                        cancel_order_main(now, m['TOKEN'], 'KRX', ord_no, stk_cd)
+                        pass
+                    elif stex == 'NXT' and stex_tp == '2': # NXT를 취소한다.
+                        log_print(stk_cd, 'cancel NXT order {} {}'.format(o['io_tp_nm'], ord_no))
+                        cancel_order_main(now, m['TOKEN'], 'NXT', ord_no, stk_cd)
         pass
 
 
@@ -894,8 +918,10 @@ def buy_cl_by_account(ACCT, MY_ACCESS_TOKEN, stex, stk_nm):
 
 
 def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
-    global working_status, order_count, now
+    global working_status, order_count, now, not_nxt_cd, key_list
     if not gap_price:
+        return
+    if stex == 'NXT' and stk_cd in not_nxt_cd:
         return
 
     stk_nm = int_stock['stock_name']
@@ -962,7 +988,7 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
                 log_print(stk_cd, 'buy_order market={}, qty={} price={}'.format(stex, ord_qty, ord_price))
                 ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trde_tp=trde_tp, cond_uv='')
                 log_print(stk_cd, '1_buy_order_result: {}'.format(ret_status))
-                if test_ret_status(stk_cd, ret_status) == 200 :
+                if test_ret_status('BUY', stk_cd, ret_status) == 200 :
                     ordered[stk_cd] += 1
             log_print(stk_cd, 'price:{} current buy order for {} is {}'.format(ord_price, ACCT, ordered[stk_cd]))
     if hold_count >= 1 and ordered[stk_cd] < 2: # 하나 보유하고 주문은 아직 둘이 아니면
@@ -978,7 +1004,7 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
                 log_print(stk_cd, 'buy_order market={}, qty={} price={}'.format(stex, ord_qty, ord_price))
                 ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trde_tp=trde_tp, cond_uv='')
                 log_print(stk_cd, '2_buy_order_result: {}'.format(ret_status))
-                if test_ret_status(stk_cd, ret_status) == 200 :
+                if test_ret_status('BUY', stk_cd, ret_status) == 200 :
                     ordered[stk_cd] += 1
             log_print(stk_cd, 'price:{} current buy order for {} {} {} is {}'.format(ord_price, ACCT, stk_cd, stk_nm, ordered[stk_cd]))
 
@@ -1061,6 +1087,7 @@ def set_new_day(tf):
     global new_day, waiting_shown, no_working_shown, nxt_cancelled, krx_cancelled, ktx_first, current_status
     global updown_list, access_token, now, today_yyyymmdd
     global bun_charts, bun_charts_lock
+    global not_nxt_cd
 
     if tf:
         if new_day:
@@ -1082,7 +1109,6 @@ def set_new_day(tf):
         access_token = {}
         with bun_charts_lock:
             bun_charts = {}
-        not_nxt_cd = {}
 
     else:
         if not new_day:

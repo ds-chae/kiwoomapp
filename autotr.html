@@ -1251,7 +1251,8 @@
 				const editArea = document.createElement('tr');
 				editArea.className = 'sell-price-edit-area show';
 				
-				// Get sellgap, sellrate, and bamount from interested_stocks if available
+				// Get sellprice, sellgap, sellrate, and bamount from interested_stocks if available
+				let sellPriceFromAPI = '';
 				let sellgap = '';
 				let sellrateFromAPI = '';
 				let bamount = '';
@@ -1259,11 +1260,15 @@
 					.then(response => response.json())
 					.then(result => {
 						if (result.status === 'success' && result.data && result.data[stockCode]) {
+							// Only prefill sell price when an existing value is saved
+							sellPriceFromAPI = result.data[stockCode].sellprice || result.data[stockCode].sell_price || result.data[stockCode].price || '';
 							sellgap = result.data[stockCode].sellgap || '';
 							sellrateFromAPI = result.data[stockCode].sellrate || '';
 							bamount = result.data[stockCode].bamount || '';
 						}
 						
+						// Use sell price from API if available, otherwise use from row attribute
+						const finalSellPrice = sellPriceFromAPI || (sellPrice && sellPrice !== '-' ? sellPrice : '') || '';
 						// Use sellrate from API if available, otherwise use from row attribute
 						const finalSellRate = sellrateFromAPI || sellRate || '';
 						
@@ -1273,7 +1278,7 @@
 								<div class="sell-price-edit-form">
 									<div>
 										<label>Sell Price:</label>
-										<input type="number" id="edit-sell-price-${stockCode}" placeholder="Price" step="0.01" value="${sellPrice || ''}">
+										<input type="number" id="edit-sell-price-${stockCode}" placeholder="Price" step="0.01" value="${finalSellPrice || ''}">
 									</div>
 									<div>
 										<label>Sell Rate (%):</label>
@@ -1324,13 +1329,14 @@
 					.catch(error => {
 						console.error('Error fetching sellgap and sellrate:', error);
 						// Still create edit area without sellgap and sellrate from API
-						// Use sellRate from row attribute as fallback
+						// Use row attributes as fallback (only fill sell price if it exists)
+						const fallbackSellPrice = (sellPrice && sellPrice !== '-') ? sellPrice : '';
 						editArea.innerHTML = `
 							<td colspan="7">
 								<div class="sell-price-edit-form">
 									<div>
 										<label>Sell Price:</label>
-										<input type="number" id="edit-sell-price-${stockCode}" placeholder="Price" step="0.01" value="${sellPrice || ''}">
+										<input type="number" id="edit-sell-price-${stockCode}" placeholder="Price" step="0.01" value="${fallbackSellPrice || ''}">
 									</div>
 									<div>
 										<label>Sell Rate (%):</label>
@@ -2497,7 +2503,8 @@
 				const editArea = document.createElement('tr');
 				editArea.className = 'sell-price-edit-area show';
 				
-				// Get sellgap, sellrate, and bamount from interested_stocks if available
+				// Get sellprice, sellgap, sellrate, and bamount from interested_stocks if available
+				let sellPriceFromAPI = '';
 				let sellgap = '';
 				let sellrateFromAPI = '';
 				let bamount = '';
@@ -2505,11 +2512,15 @@
 					.then(response => response.json())
 					.then(result => {
 						if (result.status === 'success' && result.data && result.data[stockCode]) {
+							// Only prefill sell price when an existing value is saved
+							sellPriceFromAPI = result.data[stockCode].sellprice || result.data[stockCode].sell_price || result.data[stockCode].price || '';
 							sellgap = result.data[stockCode].sellgap || '';
 							sellrateFromAPI = result.data[stockCode].sellrate || '';
 							bamount = result.data[stockCode].bamount || '';
 						}
 						
+						// Use sell price from API if available, otherwise use from row attribute
+						const finalSellPrice = sellPriceFromAPI || (sellPrice && sellPrice !== '-' ? sellPrice : '') || '';
 						// Use sellrate from API if available, otherwise use from row attribute
 						const finalSellRate = sellrateFromAPI || sellRate || '';
 						
@@ -2519,7 +2530,7 @@
 								<div class="sell-price-edit-form">
 									<div>
 										<label>Sell Price:</label>
-										<input type="number" id="edit-sell-price-${stockCode}" placeholder="Price" step="0.01" value="${sellPrice || ''}">
+										<input type="number" id="edit-sell-price-${stockCode}" placeholder="Price" step="0.01" value="${finalSellPrice || ''}">
 									</div>
 									<div>
 										<label>Sell Rate (%):</label>
@@ -2570,13 +2581,14 @@
 					.catch(error => {
 						console.error('Error fetching sellgap and sellrate:', error);
 						// Still create edit area without sellgap and sellrate from API
-						// Use sellRate from row attribute as fallback
+						// Use row attributes as fallback (only fill sell price if it exists)
+						const fallbackSellPrice = (sellPrice && sellPrice !== '-') ? sellPrice : '';
 						editArea.innerHTML = `
 							<td colspan="7">
 								<div class="sell-price-edit-form">
 									<div>
 										<label>Sell Price:</label>
-										<input type="number" id="edit-sell-price-${stockCode}" placeholder="Price" step="0.01" value="${sellPrice || ''}">
+										<input type="number" id="edit-sell-price-${stockCode}" placeholder="Price" step="0.01" value="${fallbackSellPrice || ''}">
 									</div>
 									<div>
 										<label>Sell Rate (%):</label>

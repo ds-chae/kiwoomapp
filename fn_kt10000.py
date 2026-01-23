@@ -25,9 +25,9 @@ def fn_kt10000(token, data, cont_yn='N', next_key=''):
 	response = requests.post(url, headers=headers, json=data)
 
 	# 4. 응답 상태 코드와 데이터 출력
-	print('Code:', response.status_code)
-	print('Header:', json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4, ensure_ascii=False))
-	print('Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON 응답을 파싱하여 출력
+	print('fn_kt10000 Code:', response.status_code)
+	#print('Header:', json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4, ensure_ascii=False))
+	#print('Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON 응답을 파싱하여 출력
 	
 	return response.json()
 
@@ -56,10 +56,10 @@ def fn_kt10001(token, data, cont_yn='N', next_key=''):
 	# 3. http POST 요청
 	response = requests.post(url, headers=headers, json=data)
 
-	# 4. 응답 상태 코드와 데이터 출력
-	print('Code:', response.status_code)
-	print('Header:', json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4, ensure_ascii=False))
-	print('Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON 응답을 파싱하여 출력
+    # 4. 응답 상태 코드와 데이터 출력
+	print('fn_kt10001 Code:', response.status_code)
+	#print('Header:', json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4, ensure_ascii=False))
+	#print('Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON 응답을 파싱하여 출력
 
 	return response.json()
 

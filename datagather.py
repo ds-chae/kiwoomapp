@@ -186,7 +186,7 @@ def save_chart_data(stock_code, date_str, data_list):
     
     # Load existing data if file exists
     if os.path.exists(file_path):
-        try:
+    try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 existing_data = json.load(f)
         except Exception as e:
@@ -447,14 +447,14 @@ def run_daily_job():
             print(f"Warning: {stock_code} has no valid yyyymmdd field, using today's date: {update_date}")
             stock_info['yyyymmdd'] = update_date
             json_modified = True
-
+        
         print(f"Processing {stock_code} ({stock_name}) for date {update_date}...")
         
         try:
             if not should_fetch_minute_chart(update_date, current_date_str):
                 print(f"[{stock_code}] Daily chart {update_date} is beyond 10-day limit. Skipping minute chart.")
-                continue
-
+            continue
+        
             # Fetch data using ka10081 with the update date
             result = get_day_chart(token, stock_code, date=current_date_str)
             
@@ -574,9 +574,9 @@ def background_data_gathering():
         with status_lock:
             status_info['status'] = 'idle'
     else:
-        # Run once on startup
-        print("Running initial data gathering...")
-        run_daily_job()
+    # Run once on startup
+    print("Running initial data gathering...")
+    run_daily_job()
 
     print("Waiting for execution time (21:00 daily)...")
     
