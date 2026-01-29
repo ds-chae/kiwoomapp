@@ -18,6 +18,7 @@ from contextlib import asynccontextmanager
 import secrets
 import socket
 
+
 from ka10080 import get_bun_chart, get_price_index
 from ka10081 import get_day_chart
 from ka10100 import get_stockname
@@ -77,6 +78,9 @@ stored_miche_data = {}
 
 # Global flag to track if cleanup has run today at 20:30
 cleanup_run_today = False
+
+new_day = False
+
 
 def init_order_count():
     global order_count, key_list
@@ -164,9 +168,6 @@ def old_get_jango():
 
     return jango
 
-
-import requests
-import json
 
 
 # Gyeja pyungga jango
@@ -464,9 +465,9 @@ def calculate_sell_price(MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk_nm):
 
     ord_uv = 0
     if 'sellprice' in sell_cond:
-        ord_uv = sell_cond['sellprice']
-    if ord_uv != '0':
-        return int(ord_uv)
+        ord_uv = int(sell_cond['sellprice'])
+    if ord_uv != 0:
+        return ord_uv
 
     sellrate = float(sell_cond.get('sellrate', '0.0'))
     if sellrate != 0.0 :
@@ -518,6 +519,7 @@ def calculate_sell_price(MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk_nm):
             log_print(stk_cd, ' cl_price is {}, gap={}, lowest={}, gaprate={}'.format(cl_price, gap, lowest, sellgap))
             return cl_price
 
+    log_print(stk_cd, 'calculate_sell_price returns 0')
     return 0
 
 
@@ -599,6 +601,7 @@ def test_ret_status(sell_buy, stk_cd, ret_status):
         if code == '571489':
             set_new_day(False)
             print('No trading day, set new_day to False')
+            log_print('000000', 'No trading day, set new_day to False')
         if code == '505182': # 장개시전입니다.)', 'return_code': 20}
             print(rmsg)
             wait_hour_change = True
@@ -630,9 +633,9 @@ def sell_jango(jango, market):
                 stk_cd = _normalize_stk_cd(indv.get('stk_cd', ''))
                 stk_nm = indv.get('stk_nm', '')
 
-                nxt_no = not_nxt_cd.get(stk_cd, False)
-                print('in sell_jango stk_cd={}, market={}, not_nxt_cd={}'.format(stk_cd, market, not_nxt_cd))
-                if nxt_no and market == 'NXT':
+                not_nxt_stock = not_nxt_cd.get(stk_cd, False)
+                print('in sell_jango stk_cd={}, market={}, not_nxt_stock={}'.format(stk_cd, market, not_nxt_stock))
+                if not_nxt_stock and market == 'NXT':
                     continue
                     
                 if stk_cd not in interested_stocks:
@@ -647,8 +650,6 @@ def sell_jango(jango, market):
             exit()
     pass
 
-import requests
-import json
 
 log_miche = False
 
@@ -1025,14 +1026,14 @@ def daily_work():
     try:
         new_jango_data = get_jango()
     except Exception as e:
-        print(f"Error updating jango data: {e}")
+        log_print('000000', f"Error updating jango data: {e}")
         return
 
     try:
         stored_miche_data = get_miche()
     except Exception as e:
         get_miche_failed = True
-        print(f"Error updating miche data: {e}")
+        log_print('000000', f"Error updating miche data: {e}")
         return
 
     # Extract stock codes and amounts from current jango data
@@ -1081,10 +1082,11 @@ def daily_work():
         if (new_day):
             set_new_day(False)
             print('{} {} Setting new day=False'.format(cur_date(), now))
+            log_print('000000', '{} {} Setting new day=False'.format(cur_date(), now))
 
 
 def set_new_day(tf):
-    global new_day, waiting_shown, no_working_shown, nxt_cancelled, krx_cancelled, ktx_first, current_status
+    global new_day, nxt_cancelled, krx_cancelled, ktx_first, current_status
     global updown_list, access_token, now, today_yyyymmdd
     global bun_charts, bun_charts_lock
     global not_nxt_cd
@@ -1093,12 +1095,12 @@ def set_new_day(tf):
         if new_day:
             return
         print('{} Setting new_day=True, clearing variables.'.format(now))
+        log_print('000000', '{} Setting new_day=True, clearing variables.'.format(now))
         now = datetime.now()
         today_yyyymmdd = now.strftime("%Y%m%d")
         print('{} {} Setting new day=True'.format(cur_date(), now))
+        log_print('000000', '{} {} Setting new day=True'.format(cur_date(), now))
         new_day = True
-        waiting_shown = False
-        no_working_shown = False
         nxt_cancelled = False
         krx_cancelled = False
         ktx_first = False
@@ -1114,6 +1116,7 @@ def set_new_day(tf):
         if not new_day:
             return
         print('{} new_day is switching OFF'.format(now))
+        log_print('000000', '{} new_day is switching OFF'.format(now))
         new_day = False
         current_status = 'OFF'
 
@@ -1168,21 +1171,23 @@ def load_dictionaries_from_json():
         modified = False
         current_date = datetime.now().strftime("%Y%m%d")
         for stk in interested_stocks:
-            log_print(stk, 'istk, stk={}'.format(stk))
+            log_print('000000', 'in loading interested_stocks, stk={}'.format(stk))
+            log_print(stk, 'in loading interested_stocks, stk={}'.format(stk))
             stock = interested_stocks[stk]
             stk_nm = stock.get('stock_name', '')
-            log_print(stk, 'interested stock_name={}'.format(stk_nm))
+            log_print('000000', 'interested stock_name={}'.format(stk_nm))
             if stk_nm == '':
-                print('getting stock name for {}'.format(stk))
+                log_print('000000','getting stock name for {}'.format(stk))
                 stk_nm = get_stockname(stk)
                 stock['stock_name'] = stk_nm
                 modified = True
             if 'color' in stock:
                 stock['color'] = color_kor_to_eng(stock['color'])
             # Add yyyymmdd field if empty or missing
-            yyyymmdd = stock.get('yyyymmdd', '')
-            if len(yyyymmdd) < 8 :
+            yyyymmdd = str(stock.get('yyyymmdd', ''))
+            if len(yyyymmdd) != 8 :
                 log_print(stk, 'adding yyyymmdd from {} to {} for {}'.format(yyyymmdd, current_date, stk))
+                log_print('000000', 'adding yyyymmdd from {} to {} for {}'.format(yyyymmdd, current_date, stk))
                 stock['yyyymmdd'] = current_date
                 modified = True
             log_print(stk, 'in istk {} {} {}'.format(stock.get('btype', 'BT'), stock.get('color', 'NC'), stock.get('yyyymmdd', 'YMD')))
@@ -1193,7 +1198,6 @@ def load_dictionaries_from_json():
     except Exception as ex:
         print('783', ex)
         exit(0)
-
 
 
 bun_charts = {}
@@ -1342,7 +1346,8 @@ def check_and_handle_sold_stocks(previous_jango_data, current_jango_data):
     # Save if modified
     if modified:
         save_interested_stocks_to_json()
-        print("Updated interested_stocks after handling sold stocks")
+        log_print('000000', f"Stock {stk_cd} was sold and had btype='CL', changing to 'SCL'")
+        log_print('000000', "Updated interested_stocks after handling sold stocks")
 
 
 def get_account_holdings_stock_codes():
@@ -1381,7 +1386,8 @@ def get_account_holdings_stock_codes():
 def cleanup_old_interested_stocks():
     """Delete interested stocks that are 10+ days old and not in account holdings"""
     global interested_stocks, cleanup_run_today
-    
+
+    log_print('000000', f"{cur_date()} Running cleanup of old interested stocks at 20:30...")
     try:
         # Get current date
         current_date = datetime.now().date()
@@ -1405,29 +1411,31 @@ def cleanup_old_interested_stocks():
             try:
                 stock_date = datetime.strptime(yyyymmdd, '%Y%m%d').date()
             except ValueError:
-                print(f"Invalid date format in interested_stocks for {stock_code}: {yyyymmdd}")
+                log_print('000000', f"Invalid date format in interested_stocks for {stock_code}: {yyyymmdd}")
                 continue
 
             days_passed = (current_date - stock_date).days # Calculate days passed
-            if days_passed >= 10: # Check if 10 days have passed
+            if days_passed >= 7: # Check if 10 days have passed
                 stocks_to_delete.append(stock_code)
-                print(f"Marking {stock_code} ({stock_info.get('stock_name', '')}) for deletion: {days_passed} days old, not in holdings")
-        
+                log_print('000000', f"Marking {stock_code} ({stock_info.get('stock_name', '')}) for deletion: {days_passed} days old, not in holdings")
+        if stock_code in stored_jango_data:
+            del stocks_to_delete[stock_code]
+
         # Delete marked stocks
         if stocks_to_delete:
             for stock_code in stocks_to_delete:
                 del interested_stocks[stock_code]
-                print(f"Deleted {stock_code} from interested_stocks (10+ days old, not in holdings)")
+                log_print('000000', f"Deleted {stock_code} from interested_stocks (10+ days old, not in holdings)")
             save_interested_stocks_to_json()
-            print(f"Cleanup completed: deleted {len(stocks_to_delete)} old interested stocks")
+            log_print('000000', f"Cleanup completed: deleted {len(stocks_to_delete)} old interested stocks")
         else:
-            print("Cleanup completed: no old interested stocks to delete")
+            log_print('000000', "Cleanup completed: no old interested stocks to delete")
         
         # Mark cleanup as run today
         cleanup_run_today = True
         
     except Exception as e:
-        print(f"Error in cleanup_old_interested_stocks: {e}")
+        log_print('000000', f"Error in cleanup_old_interested_stocks: {e}")
         traceback.print_exc()
 
 # Background thread for periodic timer handler
@@ -1441,7 +1449,7 @@ def background_timer_thread():
         try:
             periodic_timer_handler()
         except Exception as e:
-            print(f"Error in periodic_timer_handler: {e}")
+            log_print('000000', f"Error in periodic_timer_handler: {e}")
 
         # Sleep for 1 second, but check stop event periodically
         for _ in range(10):  # Check every 0.1 seconds for 1 second total
@@ -1516,7 +1524,7 @@ def update_bun_charts_thread():
         cl_stocks = []
         # Don't hold lock while iterating interested_stocks - it's not needed
         for stk_cd, stock in interested_stocks.items():
-            if stock.get('btype', '') == 'CL':
+            if stock.get('btype', '').endswith('CL'):
                 stk_nm = stock.get('stock_name', '')
                 if stk_nm:
                     cl_stocks.append((stk_cd, stk_nm))
@@ -1667,7 +1675,7 @@ def periodic_timer_handler():
     # Check if it's 20:30 and cleanup hasn't run today
     if now_hour == 20 and now.minute == 30 and not cleanup_run_today:
         try:
-            print(f"{cur_date()} Running cleanup of old interested stocks at 20:30...")
+            log_print('000000', f"{cur_date()} Running cleanup of old interested stocks at 20:30...")
             cleanup_old_interested_stocks()
         except Exception as e:
             print(f"Error running cleanup at 20:30: {e}")
@@ -1678,8 +1686,9 @@ def periodic_timer_handler():
         cleanup_run_today = False
     
     if prev_hour is not None and now_hour != prev_hour:
-        wait_hour_change = False
-        print('{} Hour change from {} to {}'.format(cur_date(), prev_hour, now_hour))
+        if wait_hour_change:
+            log_print('000000', '{} Hour change from {} to {}'.format(cur_date(), prev_hour, now_hour))
+            wait_hour_change = False
     prev_hour = now_hour
     if wait_hour_change: # 장 개시 전이면 한시간씩 기다린다.
         return
@@ -1691,7 +1700,7 @@ def periodic_timer_handler():
             daily_work()
         except Exception as ex:
             traceback.print_exc()
-            print('currrent status={}'.format(working_status))
+            log_print('000000', 'currrent status={}'.format(working_status))
 
 def format_account_data():
     """Format account data for display in UI"""
@@ -2508,14 +2517,16 @@ def set_interested_rate(stock_code, stock_name='', color=None,
                 except (ValueError, TypeError):
                     pass
 
-            if stime:
-                stock['stime'] = stime.strip()
+            if stime == None or stime == '':
+                stime = datetime.now().strftime("%Y%m%d%H%M%S")
+                log_print(stock_code, 'Filling empty stime to {}'.format(stime))
+            stock['stime'] = stime
 
-            if yyyymmdd:
-                stock['yyyymmdd'] = yyyymmdd.strip()
-            else:
-                if not 'yyyymmdd' in stock:
-                    stock['yyyymmdd'] = cur_date() # dsc
+            yyyymmdd = str(yyyymmdd)
+            if len(yyyymmdd) != 8 :
+                yyyymmdd = today_yyyymmdd
+                log_print(stock_code, 'Filling empty yyyymmdd to {}'.format(yyyymmdd))
+            stock['yyyymmdd'] = yyyymmdd
 
             stock['sellprice'] = sellprice
             stock['sellrate'] = sellrate
@@ -2523,6 +2534,8 @@ def set_interested_rate(stock_code, stock_name='', color=None,
             if not 'clprice' in stock:
                 stock['clprice'] = '0'
 
+            if not stock_code in interested_stocks:
+                log_print(stock_code, 'new interested stock {}'.format(stock_code))
             interested_stocks[stock_code] = stock
             if need_cancel_old_buy :
                 # Cancel buy orders for this stock
