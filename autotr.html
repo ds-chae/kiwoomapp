@@ -429,6 +429,20 @@
 				min-width: 700px;
 				width: auto;
 			}
+			#interested-stocks-container table thead th.istk-sortable {
+				cursor: pointer;
+				user-select: none;
+			}
+			#interested-stocks-container table thead th.istk-sortable[data-sort-dir="asc"]::after {
+				content: " ▲";
+				color: #666;
+				font-size: 12px;
+			}
+			#interested-stocks-container table thead th.istk-sortable[data-sort-dir="desc"]::after {
+				content: " ▼";
+				color: #666;
+				font-size: 12px;
+			}
 			/* yyyymmdd column (2nd column) */
 			#interested-stocks-container table th:nth-child(2),
 			#interested-stocks-container table td:nth-child(2) {
@@ -749,6 +763,20 @@
 			}
 			#miche-container table {
 				width: auto !important;
+			}
+			#miche-container table thead th.miche-sortable {
+				cursor: pointer;
+				user-select: none;
+			}
+			#miche-container table thead th.miche-sortable[data-sort-dir="asc"]::after {
+				content: " ▲";
+				color: #666;
+				font-size: 12px;
+			}
+			#miche-container table thead th.miche-sortable[data-sort-dir="desc"]::after {
+				content: " ▼";
+				color: #666;
+				font-size: 12px;
 			}
 			#miche-container table th:nth-child(1),
 			#miche-container table td:nth-child(1) {
@@ -1912,6 +1940,159 @@
 			// Simple alert for now since update-message div is removed
 			alert(message);
 		}
+
+		// Orders (miche) sort state
+		let micheSortState = { key: 'account', dir: 'asc' }; // key: account|code|name|type
+
+		function normalizeMicheCode(code) {
+			const s = (code || '').toString().trim();
+			return s.startsWith('A') ? s.substring(1) : s;
+		}
+
+		function micheSortValue(order, key) {
+			if (!order) return '';
+			if (key === 'account') return (order.ACCT || '').toString();
+			if (key === 'code') return normalizeMicheCode(order.stk_cd || '');
+			if (key === 'name') return (order.stk_nm || '').toString();
+			if (key === 'type') return (order.io_tp_nm || '').toString();
+			return '';
+		}
+
+		function micheTypeRank(typeStr) {
+			const t = (typeStr || '').toString();
+			if (t.includes('매수')) return 0;
+			if (t.includes('매도')) return 1;
+			return 2;
+		}
+
+		function applyMicheSort(allOrders) {
+			if (!Array.isArray(allOrders)) return;
+			const { key, dir } = micheSortState || { key: 'account', dir: 'asc' };
+			const mul = (dir === 'desc') ? -1 : 1;
+			allOrders.sort((a, b) => {
+				// Special handling for type: rank buy/sell first, then string
+				if (key === 'type') {
+					const ra = micheTypeRank(a?.io_tp_nm);
+					const rb = micheTypeRank(b?.io_tp_nm);
+					if (ra !== rb) return (ra - rb) * mul;
+				}
+
+				const va = micheSortValue(a, key);
+				const vb = micheSortValue(b, key);
+				if (va < vb) return -1 * mul;
+				if (va > vb) return 1 * mul;
+
+				// Tie-breakers for stable ordering
+				const acctA = (a?.ACCT || '').toString();
+				const acctB = (b?.ACCT || '').toString();
+				if (acctA < acctB) return -1;
+				if (acctA > acctB) return 1;
+
+				const codeA = normalizeMicheCode(a?.stk_cd || '');
+				const codeB = normalizeMicheCode(b?.stk_cd || '');
+				if (codeA < codeB) return -1;
+				if (codeA > codeB) return 1;
+
+				const typeA = (a?.io_tp_nm || '').toString();
+				const typeB = (b?.io_tp_nm || '').toString();
+				if (typeA < typeB) return -1;
+				if (typeA > typeB) return 1;
+				return 0;
+			});
+		}
+
+		function setupMicheSortHeaders() {
+			const ths = document.querySelectorAll('#miche-container table thead th.miche-sortable');
+			ths.forEach(th => {
+				const key = th.getAttribute('data-sort-key');
+				if (!key) return;
+
+				// Update indicator state
+				if (micheSortState && micheSortState.key === key) {
+					th.setAttribute('data-sort-dir', micheSortState.dir);
+				} else {
+					th.removeAttribute('data-sort-dir');
+				}
+
+				// Bind click once
+				if (th.__boundSort) return;
+				th.__boundSort = true;
+				th.addEventListener('click', () => {
+					if (!micheSortState) micheSortState = { key: 'account', dir: 'asc' };
+					if (micheSortState.key === key) {
+						micheSortState.dir = (micheSortState.dir === 'asc') ? 'desc' : 'asc';
+					} else {
+						micheSortState.key = key;
+						micheSortState.dir = 'asc';
+					}
+					updateMiche();
+				});
+			});
+		}
+
+		// Interested stocks sort state
+		let interestedStocksSortState = { key: 'name', dir: 'asc' }; // key: code|yyyymmdd|name
+
+		function interestedStocksSortValue(code, info, key) {
+			const c = (code || '').toString();
+			const name = (info?.stock_name || '').toString();
+			const ymd = (info?.yyyymmdd || '').toString();
+			if (key === 'code') return c;
+			if (key === 'yyyymmdd') return ymd;
+			if (key === 'name') return name;
+			return '';
+		}
+
+		function applyInterestedStocksSort(stockCodes, interestedStocksData) {
+			if (!Array.isArray(stockCodes)) return stockCodes;
+			const { key, dir } = interestedStocksSortState || { key: 'name', dir: 'asc' };
+			const mul = (dir === 'desc') ? -1 : 1;
+			return stockCodes.sort((a, b) => {
+				const ia = interestedStocksData?.[a] || {};
+				const ib = interestedStocksData?.[b] || {};
+				const va = interestedStocksSortValue(a, ia, key);
+				const vb = interestedStocksSortValue(b, ib, key);
+				if (va < vb) return -1 * mul;
+				if (va > vb) return 1 * mul;
+				// Tie-breakers: name -> code
+				const na = interestedStocksSortValue(a, ia, 'name');
+				const nb = interestedStocksSortValue(b, ib, 'name');
+				if (na < nb) return -1;
+				if (na > nb) return 1;
+				const ca = interestedStocksSortValue(a, ia, 'code');
+				const cb = interestedStocksSortValue(b, ib, 'code');
+				if (ca < cb) return -1;
+				if (ca > cb) return 1;
+				return 0;
+			});
+		}
+
+		function setupInterestedStocksSortHeaders() {
+			const ths = document.querySelectorAll('#interested-stocks-container table thead th.istk-sortable');
+			ths.forEach(th => {
+				const key = th.getAttribute('data-sort-key');
+				if (!key) return;
+
+				if (interestedStocksSortState && interestedStocksSortState.key === key) {
+					th.setAttribute('data-sort-dir', interestedStocksSortState.dir);
+				} else {
+					th.removeAttribute('data-sort-dir');
+				}
+
+				if (th.__boundSort) return;
+				th.__boundSort = true;
+				th.addEventListener('click', () => {
+					if (!interestedStocksSortState) interestedStocksSortState = { key: 'name', dir: 'asc' };
+					if (interestedStocksSortState.key === key) {
+						interestedStocksSortState.dir = (interestedStocksSortState.dir === 'asc') ? 'desc' : 'asc';
+					} else {
+						interestedStocksSortState.key = key;
+						interestedStocksSortState.dir = 'asc';
+					}
+					updateInterestedStocks();
+				});
+			});
+		}
 		
 		function updateMiche() {
 			fetch('./api/miche-data')
@@ -1959,10 +2140,10 @@
 									<table>
 										<thead>
 											<tr>
-												<th>Account</th>
-												<th>Code</th>
-												<th>Name</th>
-												<th>TYPE</th>
+												<th class="miche-sortable" data-sort-key="account">Account</th>
+												<th class="miche-sortable" data-sort-key="code">Code</th>
+												<th class="miche-sortable" data-sort-key="name">Name</th>
+												<th class="miche-sortable" data-sort-key="type">TYPE</th>
 												<th>Order Qty</th>
 												<th>Order / Current</th>
 												<th>REMAIN</th>
@@ -1982,29 +2163,7 @@
 							`;
 						} else {
 							// Sort orders: Account -> Stock Code -> Order Type
-							allOrders.sort((a, b) => {
-								// Sort by Account
-								const acctA = a.ACCT || '';
-								const acctB = b.ACCT || '';
-								if (acctA < acctB) return -1;
-								if (acctA > acctB) return 1;
-								
-								// Sort by Stock Code
-								const codeA = a.stk_cd || '';
-								const codeB = b.stk_cd || '';
-								// Remove 'A' for comparison if present
-								const cleanCodeA = codeA.startsWith('A') ? codeA.substring(1) : codeA;
-								const cleanCodeB = codeB.startsWith('A') ? codeB.substring(1) : codeB;
-								if (cleanCodeA < cleanCodeB) return -1;
-								if (cleanCodeA > cleanCodeB) return 1;
-								
-								// Sort by Order Type (Buy first, then Sell)
-								const typeA = a.io_tp_nm || '';
-								const typeB = b.io_tp_nm || '';
-								if (typeA.includes('매수') && !typeB.includes('매수')) return -1;
-								if (!typeA.includes('매수') && typeB.includes('매수')) return 1;
-								return 0;
-							});
+							applyMicheSort(allOrders);
 							
 							// Single table with one header
 							htmlContent += `
@@ -2015,10 +2174,10 @@
 									<table>
 										<thead>
 											<tr>
-												<th>Account</th>
-												<th>Code</th>
-												<th>Name</th>
-												<th>TYPE</th>
+												<th class="miche-sortable" data-sort-key="account">Account</th>
+												<th class="miche-sortable" data-sort-key="code">Code</th>
+												<th class="miche-sortable" data-sort-key="name">Name</th>
+												<th class="miche-sortable" data-sort-key="type">TYPE</th>
 												<th>Order Qty</th>
 												<th>Order / Current</th>
 												<th>REMAIN</th>
@@ -2110,6 +2269,8 @@
 						micheContainer.innerHTML = htmlContent;
 						// Update mobile display after table is rendered
 						updateMobileDisplay();
+						// Enable sort interactions (table is recreated frequently)
+						setupMicheSortHeaders();
 					} else {
 						// Show empty table even on API error
 						const micheSection = document.getElementById('miche-section');
@@ -2123,10 +2284,10 @@
 								<table>
 									<thead>
 									<tr>
-										<th>Account</th>
-										<th>Code</th>
-										<th>Name</th>
-										<th>TYPE</th>
+										<th class="miche-sortable" data-sort-key="account">Account</th>
+										<th class="miche-sortable" data-sort-key="code">Code</th>
+										<th class="miche-sortable" data-sort-key="name">Name</th>
+										<th class="miche-sortable" data-sort-key="type">TYPE</th>
 										<th>Order Qty</th>
 										<th>Order / Current</th>
 										<th>REMAIN</th>
@@ -2146,6 +2307,7 @@
 					`;
 						// Update mobile display after error table is rendered
 						updateMobileDisplay();
+						setupMicheSortHeaders();
 				}
 			})
 			.catch(error => {
@@ -2161,10 +2323,10 @@
 						<table>
 							<thead>
 								<tr>
-									<th>Account</th>
-									<th>Code</th>
-									<th>Name</th>
-									<th>TYPE</th>
+									<th class="miche-sortable" data-sort-key="account">Account</th>
+									<th class="miche-sortable" data-sort-key="code">Code</th>
+									<th class="miche-sortable" data-sort-key="name">Name</th>
+									<th class="miche-sortable" data-sort-key="type">TYPE</th>
 									<th>Order Qty</th>
 									<th>Order / Current</th>
 									<th>REMAIN</th>
@@ -2184,6 +2346,7 @@
 				`;
 				// Update mobile display after error table is rendered
 				updateMobileDisplay();
+				setupMicheSortHeaders();
 			});
 		}
 		
@@ -2650,8 +2813,9 @@
 						// Always show interested stocks section
 						interestedStocksSection.style.display = 'block';
 						
-						// Get all stock codes
-						const stockCodes = Object.keys(interestedStocksData).sort();
+						// Get all stock codes, then apply current sort (default: name asc)
+						let stockCodes = Object.keys(interestedStocksData);
+						stockCodes = applyInterestedStocksSort(stockCodes, interestedStocksData);
 						
 						if (stockCodes.length === 0) {
 							interestedStocksContainer.innerHTML = `
@@ -2659,9 +2823,9 @@
 									<table>
 										<thead>
 											<tr>
-												<th>Code</th>
-												<th>yyyymmdd</th>
-												<th>Name</th>
+												<th class="istk-sortable" data-sort-key="code">Code</th>
+												<th class="istk-sortable" data-sort-key="yyyymmdd">yyyymmdd</th>
+												<th class="istk-sortable" data-sort-key="name">Name</th>
 												<th>COLOR</th>
 												<th>BType</th>
 												<th>BAmount</th>
@@ -2689,9 +2853,9 @@
 								<table>
 									<thead>
 										<tr>
-											<th>Code</th>
-											<th>yyyymmdd</th>
-											<th>Name</th>
+											<th class="istk-sortable" data-sort-key="code">Code</th>
+											<th class="istk-sortable" data-sort-key="yyyymmdd">yyyymmdd</th>
+											<th class="istk-sortable" data-sort-key="name">Name</th>
 											<th>COLOR</th>
 											<th>BType</th>
 											<th>BAmount</th>
@@ -2772,6 +2936,7 @@
 						`;
 						
 						interestedStocksContainer.innerHTML = htmlContent;
+						setupInterestedStocksSortHeaders();
 					} else {
 						// Show error state
 						const interestedStocksContainer = document.getElementById('interested-stocks-container');
@@ -2782,9 +2947,9 @@
 								<table>
 									<thead>
 										<tr>
-											<th>Code</th>
-											<th>yyyymmdd</th>
-											<th>Name</th>
+											<th class="istk-sortable" data-sort-key="code">Code</th>
+											<th class="istk-sortable" data-sort-key="yyyymmdd">yyyymmdd</th>
+											<th class="istk-sortable" data-sort-key="name">Name</th>
 											<th>COLOR</th>
 											<th>BType</th>
 											<th>BAmount</th>
@@ -2816,8 +2981,8 @@
 							<table>
 								<thead>
 									<tr>
-										<th>Code</th>
-										<th>Name</th>
+											<th class="istk-sortable" data-sort-key="code">Code</th>
+											<th class="istk-sortable" data-sort-key="name">Name</th>
 										<th>COLOR</th>
 										<th>BType</th>
 										<th>BAmount</th>
@@ -2837,6 +3002,7 @@
 							</table>
 						</div>
 					`;
+					setupInterestedStocksSortHeaders();
 				});
 		}
 		

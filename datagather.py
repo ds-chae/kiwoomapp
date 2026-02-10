@@ -186,7 +186,7 @@ def save_chart_data(stock_code, date_str, data_list):
     
     # Load existing data if file exists
     if os.path.exists(file_path):
-    try:
+        try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 existing_data = json.load(f)
         except Exception as e:
@@ -574,9 +574,9 @@ def background_data_gathering():
         with status_lock:
             status_info['status'] = 'idle'
     else:
-    # Run once on startup
-    print("Running initial data gathering...")
-    run_daily_job()
+        # Run once on startup
+        print("Running initial data gathering...")
+        run_daily_job()
 
     print("Waiting for execution time (21:00 daily)...")
     

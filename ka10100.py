@@ -68,6 +68,8 @@ def save_stocknames(stocknames):
 def get_stockname(stk_cd):
     global stocknames
 
+    if stk_cd == '000000':
+        return 'SYSTEMLOG'
     if stk_cd in stocknames:
         return stocknames[stk_cd]
 
@@ -85,6 +87,42 @@ def get_stockname(stk_cd):
         stocknames[stk_cd] = json['name']
         save_stocknames(stocknames)
         return json['name']
+    print('no name in fn_ka10100 result')
 
-    print('No name field in fn_ka10100 result')
+    # no name in fn_ka10100 response
+    result = next_getname(stk_cd, MY_ACCESS_TOKEN)
+    if 'stk_nm' in result:
+        return result['stk_nm']
+
+    print('No name field in next_getname result')
     return ''
+
+
+def next_getname(stk_cd, MY_ACCESS_TOKEN):
+    params = {
+        'stk_cd': stk_cd + '_AL',  #  (KRX:039490,NXT:039490_NX,SOR:039490_AL)
+    }
+
+    result = fn_ka10001(token=MY_ACCESS_TOKEN, data=params)
+
+def fn_ka10001(token, data, cont_yn='N', next_key=''):
+    host = 'https://api.kiwoom.com'
+    endpoint = '/api/dostk/stkinfo'
+    url = host + endpoint
+
+    headers = {
+        'Content-Type': 'application/json;charset=UTF-8',
+        'authorization': f'Bearer {token}',
+        'cont-yn': cont_yn,
+        'next-key': next_key,
+        'api-id': 'ka10001',
+    }
+
+    response = requests.post(url, headers=headers, json=data)
+
+    print('Code:', response.status_code)
+    print('Header:',
+          json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4,
+                     ensure_ascii=False))
+    print('Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON ÀÀ´äÀ» ÆÄ½ÌÇÏ¿© Ãâ·Â
+    return response.json()

@@ -47,6 +47,7 @@ today_yyyymmdd = now.strftime("%Y%m%d")
 # Interested stocks list
 INTERESTED_STOCKS_FILE = 'interested_stocks.json'
 interested_stocks = {}
+interested_stocks_lock = threading.RLock()
 
 # Jango data file
 JANGO_DATA_FILE = 'jango_data.json'
@@ -460,7 +461,7 @@ last_get_bun_time = {}
 last_cl_price = {}
 
 
-def calculate_sell_price(MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk_nm):
+def calculate_sell_price(ACCT, MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk_nm):
     global bun_prices, last_get_bun_time, last_cl_price
 
     ord_uv = 0
@@ -493,9 +494,9 @@ def calculate_sell_price(MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk_nm):
                 gap_prices[stk_cd] = get_gap_price(MY_ACCESS_TOKEN, stk_cd, stk_nm)
             gap_price = gap_prices[stk_cd]
         except Exception as e1:
-            log_print(stk_cd, 'get_gap_price gen Error {}'.format(e1))
+            log_print(stk_cd, f'{ACCT} get_gap_price gen Error {e1}')
             return 0
-        log_print(stk_cd, ' before get_low_after_high')
+        log_print(stk_cd, f'{ACCT} before get_low_after_high')
         last_get_bun_time[stk_cd] = now
         # Try to use bun_charts dict first, otherwise call get_bun_chart
         bun_chart = None
@@ -506,20 +507,20 @@ def calculate_sell_price(MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk_nm):
         except:
             pass
         if bun_chart is None:
-            log_print(stk_cd, 'before get_low_after_high, bun_chart is None, return 0')
+            log_print(stk_cd, f'{ACCT} before get_low_after_high, bun_chart is None, return 0')
             return 0 # if bun_chart is not queried yet, return pric 0
             # bun_chart = get_bun_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm)
 
         lowest, low_time = get_low_after_high(stk_cd, bun_chart)
-        log_print(stk_cd, 'get_low_after_high {} returns {} last time bun_chart={}, low_time={}'.format(stk_nm, lowest, bun_time, low_time))
+        log_print(stk_cd, f'{ACCT} get_low_after_high {stk_nm} returns {lowest} last time bun_chart={bun_time}, low_time={low_time}')
         if lowest != 0 :
             gap = float(gap_price['gap']) * 2
             cl_price = round_trunc(int(lowest + gap * sellgap))
             last_cl_price[stk_cd] = cl_price
-            log_print(stk_cd, ' cl_price is {}, gap={}, lowest={}, gaprate={}'.format(cl_price, gap, lowest, sellgap))
+            log_print(stk_cd, f'{ACCT} cl_price is {cl_price}, gap={gap}, lowest={lowest}, gaprate={sellgap}')
             return cl_price
 
-    log_print(stk_cd, 'calculate_sell_price returns 0')
+    log_print(stk_cd, f'{ACCT} calculate_sell_price returns 0')
     return 0
 
 
@@ -532,16 +533,16 @@ def call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_co
     pur_pric = int(pur_pric_str) if pur_pric_str else 0
 
     try:
-        sell_price = calculate_sell_price(MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk_nm)
+        sell_price = calculate_sell_price(ACCT, MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk_nm)
         if sell_price == 0: # price is not calculated
             return
     except Exception as ex:
-        log_print(stk_cd, 'Error in calculate_sell_price :{}'.format(ex))
+        log_print(stk_cd, f'{ACCT} Error in calculate_sell_price :{ex}')
         return
 
     upperlimit = get_upper_limit(MY_ACCESS_TOKEN, stk_cd)
     if sell_price > upperlimit :
-        log_print(stk_cd, ' {} exceed upper limit {}'.format(sell_price, upperlimit))
+        log_print(stk_cd, f'{ACCT} {sell_price} exceed upper limit {upperlimit}')
         return
 
     # if any cancelled sell order, try next
@@ -551,14 +552,20 @@ def call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_co
 
     trde_able_qty_int = int(trde_able_qty) if trde_able_qty else 0
     if trde_able_qty_int == 0:
+        log_print(stk_cd, f'{ACCT} in call_sell_order {stk_cd} market={market}, trde_able_qty_int={trde_able_qty_int} return')
+        return
+
+    nxt_stock = nxt_tradable.get(stk_cd, True)
+    if not nxt_stock and market == 'NXT':
+        log_print(stk_cd, f'{ACCT} in call_sell_order {stk_cd} market={market}, nxt_stock={nxt_stock} return')
         return
 
     working_status = 'call sell_order()'
     trde_tp = '0'  # 매매구분 0:보통 , 3:시장가 , 5:조건부지정가 , 81:장마감후시간외 , 61:장시작전시간외, 62:시간외단일가 , 6:최유리지정가 , 7:최우선지정가 , 10:보통(IOC) , 13:시장가(IOC) , 16:최유리(IOC) , 20:보통(FOK) , 23:시장가(FOK) , 26:최유리(FOK) , 28:스톱지정가,29:중간가,30:중간가(IOC),31:중간가(FOK)
-    log_print(stk_cd, 'sell_order market={} qty={} price={}'.format(market, trde_able_qty_int, sell_price))
+    log_print(stk_cd, f'{ACCT} sell_order market={market} qty={trde_able_qty_int} price={sell_price}')
     ret_status = sell_order(MY_ACCESS_TOKEN, dmst_stex_tp=market, stk_cd=stk_cd,
                             ord_qty=str(trde_able_qty_int), ord_uv=str(sell_price), trde_tp=trde_tp, cond_uv='')
-    log_print(stk_cd, ret_status)
+    log_print(stk_cd, f'{ACCT} ret_status={ret_status}')
     test_ret_status('SELL', stk_cd, ret_status)
 
 
@@ -581,23 +588,41 @@ def _normalize_stk_cd(stk_cd) -> str:
     return s
 
 
+def _is_success_return_code(rc) -> bool:
+    """Kiwoom APIs in this codebase sometimes use int codes (0/200) or strings ('0'/'0000').
+    Treat common successful codes as success.
+    """
+    if rc is None:
+        return False
+    try:
+        if isinstance(rc, str):
+            rc_s = rc.strip()
+            if rc_s in {"0", "0000", "200"}:
+                return True
+            if rc_s.isdigit() and int(rc_s) == 0:
+                return True
+        if isinstance(rc, (int, float)):
+            rc_i = int(rc)
+            if rc_i in (0, 200):
+                return True
+    except Exception:
+        return False
+    return False
+
+
 def test_ret_status(sell_buy, stk_cd, ret_status):
-    global now, wait_hour_change, not_nxt_cd
+    global now, wait_hour_change, nxt_tradable
     if not isinstance(ret_status, dict):
         return ''
 
-    stk_cd_key = _normalize_stk_cd(stk_cd)
     rcde = ret_status.get('return_code')
     rmsg = ret_status.get('return_msg', '')
     if rmsg and len(rmsg) > 13:
         code = rmsg[7:13]
         if code == '507615':
-            log_print(stk_cd_key or stk_cd, '{} 507615 NXT 거래불가'.format(sell_buy))
-            if stk_cd_key:
-                not_nxt_cd[stk_cd_key] = True
-            else:
-                not_nxt_cd[stk_cd] = True
-            print(stk_cd, '{} 507615 NXT 거래불가. not_nxt_cd={}'.format(sell_buy, not_nxt_cd))
+            log_print(stk_cd, '{} 507615 NXT 거래불가'.format(sell_buy))
+            nxt_tradable[stk_cd] = False
+            print(stk_cd, '{} 507615 NXT 거래불가. nxt_tradable={}'.format(sell_buy, nxt_tradable[stk_cd]))
         if code == '571489':
             set_new_day(False)
             print('No trading day, set new_day to False')
@@ -612,7 +637,7 @@ jango_token = {}
 
 def sell_jango(jango, market):
     global auto_sell_enabled, current_status, jango_token, now, working_status
-    global new_day, not_nxt_cd
+    global new_day, nxt_tradable, interested_stocks, interested_stocks_lock
     if not new_day:
         return
     working_status = 'begin sell_jango()'
@@ -633,15 +658,10 @@ def sell_jango(jango, market):
                 stk_cd = _normalize_stk_cd(indv.get('stk_cd', ''))
                 stk_nm = indv.get('stk_nm', '')
 
-                not_nxt_stock = not_nxt_cd.get(stk_cd, False)
-                print('in sell_jango stk_cd={}, market={}, not_nxt_stock={}'.format(stk_cd, market, not_nxt_stock))
-                if not_nxt_stock and market == 'NXT':
+                with interested_stocks_lock:
+                    sell_cond = copy.deepcopy(interested_stocks.get(stk_cd))
+                if not sell_cond:
                     continue
-                    
-                if stk_cd not in interested_stocks:
-                    continue
-
-                sell_cond = interested_stocks[stk_cd]
                 working_status = 'before call_sell_order {} {} {}'.format(market, stk_cd, stk_nm)
                 call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond)
         except Exception as ex:
@@ -828,7 +848,7 @@ nxt_fin_time = time(20, 0)
 new_day = False
 nxt_cancelled = False
 krx_cancelled = False
-not_nxt_cd = {}
+nxt_tradable = {}
 
 def cur_date():
     # Get today's date
@@ -843,7 +863,7 @@ def cur_date():
 
 def log_print(stk_cd, msg):
     """Append log message to file: logs/yyyymmdd/stock_code_stock_name.txt"""
-    global today_yyyymmdd, interested_stocks
+    global today_yyyymmdd, interested_stocks, interested_stocks_lock
     
     try:
         # Get yyyymmdd from global variable
@@ -851,8 +871,9 @@ def log_print(stk_cd, msg):
         
         # Get stock name from interested_stocks if available, otherwise use get_stockname
         stk_nm = ''
-        if stk_cd in interested_stocks:
-            stk_nm = interested_stocks[stk_cd].get('stock_name', '')
+        with interested_stocks_lock:
+            if stk_cd in interested_stocks:
+                stk_nm = interested_stocks[stk_cd].get('stock_name', '')
         
         if not stk_nm:
             try:
@@ -902,11 +923,12 @@ gap_prices = {}
 
 def buy_cl_by_account(ACCT, MY_ACCESS_TOKEN, stex, stk_nm):
     global order_count, working_status
-    global gap_prices, new_day
+    global gap_prices, new_day, interested_stocks, interested_stocks_lock
 
     working_status = 'in buy_cl_by_account'
-    for stk_cd in interested_stocks:
-        int_stock = interested_stocks[stk_cd]
+    with interested_stocks_lock:
+        istk_items = list(interested_stocks.items())
+    for stk_cd, int_stock in istk_items:
         btype = int_stock.get('btype', '')
         if btype == 'CL':
             if not stk_cd in gap_prices:
@@ -919,10 +941,10 @@ def buy_cl_by_account(ACCT, MY_ACCESS_TOKEN, stex, stk_nm):
 
 
 def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
-    global working_status, order_count, now, not_nxt_cd, key_list
+    global working_status, order_count, now, nxt_tradable, key_list
     if not gap_price:
         return
-    if stex == 'NXT' and stk_cd in not_nxt_cd:
+    if stex == 'NXT' and not nxt_tradable.get(stk_cd, True):
         return
 
     stk_nm = int_stock['stock_name']
@@ -979,7 +1001,7 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
     if ordered[stk_cd] < 1 and hold_count < 1 : # 보유량이 없고 주문 사실도 없다면
         bp = gap_price['price'][price_index]
         buy_rate = (float(gap_price.get('current_price', 0))-bp) / bp # 현재 가격과 매수 가격의 차이
-        if buy_rate >= 0.05 : # 매수 가격이랑 5%이상 차이가 난다면 매수 하지 않는다,
+        if buy_rate >= 0.03 : # 매수 가격이랑 3%이상 차이가 난다면 매수 하지 않는다,
             log_print(stk_cd, '{} gap over skip 1 for {} {} {} {}'.format(now, stk_cd, stk_nm, bp, buy_rate))
         else:
             ord_price = round_trunc(bp)
@@ -989,13 +1011,17 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
                 log_print(stk_cd, 'buy_order market={}, qty={} price={}'.format(stex, ord_qty, ord_price))
                 ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trde_tp=trde_tp, cond_uv='')
                 log_print(stk_cd, '1_buy_order_result: {}'.format(ret_status))
-                if test_ret_status('BUY', stk_cd, ret_status) == 200 :
+                tr = test_ret_status('BUY', stk_cd, ret_status)
+                if tr == 200 :
                     ordered[stk_cd] += 1
+                    log_print(stk_cd, '1_buy_order_result success  : {}'.format(ret_status['return_msg']))
+                else:
+                    log_print(stk_cd, '1_buy_order_result failure : {}'.format(ret_status['return_msg']))
             log_print(stk_cd, 'price:{} current buy order for {} is {}'.format(ord_price, ACCT, ordered[stk_cd]))
     if hold_count >= 1 and ordered[stk_cd] < 2: # 하나 보유하고 주문은 아직 둘이 아니면
         bp = gap_price['price'][price_index+1]
         buy_rate = (float(gap_price.get('current_price', 0))-bp) / bp # 현재 가격과 매수 가격의 차이
-        if buy_rate >= 0.05 : # 매수 가격이랑 5%이상 차이가 난다면 매수 하지 않는다,
+        if buy_rate >= 0.03 : # 매수 가격이랑 3%이상 차이가 난다면 매수 하지 않는다,
             log_print(stk_cd, '{} gap over skip 2 for {} {} {} {}'.format(now, stk_cd, stk_nm, bp, buy_rate))
         else:
             ord_price = round_trunc(bp)
@@ -1004,9 +1030,12 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
             if ord_qty > 0 :
                 log_print(stk_cd, 'buy_order market={}, qty={} price={}'.format(stex, ord_qty, ord_price))
                 ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trde_tp=trde_tp, cond_uv='')
-                log_print(stk_cd, '2_buy_order_result: {}'.format(ret_status))
-                if test_ret_status('BUY', stk_cd, ret_status) == 200 :
+                tr = test_ret_status('BUY', stk_cd, ret_status)
+                if tr == 200 :
+                    log_print(stk_cd, '2_buy_order_result success : {}'.format(ret_status))
                     ordered[stk_cd] += 1
+                else:
+                    log_print(stk_cd, '2_buy_order_result failure : {}'.format(ret_status['return_msg']))
             log_print(stk_cd, 'price:{} current buy order for {} {} {} is {}'.format(ord_price, ACCT, stk_cd, stk_nm, ordered[stk_cd]))
 
     pass
@@ -1085,11 +1114,36 @@ def daily_work():
             log_print('000000', '{} {} Setting new day=False'.format(cur_date(), now))
 
 
+def clear_for_new_day():
+    global now
+    global new_day, nxt_start_time, nxt_cancelled, krx_cancelled #, krx_first
+    global current_status, nxt_tradable
+    global updown_list, today_yyyymmdd
+    global bun_charts_lock, bun_charts
+    global daily_charts_lock, daily_charts
+
+    today_yyyymmdd = now.strftime("%Y%m%d")
+    print('{} {} Setting new day=True'.format(cur_date(), now))
+    log_print('000000', '{} {} Setting new day=True'.format(cur_date(), now))
+    new_day = True
+    nxt_cancelled = False
+    krx_cancelled = False
+    #krx_first = False
+    current_status = 'NEW'
+    nxt_tradable = {}
+    updown_list = {}
+    init_order_count()
+    with bun_charts_lock:
+        bun_charts = {}
+    with daily_charts_lock:
+        daily_charts = {}
+
+
+
 def set_new_day(tf):
-    global new_day, nxt_cancelled, krx_cancelled, ktx_first, current_status
+    global new_day
+    global current_status
     global updown_list, access_token, now, today_yyyymmdd
-    global bun_charts, bun_charts_lock
-    global not_nxt_cd
 
     if tf:
         if new_day:
@@ -1097,20 +1151,7 @@ def set_new_day(tf):
         print('{} Setting new_day=True, clearing variables.'.format(now))
         log_print('000000', '{} Setting new_day=True, clearing variables.'.format(now))
         now = datetime.now()
-        today_yyyymmdd = now.strftime("%Y%m%d")
-        print('{} {} Setting new day=True'.format(cur_date(), now))
-        log_print('000000', '{} {} Setting new day=True'.format(cur_date(), now))
-        new_day = True
-        nxt_cancelled = False
-        krx_cancelled = False
-        ktx_first = False
-        current_status = 'NEW'
-        not_nxt_cd = {}
-        updown_list = {}
-        init_order_count()
-        access_token = {}
-        with bun_charts_lock:
-            bun_charts = {}
+        clear_for_new_day()
 
     else:
         if not new_day:
@@ -1127,7 +1168,7 @@ auto_sell_enabled = {}
 
 def load_dictionaries_from_json():
     """Load auto_sell_enabled, and interested_stocks from JSON files"""
-    global auto_sell_enabled, interested_stocks
+    global auto_sell_enabled, interested_stocks, interested_stocks_lock
 
     # Load auto_sell_enabled
     if os.path.exists(AUTO_SELL_FILE):
@@ -1158,22 +1199,28 @@ def load_dictionaries_from_json():
     if os.path.exists(INTERESTED_STOCKS_FILE):
         try:
             with open(INTERESTED_STOCKS_FILE, 'r', encoding='utf-8') as f:
-                interested_stocks = json.load(f)
+                loaded = json.load(f)
+            with interested_stocks_lock:
+                interested_stocks = loaded
             print(f"Loaded interested_stocks from {INTERESTED_STOCKS_FILE}: {interested_stocks}")
         except Exception as e:
             print(f"Error loading interested_stocks: {e}")
-            interested_stocks = {}
+            with interested_stocks_lock:
+                interested_stocks = {}
     else:
-        interested_stocks = {}
+        with interested_stocks_lock:
+            interested_stocks = {}
         print(f"Created new interested_stocks dictionary")
 
     try:
+        with interested_stocks_lock:
+            snapshot = copy.deepcopy(interested_stocks)
         modified = False
         current_date = datetime.now().strftime("%Y%m%d")
-        for stk in interested_stocks:
+        for stk in snapshot:
             log_print('000000', 'in loading interested_stocks, stk={}'.format(stk))
             log_print(stk, 'in loading interested_stocks, stk={}'.format(stk))
-            stock = interested_stocks[stk]
+            stock = snapshot[stk]
             stk_nm = stock.get('stock_name', '')
             log_print('000000', 'interested stock_name={}'.format(stk_nm))
             if stk_nm == '':
@@ -1193,6 +1240,8 @@ def load_dictionaries_from_json():
             log_print(stk, 'in istk {} {} {}'.format(stock.get('btype', 'BT'), stock.get('color', 'NC'), stock.get('yyyymmdd', 'YMD')))
 
         if modified:
+            with interested_stocks_lock:
+                interested_stocks = snapshot
             save_interested_stocks_to_json()
             print('interested_stocks is modified, thus saved')
     except Exception as ex:
@@ -1239,10 +1288,12 @@ def save_auto_sell_to_json():
 
 def save_interested_stocks_to_json():
     """Save interested_stocks to JSON file"""
-    global interested_stocks
+    global interested_stocks, interested_stocks_lock
     try:
+        with interested_stocks_lock:
+            data = copy.deepcopy(interested_stocks)
         with open(INTERESTED_STOCKS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(interested_stocks, f, indent=2, ensure_ascii=False)
+            json.dump(data, f, indent=2, ensure_ascii=False)
         print(f"Saved interested_stocks to {INTERESTED_STOCKS_FILE}")
         return True
     except Exception as e:
@@ -1304,7 +1355,7 @@ def get_stock_codes_from_jango(jango_data):
 
 def check_and_handle_sold_stocks(previous_jango_data, current_jango_data):
     """Check if any stocks were sold and handle btype changes - account by account"""
-    global interested_stocks
+    global interested_stocks, interested_stocks_lock
     
     # previous_jango_data and current_jango_data are {account: {stock_code: amount}}
     current_stocks = extract_stock_codes_and_amounts(current_jango_data) if current_jango_data else {}
@@ -1330,15 +1381,16 @@ def check_and_handle_sold_stocks(previous_jango_data, current_jango_data):
     # Check each sold stock
     modified = False
     for stk_cd in sold_stocks:
-        if stk_cd in interested_stocks:
-            stock_info = interested_stocks[stk_cd]
-            previous_btype = stock_info.get('btype', '')
-            
-            # If previous btype was 'CL', change to 'SCL'
-            if previous_btype == 'CL':
-                log_print(stk_cd, f"Stock {stk_cd} was sold and had btype='CL', changing to 'SCL'")
-                stock_info['btype'] = 'SCL'
-                modified = True
+        with interested_stocks_lock:
+            stock_info = interested_stocks.get(stk_cd)
+            if stock_info:
+                previous_btype = stock_info.get('btype', '')
+                # If previous btype was 'CL', change to 'SCL'
+                if previous_btype == 'CL':
+                    log_print(stk_cd, f"Stock {stk_cd} was sold and had btype='CL', changing to 'SCL'")
+                    stock_info['btype'] = 'SCL'
+                    interested_stocks[stk_cd] = stock_info
+                    modified = True
                 
         # Cancel buy orders for this stock
         cancel_related_buy_order(stk_cd)
@@ -1385,7 +1437,7 @@ def get_account_holdings_stock_codes():
 
 def cleanup_old_interested_stocks():
     """Delete interested stocks that are 10+ days old and not in account holdings"""
-    global interested_stocks, cleanup_run_today
+    global interested_stocks, cleanup_run_today, interested_stocks_lock
 
     log_print('000000', f"{cur_date()} Running cleanup of old interested stocks at 20:30...")
     try:
@@ -1398,34 +1450,37 @@ def cleanup_old_interested_stocks():
         # Track stocks to delete
         stocks_to_delete = []
         
-        # Iterate through interested_stocks
-        for stock_code, stock_info in interested_stocks.items():
-            if stock_code in holdings_stock_codes:
-                continue
-            yyyymmdd = stock_info.get('yyyymmdd', '')
-            # Skip if yyyymmdd is missing or invalid
-            if not yyyymmdd or len(yyyymmdd) != 8 or not yyyymmdd.isdigit():
-                continue
-            
-            # Parse the date
-            try:
-                stock_date = datetime.strptime(yyyymmdd, '%Y%m%d').date()
-            except ValueError:
-                log_print('000000', f"Invalid date format in interested_stocks for {stock_code}: {yyyymmdd}")
-                continue
+        # Iterate through interested_stocks (guarded)
+        with interested_stocks_lock:
+            for stock_code, stock_info in interested_stocks.items():
+                if stock_code in holdings_stock_codes:
+                    continue
+                yyyymmdd = stock_info.get('yyyymmdd', '')
+                # Skip if yyyymmdd is missing or invalid
+                if not yyyymmdd or len(yyyymmdd) != 8 or not yyyymmdd.isdigit():
+                    continue
+                
+                # Parse the date
+                try:
+                    stock_date = datetime.strptime(yyyymmdd, '%Y%m%d').date()
+                except ValueError:
+                    log_print('000000', f"Invalid date format in interested_stocks for {stock_code}: {yyyymmdd}")
+                    continue
 
-            days_passed = (current_date - stock_date).days # Calculate days passed
-            if days_passed >= 7: # Check if 10 days have passed
-                stocks_to_delete.append(stock_code)
-                log_print('000000', f"Marking {stock_code} ({stock_info.get('stock_name', '')}) for deletion: {days_passed} days old, not in holdings")
+                days_passed = (current_date - stock_date).days # Calculate days passed
+                if days_passed >= 7: # Check if 10 days have passed
+                    stocks_to_delete.append(stock_code)
+                    log_print('000000', f"Marking {stock_code} ({stock_info.get('stock_name', '')}) for deletion: {days_passed} days old, not in holdings")
         if stock_code in stored_jango_data:
             del stocks_to_delete[stock_code]
 
         # Delete marked stocks
         if stocks_to_delete:
-            for stock_code in stocks_to_delete:
-                del interested_stocks[stock_code]
-                log_print('000000', f"Deleted {stock_code} from interested_stocks (10+ days old, not in holdings)")
+            with interested_stocks_lock:
+                for stock_code in stocks_to_delete:
+                    if stock_code in interested_stocks:
+                        del interested_stocks[stock_code]
+                    log_print('000000', f"Deleted {stock_code} from interested_stocks (10+ days old, not in holdings)")
             save_interested_stocks_to_json()
             log_print('000000', f"Cleanup completed: deleted {len(stocks_to_delete)} old interested stocks")
         else:
@@ -1514,7 +1569,7 @@ def query_day_charts(MY_ACCESS_TOKEN, cl_stocks):
 
 def update_bun_charts_thread():
     """Background thread that updates bun_charts dict in parallel for stocks with btype 'CL'"""
-    global bun_charts, bun_charts_lock, interested_stocks, bun_charts_thread_stop_event
+    global bun_charts, bun_charts_lock, interested_stocks, bun_charts_thread_stop_event, interested_stocks_lock
     
     while not bun_charts_thread_stop_event.is_set():
         # Get token for API calls
@@ -1522,8 +1577,10 @@ def update_bun_charts_thread():
         
         # Get list of stocks with btype 'CL'
         cl_stocks = []
-        # Don't hold lock while iterating interested_stocks - it's not needed
-        for stk_cd, stock in interested_stocks.items():
+        # Snapshot interested_stocks under lock, then release before API calls
+        with interested_stocks_lock:
+            istk_items = list(interested_stocks.items())
+        for stk_cd, stock in istk_items:
             if stock.get('btype', '').endswith('CL'):
                 stk_nm = stock.get('stock_name', '')
                 if stk_nm:
@@ -1556,9 +1613,10 @@ async def lifespan(app: FastAPI):
     #fill_charts_for_CL(get_one_token()) # bun_charts is filled by thread.
 
     # Initialize stored jango data - first try to load from file, then update
-    print("Initializing jango data...")
     now = datetime.now()
-    
+    clear_for_new_day() # now should be set before call this.
+
+    print("Initializing jango data...")
     # Load previous jango data from file
     previous_jango_data_simplified = load_jango_data_from_json()
     
@@ -1705,6 +1763,7 @@ def periodic_timer_handler():
 def format_account_data():
     """Format account data for display in UI"""
     global stored_jango_data
+    global interested_stocks, interested_stocks_lock
     try:
         # Determine which market is active based on current time
         now = datetime.now()
@@ -1770,8 +1829,9 @@ def format_account_data():
                 price_part = '-'
                 rate_part = '-'
                 
-                if stk_cd_clean in interested_stocks:
-                    sell_cond = interested_stocks[stk_cd_clean]
+                with interested_stocks_lock:
+                    sell_cond = copy.deepcopy(interested_stocks.get(stk_cd_clean))
+                if sell_cond:
                     
                     if 'sellprice' in sell_cond:
                         try:
@@ -2104,6 +2164,7 @@ def cancel_related_buy_order(stk_cd):
                     log_print(stk_cd, 'cancel_related_buy_order {}'.format(m['ord_no']))
                     result = cancel_order_main(now, jango_token[ACCT], m['stex_tp_txt'], m['ord_no'], stk_cd)
                     print('cancel_related_buy_order ', result)
+                    log_print(stk_cd, 'cancel_related_buy_order {}'.format(result))
                     cancel_count += 1
     return cancel_count
 
@@ -2148,7 +2209,7 @@ def issue_buy_order(stk_cd, ord_uv, ord_qty, stex, trde_tp, account):
     if isinstance(ret_status, dict):
         rcde = ret_status.get('return_code')
         rmsg = ret_status.get('return_msg', '')
-        if rcde and rcde != '0000':
+        if not _is_success_return_code(rcde):
             return {"status": "error", "message": f"Buy order failed: {rmsg}", "return_code": rcde}
     return ret_status
 
@@ -2176,29 +2237,6 @@ async def buy_order_api(request: dict, proxy_path: str = "", token: str = Cookie
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated"
         )
-
-    def _is_success_return_code(rc) -> bool:
-        """Kiwoom APIs in this codebase sometimes use int codes (0/200) or strings ('0'/'0000').
-        Treat common successful codes as success.
-        """
-        if rc is None:
-            return False
-        try:
-            if isinstance(rc, str):
-                rc_s = rc.strip()
-                if rc_s in {"0", "0000", "200"}:
-                    return True
-                # numeric string
-                if rc_s.isdigit() and int(rc_s) == 0:
-                    return True
-            # numeric
-            if isinstance(rc, (int, float)):
-                rc_i = int(rc)
-                if rc_i in (0, 200):
-                    return True
-        except Exception:
-            return False
-        return False
 
     try:
         stk_cd = request.get('stock_code')
@@ -2304,7 +2342,7 @@ async def delete_sell_prices_api(stock_code: str, proxy_path: str = "", token: s
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated"
         )
-    global interested_stocks
+    global interested_stocks, interested_stocks_lock
     print('2797')
     try:
         if not stock_code:
@@ -2312,10 +2350,15 @@ async def delete_sell_prices_api(stock_code: str, proxy_path: str = "", token: s
 
         print('2802')
         # Delete the entire entry regardless of its contents
-        if stock_code in interested_stocks:
-            interested_stocks[stock_code]['sellprice'] = '0'
-            interested_stocks[stock_code]['sellrate'] = '0'
+        with interested_stocks_lock:
+            if stock_code in interested_stocks:
+                interested_stocks[stock_code]['sellprice'] = '0'
+                interested_stocks[stock_code]['sellrate'] = '0'
+                found = True
+            else:
+                found = False
 
+        if found:
             # Save to file
             if save_interested_stocks_to_json():
                 return {"status": "success", "message": f"Sell price/rate deleted for {stock_code}"}
@@ -2409,9 +2452,11 @@ async def get_interested_stocks_api(proxy_path: str = "", token: str = Cookie(No
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated"
         )
-    global interested_stocks
+    global interested_stocks, interested_stocks_lock
     current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    return {"status": "success", "data": interested_stocks, "timestamp": current_time}
+    with interested_stocks_lock:
+        data = copy.deepcopy(interested_stocks)
+    return {"status": "success", "data": data, "timestamp": current_time}
 
 
 '''
@@ -2466,6 +2511,7 @@ def  color_kor_to_eng(color):
 
 
 def clear_ordered_count(stk_cd):
+    global key_list
     for key, value in key_list.items():
         ACCT = value['ACCT']
         ordered = order_count[ACCT]
@@ -2476,26 +2522,28 @@ def set_interested_rate(stock_code, stock_name='', color=None,
                     btype='', bamount='0',
                     stime='', yyyymmdd='', sellprice='0',
                     sellrate='0', sellgap='0'):
-    global interested_stocks
+    global interested_stocks, interested_stocks_lock
     try:
         need_cancel_old_buy = False
         need_clear_ordered_count = False
 
         if color and color == 'DELETE':
-            if stock_code in interested_stocks:
-                del interested_stocks[stock_code]
-                cancel_related_buy_order(stock_code)
+            cancel_related_buy_order(stock_code)
+            with interested_stocks_lock:
+                if stock_code in interested_stocks:
+                    del interested_stocks[stock_code]
         else:
             if not stock_name or stock_name == '':
                 stock_name = get_stockname(stock_code)
 
             # Add or update the stock in interested list
             old_btype = ''
-            if stock_code not in interested_stocks:
-                stock = {}
-            else:
-                stock = interested_stocks[stock_code]
-                old_btype = stock.get('btype', '')
+            with interested_stocks_lock:
+                if stock_code not in interested_stocks:
+                    stock = {}
+                else:
+                    stock = interested_stocks[stock_code]
+                    old_btype = stock.get('btype', '')
 
             stock['stock_name'] = stock_name.strip()
             if color :
@@ -2534,9 +2582,11 @@ def set_interested_rate(stock_code, stock_name='', color=None,
             if not 'clprice' in stock:
                 stock['clprice'] = '0'
 
-            if not stock_code in interested_stocks:
+            with interested_stocks_lock:
+                is_new = stock_code not in interested_stocks
+                interested_stocks[stock_code] = stock
+            if is_new:
                 log_print(stock_code, 'new interested stock {}'.format(stock_code))
-            interested_stocks[stock_code] = stock
             if need_cancel_old_buy :
                 # Cancel buy orders for this stock
                 cancel_related_buy_order(stock_code)
@@ -2545,8 +2595,10 @@ def set_interested_rate(stock_code, stock_name='', color=None,
 
         # Save to file
         if save_interested_stocks_to_json():
+            with interested_stocks_lock:
+                data = copy.deepcopy(interested_stocks)
             return {"status": "success", "message": f"Stock {stock_code} added/updated in interested list",
-                "data": interested_stocks}
+                "data": data}
         else:
             return {"status": "error", "message": "Failed to save to file"}
     except Exception as ex :
@@ -2617,21 +2669,27 @@ async def delete_interested_stock_api(stock_code: str, proxy_path: str = "", tok
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated"
         )
-    global interested_stocks
+    global interested_stocks, interested_stocks_lock
     try:
         if not stock_code:
             return {"status": "error", "message": "stock_code is required"}
-        
+
+        cancel_related_buy_order(stock_code)
+
         # Remove the stock from interested list
-        if stock_code in interested_stocks:
-            del interested_stocks[stock_code]
-            # Save to file
-            if save_interested_stocks_to_json():
-                return {"status": "success", "message": f"Stock {stock_code} removed from interested list"}
-            else:
-                return {"status": "error", "message": "Failed to save to file"}
-        else:
+        with interested_stocks_lock:
+            exists = stock_code in interested_stocks
+            if exists:
+                del interested_stocks[stock_code]
+
+        if not exists:
             return {"status": "error", "message": f"Stock code {stock_code} not found in interested list"}
+
+        # Save to file
+        if save_interested_stocks_to_json():
+            return {"status": "success", "message": f"Stock {stock_code} removed from interested list"}
+        else:
+            return {"status": "error", "message": "Failed to save to file"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
