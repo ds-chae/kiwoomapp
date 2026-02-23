@@ -2250,7 +2250,9 @@ async def buy_order_api(request: dict, proxy_path: str = "", token: str = Cookie
         ord_uv = int(request.get('price'))  # Order price
         ord_amount = int(request.get('amount'))
         if ord_amount < 1000: # 1000이하의 금액이 들어오면 10,000을 곱해준다.
+            log_print('', stk_cd, 'buy amount = {}, less than 1000'.format(ord_amount))
             ord_amount *= 10000
+            log_print('', stk_cd, 'buy amount = changed to {}, less than 1000'.format(ord_amount))
         ord_qty = ord_amount // ord_uv
         accounts = request.get('accounts', [])  # List of accounts
 
@@ -2261,7 +2263,7 @@ async def buy_order_api(request: dict, proxy_path: str = "", token: str = Cookie
             else:
                 accounts = []
 
-        log_print(str(accounts), stk_cd, 'buy_order_api: stk_cd={}, stk_nm={}, ord_uv={}, amount={}, accounts={} (type: {})'.format(
+        log_print('', stk_cd, 'buy_order_api: stk_cd={}, stk_nm={}, ord_uv={}, amount={}, accounts={} (type: {})'.format(
             stk_cd, stk_nm, ord_uv, ord_amount, accounts, type(accounts).__name__))
 
         if not all([stk_cd, ord_uv, ord_qty]):
