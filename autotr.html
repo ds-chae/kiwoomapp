@@ -153,9 +153,6 @@
 			#interested-stock-bamount-input {
 				width: 120px;
 			}
-			#interested-stock-price-input {
-				width: 120px;
-			}
 			#interested-stock-rate-input {
 				width: 80px;
 			}
@@ -171,8 +168,6 @@
 			/* Remove spinner arrows from number inputs */
 			#interested-stock-bamount-input::-webkit-outer-spin-button,
 			#interested-stock-bamount-input::-webkit-inner-spin-button,
-			#interested-stock-price-input::-webkit-outer-spin-button,
-			#interested-stock-price-input::-webkit-inner-spin-button,
 			#interested-stock-rate-input::-webkit-outer-spin-button,
 			#interested-stock-rate-input::-webkit-inner-spin-button,
 			#interested-stock-gaprate-input::-webkit-outer-spin-button,
@@ -181,7 +176,6 @@
 				margin: 0;
 			}
 			#interested-stock-bamount-input[type=number],
-			#interested-stock-price-input[type=number],
 			#interested-stock-rate-input[type=number],
 			#interested-stock-gaprate-input[type=number] {
 				-moz-appearance: textfield;
@@ -1080,9 +1074,6 @@
 							<input type="number" id="interested-stock-bamount-input" placeholder="BAmount" step="1" />
 						</div>
 						<div class="form-group">
-							<input type="number" id="interested-stock-price-input" placeholder="Price" step="0.01" />
-						</div>
-						<div class="form-group">
 							<input type="number" id="interested-stock-rate-input" placeholder="Rate (%)" step="0.01" />
 						</div>
 						<div class="form-group">
@@ -1241,12 +1232,6 @@
 			// Fill int stocks section
 			document.getElementById('interested-stock-code-input').value = stockCode;
 			document.getElementById('interested-stock-name-input').value = stockName;
-			if (sellPrice && sellPrice !== '-') {
-				const priceValue = sellPrice.replace(/,/g, '');
-				document.getElementById('interested-stock-price-input').value = priceValue;
-			} else {
-				document.getElementById('interested-stock-price-input').value = '';
-			}
 			if (sellRate && sellRate !== '-') {
 				// Extract percentage value (from Account Holdings table format like "5.5%")
 				const rateMatch = sellRate.match(/([\d.+-]+)%/);
@@ -1495,13 +1480,6 @@
 			// Fill int stocks section
 			document.getElementById('interested-stock-code-input').value = stockCode;
 			document.getElementById('interested-stock-name-input').value = stockName;
-			if (currentPrice && currentPrice !== '0' && currentPrice !== '') {
-				document.getElementById('interested-stock-price-input').value = currentPrice;
-			} else if (orderPrice && orderPrice !== '0' && orderPrice !== '') {
-				document.getElementById('interested-stock-price-input').value = orderPrice;
-			} else {
-				document.getElementById('interested-stock-price-input').value = '';
-			}
 			document.getElementById('interested-stock-rate-input').value = '';
 			document.getElementById('interested-stock-gaprate-input').value = '';
 		}
@@ -2627,12 +2605,6 @@
 			// Fill int stocks section
 			document.getElementById('interested-stock-code-input').value = stockCode;
 			document.getElementById('interested-stock-name-input').value = stockName;
-			if (sellPrice && sellPrice !== '-') {
-				const priceValue = sellPrice.replace(/,/g, '');
-				document.getElementById('interested-stock-price-input').value = priceValue;
-			} else {
-				document.getElementById('interested-stock-price-input').value = '';
-			}
 			if (sellRate && sellRate !== '-') {
 				// Extract percentage value from "5.5%" format or use as-is
 				const rateMatch = sellRate.match(/([\d.+-]+)%/);
@@ -3012,7 +2984,6 @@
 			const stockColor = document.getElementById('interested-stock-color-input').value.trim();
 			const stockBtype = document.getElementById('interested-stock-btype-input').value.trim();
 			const stockBamount = document.getElementById('interested-stock-bamount-input').value.trim();
-			const stockPrice = document.getElementById('interested-stock-price-input').value.trim();
 			const stockRate = document.getElementById('interested-stock-rate-input').value.trim();
 			const stockGaprate = document.getElementById('interested-stock-gaprate-input').value.trim();
 			
@@ -3028,7 +2999,7 @@
 				color: stockColor || null,
 				btype: stockBtype || null,
 				bamount: stockBamount ? parseInt(stockBamount) : null,
-				sellprice: stockPrice || '0',
+				sellprice: '0',
 				sellrate: stockRate || '0',
 				sellgap: stockGaprate || '0'
 			};
@@ -3062,7 +3033,6 @@
 					document.getElementById('interested-stock-color-input').value = '';
 					document.getElementById('interested-stock-btype-input').value = '';
 					document.getElementById('interested-stock-bamount-input').value = '';
-					document.getElementById('interested-stock-price-input').value = '';
 					document.getElementById('interested-stock-rate-input').value = '';
 					document.getElementById('interested-stock-gaprate-input').value = '';
 					// Update immediately
@@ -3199,7 +3169,6 @@
 			const stockColor = rowElement.getAttribute('data-stock-color') || '';
 			const stockBtype = rowElement.getAttribute('data-stock-btype') || '';
 			const stockBamount = rowElement.getAttribute('data-stock-bamount') || '';
-			const stockPrice = rowElement.getAttribute('data-stock-price') || '';
 			const stockRate = rowElement.getAttribute('data-stock-rate') || '';
 			const stockGaprate = rowElement.getAttribute('data-stock-gaprate') || '';
 			
@@ -3209,7 +3178,6 @@
 			document.getElementById('interested-stock-color-input').value = stockColor;
 			document.getElementById('interested-stock-btype-input').value = stockBtype;
 			document.getElementById('interested-stock-bamount-input').value = stockBamount;
-			document.getElementById('interested-stock-price-input').value = stockPrice !== '0' ? stockPrice : '';
 			// Display sellrate as-is from backend (no conversion)
 			document.getElementById('interested-stock-rate-input').value = stockRate && stockRate !== '0' ? stockRate : '';
 			document.getElementById('interested-stock-gaprate-input').value = stockGaprate !== '0' ? stockGaprate : '';
