@@ -553,12 +553,12 @@ def call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_co
 
     trde_able_qty_int = int(trde_able_qty) if trde_able_qty else 0
     if trde_able_qty_int == 0:
-        log_print(ACCT, stk_cd, f'{ACCT} in call_sell_order {stk_cd} market={market}, trde_able_qty_int={trde_able_qty_int} return')
+        log_print(ACCT, stk_cd, f' in call_sell_order {stk_cd} market={market}, trde_able_qty_int={trde_able_qty_int} return')
         return
 
     nxt_stock = nxt_tradable.get(stk_cd, True)
     if not nxt_stock and market == 'NXT':
-        log_print(ACCT, stk_cd, f'{ACCT} in call_sell_order {stk_cd} market={market}, nxt_stock={nxt_stock} return')
+        log_print(ACCT, stk_cd, f' in call_sell_order {stk_cd} market={market}, nxt_stock={nxt_stock} return')
         return
 
     working_status = 'call sell_order()'
@@ -868,21 +868,21 @@ def log_print(acct, stk_cd, msg):
     global today_yyyymmdd, interested_stocks, interested_stocks_lock, last_logs
     if acct == '':
         acct = 'ALLACCT'
+
+    last_log_txt = last_logs.get(acct, '')
+    if last_log_txt == msg:
+        return
+    last_logs[acct] = msg
+
     try:
         # Get yyyymmdd from global variable
         yyyymmdd = today_yyyymmdd
         
         # Get stock name from interested_stocks if available, otherwise use get_stockname
-        stk_nm = ''
-        with interested_stocks_lock:
-            if stk_cd in interested_stocks:
-                stk_nm = interested_stocks[stk_cd].get('stock_name', '')
-        
-        if not stk_nm:
-            try:
-                stk_nm = get_stockname(stk_cd)
-            except:
-                stk_nm = stk_cd  # Fallback to stock code if get_stockname fails
+        try:
+            stk_nm = get_stockname(stk_cd)
+        except:
+            stk_nm = stk_cd  # Fallback to stock code if get_stockname fails
         
         # Create directory structure if it doesn't exist
         log_dir = os.path.join('logs', yyyymmdd)
@@ -894,13 +894,10 @@ def log_print(acct, stk_cd, msg):
         
         # Append message to log file with timestamp
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        last_log_txt = last_logs.get(acct, '')
-        if last_log_txt != msg:
-            last_logs[acct] = msg
-            log_line = f"[{timestamp}] {msg}\n"
+        log_line = f"[{timestamp}] {acct} {msg}\n"
 
-            with open(log_filepath, 'a', encoding='utf-8') as f:
-                f.write(log_line)
+        with open(log_filepath, 'a', encoding='utf-8') as f:
+            f.write(log_line)
             
     except Exception as e:
         # Don't fail silently, but don't crash the program either
@@ -1008,7 +1005,7 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
         bp = gap_price['price'][price_index]
         buy_rate = (float(gap_price.get('current_price', 0))-bp) / bp # 현재 가격과 매수 가격의 차이
         if buy_rate >= 0.03 : # 매수 가격이랑 3%이상 차이가 난다면 매수 하지 않는다,
-            log_print(ACCT, stk_cd, '{} gap over skip 1 for {} {} {} {}'.format(now, stk_cd, stk_nm, bp, buy_rate))
+            log_print(ACCT, stk_cd, ' gap over skip 1 for {} {} {} {}'.format(stk_cd, stk_nm, bp, buy_rate))
         else:
             ord_price = round_trunc(bp)
             ord_qty = bamount // ord_price
@@ -1028,7 +1025,7 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
         bp = gap_price['price'][price_index+1]
         buy_rate = (float(gap_price.get('current_price', 0))-bp) / bp # 현재 가격과 매수 가격의 차이
         if buy_rate >= 0.03 : # 매수 가격이랑 3%이상 차이가 난다면 매수 하지 않는다,
-            log_print(ACCT, stk_cd, '{} gap over skip 2 for {} {} {} {}'.format(now, stk_cd, stk_nm, bp, buy_rate))
+            log_print(ACCT, stk_cd, ' gap over skip 2 for {} {} {} {}'.format(stk_cd, stk_nm, bp, buy_rate))
         else:
             ord_price = round_trunc(bp)
             ord_qty = bamount // ord_price
@@ -1117,7 +1114,7 @@ def daily_work():
         if (new_day):
             set_new_day(False)
             print('{} {} Setting new day=False'.format(cur_date(), now))
-            log_print('', '000000', '{} {} Setting new day=False'.format(cur_date(), now))
+            log_print('', '000000', ' Setting new day=False')
 
 
 def clear_for_new_day():
@@ -1130,7 +1127,7 @@ def clear_for_new_day():
 
     today_yyyymmdd = now.strftime("%Y%m%d")
     print('{} {} Setting new day=True'.format(cur_date(), now))
-    log_print('', '000000', '{} {} Setting new day=True'.format(cur_date(), now))
+    log_print('', '000000', ' Setting new day=True')
     new_day = True
     nxt_cancelled = False
     krx_cancelled = False
@@ -1155,7 +1152,7 @@ def set_new_day(tf):
         if new_day:
             return
         print('{} Setting new_day=True, clearing variables.'.format(now))
-        log_print('ALLACCT', '000000', '{} Setting new_day=True, clearing variables.'.format(now))
+        log_print('ALLACCT', '000000', ' Setting new_day=True, clearing variables.')
         now = datetime.now()
         clear_for_new_day()
 
@@ -1163,7 +1160,7 @@ def set_new_day(tf):
         if not new_day:
             return
         print('{} new_day is switching OFF'.format(now))
-        log_print('ALLACCT','000000', '{} new_day is switching OFF'.format(now))
+        log_print('ALLACCT','000000', ' new_day is switching OFF')
         new_day = False
         current_status = 'OFF'
 
