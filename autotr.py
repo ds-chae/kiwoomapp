@@ -21,7 +21,7 @@ import socket
 
 from ka10080 import get_bun_chart, get_price_index
 from ka10081 import get_day_chart
-from ka10100 import get_stockname
+from ka10100 import get_stockname, get_pl
 
 
 def get_bun_chart_throttled(MY_ACCESS_TOKEN, stk_cd, stk_nm):
@@ -1725,6 +1725,24 @@ async def lifespan(app: FastAPI):
 # FastAPI app
 app = FastAPI(lifespan=lifespan)
 
+
+def save_total_pl(yyyymmdd, total_pl):
+    pass
+
+
+def calculate_pl():
+    global today_yyyymmdd
+
+    total_pl = {}
+    key_list = get_key_list()
+    tdy_dt = today_yyyymmdd
+    for k, key in key_list.items():
+        ACCT = key['ACCT']
+        MY_ACCESS_TOKEN = get_token(key['AK'], key['SK'])  # 접근토큰
+        pl = get_pl(ACCT, MY_ACCESS_TOKEN, tdy_dt)
+        total_pl[ACCT] = pl
+    save_total_pl(today_yyyymmdd, total_pl)
+
 def periodic_timer_handler():
     """Periodic timer event handler that runs the trading loop logic"""
     global prev_hour, new_day, stored_jango_data, stored_miche_data, working_status, now, cleanup_run_today
@@ -1741,11 +1759,16 @@ def periodic_timer_handler():
         except Exception as e:
             print(f"Error running cleanup at 20:30: {e}")
             traceback.print_exc()
-    
+
+    if now_hour == 23 and now.minute == 0 and not calculate_pl_today:
+        calculate_pl_today = True
+        calculate_pl()
+
     # Reset cleanup flag at midnight (00:00)
     if now_hour == 0 and now.minute == 0:
         cleanup_run_today = False
-    
+        calculate_pl_today = False
+
     if prev_hour is not None and now_hour != prev_hour:
         if wait_hour_change:
             log_print('', '000000', '{} Hour change from {} to {}'.format(cur_date(), prev_hour, now_hour))
