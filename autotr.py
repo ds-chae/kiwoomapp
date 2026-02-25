@@ -1727,7 +1727,16 @@ app = FastAPI(lifespan=lifespan)
 
 
 def save_total_pl(yyyymmdd, total_pl):
-    pass
+    """Save total_pl to pl/yyyymmdd.json"""
+    try:
+        pl_dir = 'pl'
+        os.makedirs(pl_dir, exist_ok=True)
+        pl_filepath = os.path.join(pl_dir, f'{yyyymmdd}.json')
+        with open(pl_filepath, 'w', encoding='utf-8') as f:
+            json.dump(total_pl, f, indent=2, ensure_ascii=False)
+        print(f"Saved total_pl to {pl_filepath}")
+    except Exception as e:
+        print(f"Error saving total_pl: {e}")
 
 
 def calculate_pl():
