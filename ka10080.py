@@ -123,7 +123,7 @@ def get_bun_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm):
 		'tic_scope': '15', # 틱범위 1:1분, 3:3분, 5:5분, 10:10분, 15:15분, 30:30분, 45:45분, 60:60분
 		'upd_stkpc_tp': '1', # 수정주가구분 0 or 1
 	}
-	print('get_bun_chart:{} {}'.format(stk_cd, stk_nm))
+	#print('get_bun_chart:{} {}'.format(stk_cd, stk_nm))
 	# 3. API 실행
 	return fn_ka10080(token=MY_ACCESS_TOKEN, data=params)
 

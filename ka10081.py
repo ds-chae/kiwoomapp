@@ -36,7 +36,7 @@ def fn_ka10081(token, data, cont_yn='N', next_key=''):
 from datetime import datetime
 
 def get_day_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm):
-    print('get_day_chart: {} {}'.format(stk_cd, stk_nm))
+    #print('get_day_chart: {} {}'.format(stk_cd, stk_nm))
     now = datetime.now()
     # Format to YYYYMMDD
     date = now.strftime("%Y%m%d")

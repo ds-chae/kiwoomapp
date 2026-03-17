@@ -5,7 +5,7 @@ from au1001 import get_key_list, get_token
 
 
 # 주식 매수주문
-def fn_kt10000(token, data, cont_yn='N', next_key=''):
+def fn_kt10000(token, stk_nm, data, cont_yn='N', next_key=''):
 	# 1. 요청할 API URL
 	#host = 'https://mockapi.kiwoom.com' # 모의투자
 	host = 'https://api.kiwoom.com' # 실전투자
@@ -25,7 +25,7 @@ def fn_kt10000(token, data, cont_yn='N', next_key=''):
 	response = requests.post(url, headers=headers, json=data)
 
 	# 4. 응답 상태 코드와 데이터 출력
-	print('fn_kt10000 Code:', response.status_code)
+	print(f' {stk_nm} fn_kt10000 Code:{response.status_code}')
 	#print('Header:', json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4, ensure_ascii=False))
 	#print('Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON 응답을 파싱하여 출력
 	
@@ -57,7 +57,7 @@ def fn_kt10001(token, data, cont_yn='N', next_key=''):
 	response = requests.post(url, headers=headers, json=data)
 
     # 4. 응답 상태 코드와 데이터 출력
-	print('fn_kt10001 Code:', response.status_code)
+	#print('fn_kt10001 Code:', response.status_code)
 	#print('Header:', json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4, ensure_ascii=False))
 	#print('Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON 응답을 파싱하여 출력
 
@@ -97,7 +97,7 @@ def sell_example(MY_ACCESS_TOKEN, dmst_stex_tp='KRX', stk_cd='', ord_qty='0', or
 	# fn_kt10001(token=MY_ACCESS_TOKEN, data=params, cont_yn='Y', next_key='nextkey..')
 
 
-def buy_order(MY_ACCESS_TOKEN, dmst_stex_tp='KRX', stk_cd='', ord_qty='0', ord_uv='0', trde_tp='0',cond_uv=''):
+def buy_order(MY_ACCESS_TOKEN, stk_nm, dmst_stex_tp='KRX', stk_cd='', ord_qty='0', ord_uv='0', trde_tp='0',cond_uv=''):
 	params = {
 		'dmst_stex_tp': dmst_stex_tp, # 'KRX', # 국내거래소구분 KRX,NXT,SOR
 		'stk_cd': stk_cd, # '005930', # 종목코드
@@ -108,7 +108,7 @@ def buy_order(MY_ACCESS_TOKEN, dmst_stex_tp='KRX', stk_cd='', ord_qty='0', ord_u
 	}
 
 	# 3. API 실행
-	ret_status = fn_kt10000(token=MY_ACCESS_TOKEN, data=params)
+	ret_status = fn_kt10000(token=MY_ACCESS_TOKEN, stk_nm=stk_nm, data=params)
 	return ret_status
 
 

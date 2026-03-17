@@ -5,6 +5,7 @@ import requests
 import json
 import os
 from datetime import datetime, timedelta, time, date
+
 # load_dotenv is not required, as it is called in au1001
 # from dotenv import load_dotenv
 from au1001 import get_token, get_key_list, get_one_token
@@ -66,6 +67,40 @@ updown_list = {}
 key_list = get_key_list()
 order_count = {}
 
+def get_order_count(ACCT, stk_cd):
+    global order_count
+    if ACCT in order_count:
+        oc_account = order_count[ACCT]
+        if stk_cd in oc_account:
+            return oc_account[stk_cd]
+    return 0
+
+
+def set_order_count(ACCT, stk_cd, amnt):
+    global order_count
+    if ACCT in order_count:
+        oc_account = order_count[ACCT]
+        if stk_cd in oc_account:
+            oc_account[stk_cd] = amnt
+    print(f'updated order count for {stk_cd} = {order_count[ACCT][stk_cd]}')
+    pass
+
+def add_order_count(ACCT, stk_cd, amnt):
+    global order_count
+    if not ACCT in order_count:
+        oc_account = {}
+        order_count[ACCT] = oc_account
+    else:
+        oc_account = order_count[ACCT]
+
+    if stk_cd in oc_account:
+        oc_account[stk_cd] += amnt
+    else:
+        oc_account[stk_cd] = amnt
+    print(f'updated order count for {stk_cd} = {order_count[ACCT][stk_cd]}')
+    pass
+
+
 # Global variable for tracking previous hour
 prev_hour = None
 # Global storage for jango data (updated by timer handler)
@@ -79,6 +114,7 @@ stored_miche_data = {}
 
 # Global flag to track if cleanup has run today at 20:30
 cleanup_run_today = False
+calculate_pl_today = False
 
 new_day = False
 
@@ -518,7 +554,10 @@ def calculate_sell_price(ACCT, MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk
             gap = float(gap_price['gap']) * 2
             cl_price = round_trunc(int(lowest + gap * sellgap))
             last_cl_price[stk_cd] = cl_price
-            log_print(ACCT, stk_cd, f'{ACCT} cl_price is {cl_price}, gap={gap}, lowest={lowest}, gaprate={sellgap}')
+            log_print(ACCT, stk_cd, f' cl_price is {cl_price}, gap={gap}, lowest={lowest}, gaprate={sellgap}')
+            if cl_price <= pur_pric:
+                log_print(ACCT, stk_cd, f' cl_price is {cl_price} <= {pur_pric}, return 0')
+                return 0
             return cl_price
 
     log_print(ACCT, stk_cd, f'{ACCT} calculate_sell_price returns 0')
@@ -869,10 +908,19 @@ def log_print(acct, stk_cd, msg):
     if acct == '':
         acct = 'ALLACCT'
 
-    last_log_txt = last_logs.get(acct, '')
-    if last_log_txt == msg:
-        return
-    last_logs[acct] = msg
+    last_log_txt = last_logs.get(acct, [])
+    llen = len(last_log_txt)
+    if llen > 0:
+        if last_log_txt[0] == msg:
+            return
+        else:
+            last_log_txt.append(msg)
+    if llen > 1 :
+        if last_log_txt[0] == msg or last_log_txt[1] == msg:
+            return
+        last_log_txt[0] = last_log_txt[1]
+        last_log_txt[1] = msg
+    last_logs[acct] = last_log_txt
 
     try:
         # Get yyyymmdd from global variable
@@ -905,7 +953,7 @@ def log_print(acct, stk_cd, msg):
 
 
 def buy_cl(now, stex):
-    global order_count, interested_stocks, gap_prices, bun_charts
+    global interested_stocks, gap_prices, bun_charts
     global stored_jango_data, stored_miche_data, key_list
 
     gap_prices = {} # clear on each call
@@ -925,7 +973,7 @@ def buy_cl(now, stex):
 gap_prices = {}
 
 def buy_cl_by_account(ACCT, MY_ACCESS_TOKEN, stex, stk_nm):
-    global order_count, working_status
+    global working_status
     global gap_prices, new_day, interested_stocks, interested_stocks_lock
 
     working_status = 'in buy_cl_by_account'
@@ -944,7 +992,7 @@ def buy_cl_by_account(ACCT, MY_ACCESS_TOKEN, stex, stk_nm):
 
 
 def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
-    global working_status, order_count, now, nxt_tradable, key_list
+    global working_status, now, nxt_tradable, key_list
     if not gap_price:
         return
     if stex == 'NXT' and not nxt_tradable.get(stk_cd, True):
@@ -953,8 +1001,7 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
     stk_nm = int_stock['stock_name']
 
     working_status = 'in buy_cl_stk_cd'
-    ordered = order_count[ACCT]
-    if stk_cd in ordered and ordered[stk_cd] >= 2:
+    if get_order_count(ACCT, stk_cd) >= 2:
         return
 
     bamount = int(int_stock.get('bamount', '0'))
@@ -964,6 +1011,9 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
     hold_count = 0
     bsum = 0
     myjango = stored_jango_data[ACCT] if (ACCT in stored_jango_data) else {}
+    if not 'acnt_evlt_remn_indv_tot' in myjango:
+        print(f'ACCT={ACCT} no acnt_evlt_remn_indv_tot in myjango')
+        return
     acnt_evlt_remn_indv_tot = myjango['acnt_evlt_remn_indv_tot']
     for eachjango in acnt_evlt_remn_indv_tot:
         each_cd = eachjango['stk_cd']
@@ -982,17 +1032,16 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
             oqp = m['ord_pric']
             bsum += int(oqty)*int(oqp)
     if bsum >= bamount * 2 * 0.85:
-        ordered[stk_cd] = 2
+        add_order_count(ACCT, stk_cd, 2)
         hold_count = 2
     elif bsum >= bamount * 1 * 0.85:
-        ordered[stk_cd] = 1
+        add_order_count(ACCT, stk_cd, 1)
         hold_count = 1
     else:
-        ordered[stk_cd] = 0
         hold_count = 0
 
-    log_print(ACCT, stk_cd, 'ordered count for {} is {}, bsum={}'.format(ACCT, ordered[stk_cd], bsum))
-    if ordered[stk_cd] >= 2:
+    log_print(ACCT, stk_cd, 'ordered count for {} is {}, bsum={}'.format(ACCT, get_order_count(ACCT,stk_cd), bsum))
+    if get_order_count(ACCT, stk_cd) >= 2:
         return
 
     if not stk_cd in gap_prices:
@@ -1001,7 +1050,7 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
 
     price_index = get_price_index(int_stock['color'])
     trde_tp = '0'
-    if ordered[stk_cd] < 1 and hold_count < 1 : # 보유량이 없고 주문 사실도 없다면
+    if get_order_count(ACCT, stk_cd) < 1 and hold_count < 1 : # 보유량이 없고 주문 사실도 없다면
         bp = gap_price['price'][price_index]
         buy_rate = (float(gap_price.get('current_price', 0))-bp) / bp # 현재 가격과 매수 가격의 차이
         if buy_rate >= 0.03 : # 매수 가격이랑 3%이상 차이가 난다면 매수 하지 않는다,
@@ -1012,16 +1061,16 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
             if ord_qty > 0 :
                 #ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trade_tp=trde_tp, cond_uv='')
                 log_print(ACCT, stk_cd, 'buy_order market={}, qty={} price={}'.format(stex, ord_qty, ord_price))
-                ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trde_tp=trde_tp, cond_uv='')
+                ret_status = buy_order(MY_ACCESS_TOKEN, stk_nm, stex, stk_cd, str(ord_qty), str(ord_price), trde_tp=trde_tp, cond_uv='')
                 log_print(ACCT, stk_cd, '1_buy_order_result: {}'.format(ret_status))
                 tr = test_ret_status('BUY', stk_cd, ret_status)
-                if tr == 200 :
-                    ordered[stk_cd] += 1
+                if tr == 0 or tr == 20 or tr == 200 :
+                    add_order_count(ACCT, stk_cd, 1)
                     log_print(ACCT, stk_cd, '1_buy_order_result success  : {}'.format(ret_status['return_msg']))
                 else:
                     log_print(ACCT, stk_cd, '1_buy_order_result failure : {}'.format(ret_status['return_msg']))
-            log_print(ACCT, stk_cd, 'price:{} current buy order for {} is {}'.format(ord_price, ACCT, ordered[stk_cd]))
-    if hold_count >= 1 and ordered[stk_cd] < 2: # 하나 보유하고 주문은 아직 둘이 아니면
+            log_print(ACCT, stk_cd, 'price:{} current buy order for {} is {}'.format(ord_price, ACCT, get_order_count(ACCT,stk_cd)))
+    if hold_count >= 1 and get_order_count(ACCT, stk_cd) < 2: # 하나 보유하고 주문은 아직 둘이 아니면
         bp = gap_price['price'][price_index+1]
         buy_rate = (float(gap_price.get('current_price', 0))-bp) / bp # 현재 가격과 매수 가격의 차이
         if buy_rate >= 0.03 : # 매수 가격이랑 3%이상 차이가 난다면 매수 하지 않는다,
@@ -1032,14 +1081,14 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
             # ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trade_tp=trde_tp, cond_uv='')
             if ord_qty > 0 :
                 log_print(ACCT, stk_cd, 'buy_order market={}, qty={} price={}'.format(stex, ord_qty, ord_price))
-                ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trde_tp=trde_tp, cond_uv='')
+                ret_status = buy_order(MY_ACCESS_TOKEN, stk_nm, stex, stk_cd, str(ord_qty), str(ord_price), trde_tp=trde_tp, cond_uv='')
                 tr = test_ret_status('BUY', stk_cd, ret_status)
-                if tr == 200 :
+                if tr == 0 or tr == 20 or tr == 200 :
                     log_print(ACCT, stk_cd, '2_buy_order_result success : {}'.format(ret_status))
-                    ordered[stk_cd] += 1
+                    add_order_count(ACCT, stk_cd, 1)
                 else:
                     log_print(ACCT, stk_cd, '2_buy_order_result failure : {}'.format(ret_status['return_msg']))
-            log_print(ACCT, stk_cd, 'price:{} current buy order for {} {} {} is {}'.format(ord_price, ACCT, stk_cd, stk_nm, ordered[stk_cd]))
+            log_print(ACCT, stk_cd, 'price:{} current buy order for {} {} {} is {}'.format(ord_price, ACCT, stk_cd, stk_nm, get_order_count(ACCT,stk_cd)))
 
     pass
 
@@ -1618,6 +1667,7 @@ async def lifespan(app: FastAPI):
     # Initialize stored jango data - first try to load from file, then update
     now = datetime.now()
     clear_for_new_day() # now should be set before call this.
+    calculate_pl()
 
     print("Initializing jango data...")
     # Load previous jango data from file
@@ -2204,7 +2254,7 @@ def cancel_related_buy_order(stk_cd):
     return cancel_count
 
 
-def issue_buy_order(stk_cd, ord_uv, ord_qty, stex, trde_tp, account):
+def issue_buy_order(stk_nm, stk_cd, ord_uv, ord_qty, stex, trde_tp, account):
     """Issue buy order for a specific account"""
     global key_list
     
@@ -2230,6 +2280,7 @@ def issue_buy_order(stk_cd, ord_uv, ord_qty, stex, trde_tp, account):
     # Place buy order
     ret_status = buy_order(
         MY_ACCESS_TOKEN=access_token,
+        stk_nm=stk_nm,
         dmst_stex_tp=stex,
         stk_cd=stk_cd,
         ord_qty=ord_qty_str,
@@ -2321,7 +2372,7 @@ async def buy_order_api(request: dict, proxy_path: str = "", token: str = Cookie
         results = []
         for account in accounts:
             try:
-                ret_status = issue_buy_order(stk_cd, ord_uv, ord_qty, stex, trde_tp, account=account)
+                ret_status = issue_buy_order(stk_nm, stk_cd, ord_uv, ord_qty, stex, trde_tp, account=account)
                 rc = ret_status.get('return_code') if isinstance(ret_status, dict) else None
                 ok = _is_success_return_code(rc)
                 results.append({
@@ -2553,8 +2604,7 @@ def clear_ordered_count(stk_cd):
     global key_list
     for key, value in key_list.items():
         ACCT = value['ACCT']
-        ordered = order_count[ACCT]
-        ordered[stk_cd] = 0
+        set_order_count(ACCT, stk_cd, 0)
 
 
 def set_interested_rate(stock_code, stock_name='', color=None,
@@ -2744,58 +2794,64 @@ def get_gap_price(token_for_api, stk_cd, stk_nm):
         return {}
 
     day_data = data.get('stk_dt_pole_chart_qry', [])
-    # Get latest day's closing price
-    latest = day_data[0]  # Latest is first in response
-    cur_prc = latest.get('cur_prc', '0')
-    current_price = abs(int(cur_prc))
-
-    # Get last 16 days
-    high_16 = 0
-    high_index = 0
-    high_date = ''
-    if len(day_data) < 16 :
+    if not day_data:
         return {}
 
-    for data_idx in range(16) :
-        day = day_data[data_idx]
-        high_pric = int(day.get('high_pric', '0'))
-        if high_pric < 0:
-            high_pric = -high_pric
-        if high_pric > high_16:
-            high_16 = high_pric
-            high_index = data_idx
-            high_date = day['dt']
+    try:
+        # Get latest day's closing price
+        latest = day_data[0]  # Latest is first in response
+        cur_prc = latest.get('cur_prc', '0')
+        current_price = abs(int(cur_prc))
 
-    low_16 = float('inf')
-    last_16_days = day_data[high_index:high_index+16]
-    for day in last_16_days:
-        low_pric = int(day.get('low_pric', '0'))
-        if low_pric < 0:
-            low_pric = -low_pric
-        if low_pric < low_16:
-            low_16 = low_pric
-            low_date = day['dt']
+        # Get last 16 days
+        high_16 = 0
+        high_index = 0
+        high_date = ''
+        if len(day_data) < 16 :
+            return {}
 
-    # Calculate yellow line price: high - (high - low) * 4 / 10
-    gap = (high_16 - low_16) / 10
-    yellow_line_price = int(high_16 - gap * 4)
+        for data_idx in range(16) :
+            day = day_data[data_idx]
+            high_pric = int(day.get('high_pric', '0'))
+            if high_pric < 0:
+                high_pric = -high_pric
+            if high_pric > high_16:
+                high_16 = high_pric
+                high_index = data_idx
+                high_date = day['dt']
 
-    # Calculate gap rate: (current price - yellow price) / gap
-    gap_rate = ((current_price - yellow_line_price) / gap) * 100 if gap > 0 else 0
+        low_16 = float('inf')
+        last_16_days = day_data[high_index:high_index+16]
+        for day in last_16_days:
+            low_pric = int(day.get('low_pric', '0'))
+            if low_pric < 0:
+                low_pric = -low_pric
+            if low_pric < low_16:
+                low_16 = low_pric
+                low_date = day['dt']
 
-    gap_price = {}
-    gap_price['high_16'] = high_16
-    gap_price['low_16'] = low_16
-    gap_price['yellow_line_price'] = yellow_line_price
-    gap_price['current_price'] = current_price
-    gap_price['gap'] = gap
-    gap_price['gap_rate'] = gap_rate
-    gap_price['high_date'] = high_date
-    gap_price['low_date'] = low_date
-    gap_price['price'] = [high_16 - gap * i for i in range(10)]
+        # Calculate yellow line price: high - (high - low) * 4 / 10
+        gap = (high_16 - low_16) / 10
+        yellow_line_price = int(high_16 - gap * 4)
 
-    return gap_price
+        # Calculate gap rate: (current price - yellow price) / gap
+        gap_rate = ((current_price - yellow_line_price) / gap) * 100 if gap > 0 else 0
 
+        gap_price = {}
+        gap_price['high_16'] = high_16
+        gap_price['low_16'] = low_16
+        gap_price['yellow_line_price'] = yellow_line_price
+        gap_price['current_price'] = current_price
+        gap_price['gap'] = gap
+        gap_price['gap_rate'] = gap_rate
+        gap_price['high_date'] = high_date
+        gap_price['low_date'] = low_date
+        gap_price['price'] = [high_16 - gap * i for i in range(10)]
+
+        return gap_price
+    except Exception as ex:
+        print('get_gap_price exception {}'.format(str(ex)))
+        return {}
 
 @app.get("/api/stock-price-info/{stock_code}")
 @app.get("/stock/api/stock-price-info/{stock_code}")
