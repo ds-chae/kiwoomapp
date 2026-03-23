@@ -67,6 +67,10 @@ updown_list = {}
 key_list = get_key_list()
 order_count = {}
 
+old_sel_price = {}
+
+
+
 def get_order_count(ACCT, stk_cd):
     global order_count
     if ACCT in order_count:
@@ -80,23 +84,24 @@ def set_order_count(ACCT, stk_cd, amnt):
     global order_count
     if ACCT in order_count:
         oc_account = order_count[ACCT]
-        if stk_cd in oc_account:
-            oc_account[stk_cd] = amnt
+    else:
+        oc_account = {}
+    oc_account[stk_cd] = amnt
+    order_count[ACCT] = oc_account
     print(f'updated order count for {stk_cd} = {order_count[ACCT][stk_cd]}')
     pass
 
 def add_order_count(ACCT, stk_cd, amnt):
     global order_count
-    if not ACCT in order_count:
-        oc_account = {}
-        order_count[ACCT] = oc_account
-    else:
+    if ACCT in order_count:
         oc_account = order_count[ACCT]
-
+    else:
+        oc_account = {}
     if stk_cd in oc_account:
         oc_account[stk_cd] += amnt
     else:
         oc_account[stk_cd] = amnt
+    order_count[ACCT] = oc_account
     print(f'updated order count for {stk_cd} = {order_count[ACCT][stk_cd]}')
     pass
 
@@ -225,17 +230,20 @@ def fn_kt00018(log_jango, token, data, cont_yn='N', next_key=''):
         'api-id': 'kt00018', # TR¸í
     }
 
-    response = requests.post(url, headers=headers, json=data)
+    try:
+        response = requests.post(url, headers=headers, json=data)
 
-# 4. ÀÀ´ä »óÅÂ ÄÚµå¿Í µ¥ÀÌÅÍ Ãâ·Â
-    if log_jango:
-        print('get_jango => Code: {}'.format(response.status_code))
-        #print('get_jango => Header:', json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4, ensure_ascii=False))
-        #print('get_jango => Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON ÀÀ´äÀ» ÆÄ½ÌÇÏ¿© Ãâ·Â
-        #print('get_jango => Finish:')
-        #print('')
+        if log_jango:
+            print('get_jango => Code: {}'.format(response.status_code))
+            #print('get_jango => Header:', json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4, ensure_ascii=False))
+            #print('get_jango => Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON ÀÀ´äÀ» ÆÄ½ÌÇÏ¿© Ãâ·Â
+            #print('get_jango => Finish:')
+            #print('')
 
-    return response.json()
+        return response.json()
+    except Exception as ex:
+        log_print('','000000', str(ex))
+        return {}
 
 get_jango_count = 0
 
@@ -299,6 +307,23 @@ def get_jango(market = 'KRX'):
             acct = futures[future]
             try:
                 j = future.result()
+                # fn_kt00018 returns {} on exception (network/parse/etc.)
+                if not isinstance(j, dict):
+                    log_print('', '000000', f"get_jango: non-dict response for account {acct}, type={type(j)}")
+                    jango[acct] = {
+                        "return_code": -1,
+                        "return_msg": "invalid jango response type",
+                        "ACCT": acct,
+                    }
+                    continue
+                if len(j) == 0:
+                    log_print('', '000000', f"get_jango: empty dict for account {acct} (fn_kt00018 failed)")
+                    jango[acct] = {
+                        "return_code": -1,
+                        "return_msg": "empty jango response (fn_kt00018 exception)",
+                        "ACCT": acct,
+                    }
+                    continue
                 j['ACCT'] = acct
                 jango[acct] = j
             except Exception as e:
@@ -456,7 +481,7 @@ def cancel_different_sell_order(now, ACCT, stk_cd, stk_nm, new_price):
                           oqp, new_price, result))
                 cancel_count += 1
     if cancel_count != 0:
-        log_print(ACCT, stk_cd, 'cancel_different_sell_order ACCT={} np={} count={}.'.format(ACCT, new_price, cancel_count))
+        log_print(ACCT, stk_cd, 'cancel_different_sell_order np={} count={}.'.format(new_price, cancel_count))
     return cancel_count
 
 
@@ -531,9 +556,9 @@ def calculate_sell_price(ACCT, MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk
                 gap_prices[stk_cd] = get_gap_price(MY_ACCESS_TOKEN, stk_cd, stk_nm)
             gap_price = gap_prices[stk_cd]
         except Exception as e1:
-            log_print(ACCT, stk_cd, f'{ACCT} get_gap_price gen Error {e1}')
+            log_print(ACCT, stk_cd, f' get_gap_price gen Error {e1}')
             return 0
-        log_print(ACCT, stk_cd, f'{ACCT} before get_low_after_high')
+        log_print(ACCT, stk_cd, f' before get_low_after_high')
         last_get_bun_time[stk_cd] = now
         # Try to use bun_charts dict first, otherwise call get_bun_chart
         bun_chart = None
@@ -544,12 +569,12 @@ def calculate_sell_price(ACCT, MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk
         except:
             pass
         if bun_chart is None:
-            log_print(ACCT, stk_cd, f'{ACCT} before get_low_after_high, bun_chart is None, return 0')
+            log_print(ACCT, stk_cd, f' before get_low_after_high, bun_chart is None, return 0')
             return 0 # if bun_chart is not queried yet, return pric 0
             # bun_chart = get_bun_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm)
 
         lowest, low_time = get_low_after_high(stk_cd, bun_chart)
-        log_print(ACCT, stk_cd, f'{ACCT} get_low_after_high {stk_nm} returns {lowest} last time bun_chart={bun_time}, low_time={low_time}')
+        log_print(ACCT, stk_cd, f' get_low_after_high {stk_nm} returns {lowest} last time bun_chart={bun_time}, low_time={low_time}')
         if lowest != 0 :
             gap = float(gap_price['gap']) * 2
             cl_price = round_trunc(int(lowest + gap * sellgap))
@@ -560,12 +585,13 @@ def calculate_sell_price(ACCT, MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk
                 return 0
             return cl_price
 
-    log_print(ACCT, stk_cd, f'{ACCT} calculate_sell_price returns 0')
+    log_print(ACCT, stk_cd, f' calculate_sell_price returns 0')
     return 0
 
 
 def call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond):
     global current_status, working_status
+    global old_sel_price
 
     trde_able_qty = indv.get("trde_able_qty", "0")
     rmnd_qty = indv.get('rmnd_qty', "0")
@@ -577,12 +603,12 @@ def call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_co
         if sell_price == 0: # price is not calculated
             return
     except Exception as ex:
-        log_print(ACCT, stk_cd, f'{ACCT} Error in calculate_sell_price :{ex}')
+        log_print(ACCT, stk_cd, f' Error in calculate_sell_price :{ex}')
         return
 
     upperlimit = get_upper_limit(MY_ACCESS_TOKEN, stk_cd)
     if sell_price > upperlimit :
-        log_print(ACCT, stk_cd, f'{ACCT} {sell_price} exceed upper limit {upperlimit}')
+        log_print(ACCT, stk_cd, f' {sell_price} exceed upper limit {upperlimit}')
         return
 
     # if any cancelled sell order, try next
@@ -600,12 +626,17 @@ def call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_co
         log_print(ACCT, stk_cd, f' in call_sell_order {stk_cd} market={market}, nxt_stock={nxt_stock} return')
         return
 
+    oprice = old_sel_price.get(stk_cd, 0)
+    if oprice != sell_price:
+        log_print(ACCT, stk_cd, f'new sell price for {stk_nm} = {sell_price}  purchase price={pur_pric}')
+        old_sel_price[stk_cd] = sell_price
+
     working_status = 'call sell_order()'
     trde_tp = '0'  # 매매구분 0:보통 , 3:시장가 , 5:조건부지정가 , 81:장마감후시간외 , 61:장시작전시간외, 62:시간외단일가 , 6:최유리지정가 , 7:최우선지정가 , 10:보통(IOC) , 13:시장가(IOC) , 16:최유리(IOC) , 20:보통(FOK) , 23:시장가(FOK) , 26:최유리(FOK) , 28:스톱지정가,29:중간가,30:중간가(IOC),31:중간가(FOK)
-    log_print(ACCT, stk_cd, f'{ACCT} sell_order market={market} qty={trde_able_qty_int} price={sell_price}')
+    log_print(ACCT, stk_cd, f' sell_order market={market} qty={trde_able_qty_int} price={sell_price}')
     ret_status = sell_order(MY_ACCESS_TOKEN, dmst_stex_tp=market, stk_cd=stk_cd,
                             ord_qty=str(trde_able_qty_int), ord_uv=str(sell_price), trde_tp=trde_tp, cond_uv='')
-    log_print(ACCT, stk_cd, f'{ACCT} ret_status={ret_status}')
+    log_print(ACCT, stk_cd, f' ret_status={ret_status}')
     test_ret_status('SELL', stk_cd, ret_status)
 
 
@@ -902,25 +933,36 @@ def cur_date():
     return formatted_date
 
 
+def test_new_log(acct, stk_cd, msg):
+    global  last_logs
+    acct_logs = last_logs.get(acct, {})
+    logs = acct_logs.get(stk_cd, [])
+    if len(logs) == 0 :
+        logs.append(msg)
+    elif len(logs) == 1:
+        if logs[0] == msg:
+            return False
+        logs.append(msg)
+    else : #  len(logs) > 1
+        if logs[0] == msg or logs[1] == msg:
+            return False
+        logs[0] = logs[1]
+        logs[1] = msg
+
+    acct_logs[stk_cd] = logs
+    last_logs[acct] = acct_logs
+    return True
+
+
 def log_print(acct, stk_cd, msg):
     """Append log message to file: logs/yyyymmdd/stock_code_stock_name.txt"""
-    global today_yyyymmdd, interested_stocks, interested_stocks_lock, last_logs
+    global today_yyyymmdd, interested_stocks, interested_stocks_lock
     if acct == '':
         acct = 'ALLACCT'
 
-    last_log_txt = last_logs.get(acct, [])
-    llen = len(last_log_txt)
-    if llen > 0:
-        if last_log_txt[0] == msg:
-            return
-        else:
-            last_log_txt.append(msg)
-    if llen > 1 :
-        if last_log_txt[0] == msg or last_log_txt[1] == msg:
-            return
-        last_log_txt[0] = last_log_txt[1]
-        last_log_txt[1] = msg
-    last_logs[acct] = last_log_txt
+    if not test_new_log(acct, stk_cd, msg):
+        return
+
 
     try:
         # Get yyyymmdd from global variable
@@ -1190,6 +1232,7 @@ def clear_for_new_day():
     with daily_charts_lock:
         daily_charts = {}
     last_logs = {}
+    old_sel_price = {}
 
 
 def set_new_day(tf):
@@ -1622,24 +1665,27 @@ def query_day_charts(MY_ACCESS_TOKEN, cl_stocks):
 def update_bun_charts_thread():
     """Background thread that updates bun_charts dict in parallel for stocks with btype 'CL'"""
     global bun_charts, bun_charts_lock, interested_stocks, bun_charts_thread_stop_event, interested_stocks_lock
-    
     while not bun_charts_thread_stop_event.is_set():
         # Get token for API calls
-        MY_ACCESS_TOKEN = get_one_token()
-        
-        # Get list of stocks with btype 'CL'
-        cl_stocks = []
-        # Snapshot interested_stocks under lock, then release before API calls
-        with interested_stocks_lock:
-            istk_items = list(interested_stocks.items())
-        for stk_cd, stock in istk_items:
-            if stock.get('btype', '').endswith('CL'):
-                stk_nm = stock.get('stock_name', '')
-                if stk_nm:
-                    cl_stocks.append((stk_cd, stk_nm))
-            
-        query_bun_charts(MY_ACCESS_TOKEN, cl_stocks)
-        query_day_charts(MY_ACCESS_TOKEN, cl_stocks)
+        try:
+            MY_ACCESS_TOKEN = get_one_token()
+        except Exception as ex:
+            log_print('', '000000', str(ex))
+            pass
+        if MY_ACCESS_TOKEN:
+            # Get list of stocks with btype 'CL'
+            cl_stocks = []
+            # Snapshot interested_stocks under lock, then release before API calls
+            with interested_stocks_lock:
+                istk_items = list(interested_stocks.items())
+            for stk_cd, stock in istk_items:
+                if stock.get('btype', '').endswith('CL'):
+                    stk_nm = stock.get('stock_name', '')
+                    if stk_nm:
+                        cl_stocks.append((stk_cd, stk_nm))
+
+            query_bun_charts(MY_ACCESS_TOKEN, cl_stocks)
+            query_day_charts(MY_ACCESS_TOKEN, cl_stocks)
 
         # Sleep for 15 seconds before next update
         for _ in range(150):  # Check every 0.1 seconds for 15 seconds total
@@ -1805,7 +1851,7 @@ def calculate_pl():
 def periodic_timer_handler():
     """Periodic timer event handler that runs the trading loop logic"""
     global prev_hour, new_day, stored_jango_data, stored_miche_data, working_status, now, cleanup_run_today
-    global wait_hour_change
+    global wait_hour_change, calculate_pl_today
 
     now = datetime.now()
     now_hour = now.hour
