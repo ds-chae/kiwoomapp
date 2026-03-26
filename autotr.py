@@ -642,6 +642,11 @@ def call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_co
         log_print(ACCT, stk_cd, f'new sell price for {stk_nm} = {sell_price}  purchase price={pur_pric}')
         old_sel_price[stk_cd] = sell_price
 
+    if market == 'KRX':
+        if maeket_closed.get(stk_cd, False):
+            log_print(ACCT, stk_cd, f'{stk_nm} Market is cloased for this stock.')
+            return
+
     working_status = 'call sell_order()'
     log_print(ACCT, stk_cd, f' sell_order market={market} qty={trde_able_qty_int} price={sell_price}')
     ret_status = sell_order(MY_ACCESS_TOKEN, dmst_stex_tp=market, stk_cd=stk_cd,
@@ -711,6 +716,10 @@ def test_ret_status(sell_buy, stk_cd, ret_status):
         if code == '505182': # 장개시전입니다.)', 'return_code': 20}
             print(rmsg)
             wait_hour_change = True
+        if code == '505217':
+            #  장 종료되었습니다.
+            maeket_closed[stk_cd] = True
+
         print(now, rcde)
     return rcde
 
@@ -931,6 +940,8 @@ new_day = False
 nxt_cancelled = False
 krx_after_state = 0
 nxt_tradable = {}
+maeket_closed = {}
+
 
 def cur_date():
     # Get today's date
@@ -1226,7 +1237,7 @@ def daily_work():
 def clear_for_new_day():
     global now
     global new_day, nxt_start_time, nxt_cancelled, krx_after_state #, krx_first
-    global current_status, nxt_tradable
+    global current_status, nxt_tradable, maeket_closed
     global updown_list, today_yyyymmdd
     global bun_charts_lock, bun_charts
     global daily_charts_lock, daily_charts, last_logs
@@ -1240,6 +1251,7 @@ def clear_for_new_day():
     #krx_first = False
     current_status = 'NEW'
     nxt_tradable = {}
+    maeket_closed = {}
     updown_list = {}
     init_order_count()
     with bun_charts_lock:
