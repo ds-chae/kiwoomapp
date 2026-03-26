@@ -1213,15 +1213,8 @@ def daily_work():
             krx_after_state = 1
         elif krx_after_state == 1: # NXT sell
             sell_jango(stored_jango_data, 'NXT')
-            working_status='calling buy_cl NXT'
             buy_cl(now, 'NXT')
-            krx_after_state = 2
-        elif krx_after_state == 2 : # 시간외 매도
-            sell_jango(stored_jango_data, 'AFT')
-            #krx_after_state = 3 # 'AFT'매도를 성공할 때까지 이 값을 2를 유지해야 한다.
-            # 여기서 3으로 바꾸면 매도 실패에도 불구하고 재시도를 안 하게 된다.
-        else:
-            pass
+            sell_jango(stored_jango_data, 'AFT') # NXT 에서 안 팔린 거는 여기서 매도
     else:
         current_status = 'OFF'
         if (new_day):
