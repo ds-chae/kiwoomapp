@@ -57,7 +57,7 @@ JANGO_DATA_FILE = 'jango_data.json'
 LOGIN_USERNAME = os.getenv('LOGIN_USERNAME')
 LOGIN_PASSWORD = os.getenv('LOGIN_PASSWORD')
 SECRET_KEY = os.getenv('SECRET_KEY', secrets.token_urlsafe(32))
-TOKEN_EXPIRY_HOURS = 24
+TOKEN_EXPIRY_HOURS = 72
 env_pctoken = os.getenv('PCTOKEN')
 
 # In-memory token storage (in production, use Redis or database)
@@ -558,7 +558,7 @@ def calculate_sell_price(ACCT, MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk
                 gap_prices[stk_cd] = get_gap_price(MY_ACCESS_TOKEN, stk_cd, stk_nm)
             gap_price = gap_prices[stk_cd]
         except Exception as e1:
-            log_print(ACCT, stk_cd, f' get_gap_price gen Error {e1}')
+            log_print('', stk_cd, f' get_gap_price gen Error {e1}')
             return 0
         #log_print(ACCT, stk_cd, f' before get_low_after_high')
         last_get_bun_time[stk_cd] = now
@@ -571,23 +571,23 @@ def calculate_sell_price(ACCT, MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk
         except:
             pass
         if bun_chart is None:
-            log_print(ACCT, stk_cd, f' before get_low_after_high, bun_chart is None, return 0')
+            log_print('', stk_cd, f' before get_low_after_high, bun_chart is None, return 0')
             return 0 # if bun_chart is not queried yet, return pric 0
             # bun_chart = get_bun_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm)
 
         lowest, low_time = get_low_after_high(stk_cd, stk_nm, bun_chart)
-        log_print(ACCT, stk_cd, f' get_low_after_high {stk_nm} returns {lowest} last time bun_chart={bun_time}, low_time={low_time}')
+        log_print('', stk_cd, f' get_low_after_high {stk_nm} returns {lowest} last time bun_chart={bun_time}, low_time={low_time}')
         if lowest != 0 :
             gap = float(gap_price['gap']) * 2
             cl_price = round_trunc(int(lowest + gap * sellgap))
             last_cl_price[stk_cd] = cl_price
-            log_print(ACCT, stk_cd, f' cl_price is {cl_price}, gap={gap}, lowest={lowest}, gaprate={sellgap}')
+            log_print('', stk_cd, f' cl_price is {cl_price}, gap={gap}, lowest={lowest}, gaprate={sellgap}')
             if cl_price < pur_pric * 1.01 :
                 cl_price = round_trunc(int(pur_pric * 1.01))
-                log_print(ACCT, stk_cd, f' cl_price is {cl_price} < {pur_pric}, return *1.01')
+                log_print('', stk_cd, f' cl_price is {cl_price} < {pur_pric}, return *1.01')
             return cl_price
 
-    log_print(ACCT, stk_cd, f' calculate_sell_price returns 0')
+    log_print('', stk_cd, f' calculate_sell_price returns 0')
     return 0
 
 
@@ -2745,7 +2745,10 @@ def set_interested_rate(stock_code, stock_name='', color=None,
 
                 stock['sellprice'] = sellprice
                 stock['sellrate'] = sellrate
-                stock['sellgap'] = sellgap
+                if int(sellgap) > 60:
+                    stock['sellgap'] = '60'
+                else:
+                    stock['sellgap'] = sellgap
                 if not 'clprice' in stock:
                     stock['clprice'] = '0'
 
