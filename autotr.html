@@ -106,6 +106,13 @@
 			.profit-zero {
 				color: #7f8c8d;
 			}
+			.profit-loss-amount {
+				font-size: 0.9em;
+				font-weight: 500;
+				display: block;
+				margin-top: 3px;
+				opacity: 0.95;
+			}
 			.empty-state {
 				text-align: center;
 				padding: 60px 20px;
@@ -266,7 +273,58 @@
 				border: 1px solid #f5c6cb;
 			}
 			.account-group {
-				margin-bottom: 40px;
+				margin-bottom: 12px;
+			}
+			.account-tabs-strip {
+				background: #f0f2f8;
+				border: 1px solid #dde1ea;
+				border-radius: 8px;
+				padding: 8px 12px;
+				margin-bottom: 12px;
+				position: sticky;
+				top: 0;
+				z-index: 50;
+			}
+			.account-tabs-inner {
+				display: flex;
+				align-items: center;
+				gap: 10px;
+				flex-wrap: wrap;
+			}
+			.account-tabs-title {
+				font-weight: 600;
+				color: #444;
+				font-size: 14px;
+			}
+			.account-tabs-buttons {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 6px;
+				overflow-x: auto;
+				-webkit-overflow-scrolling: touch;
+				max-width: 100%;
+			}
+			button.account-tab {
+				background: #fff;
+				border: 1px solid #c5cad8;
+				color: #333;
+				padding: 6px 14px;
+				border-radius: 6px;
+				cursor: pointer;
+				font-size: 14px;
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			button.account-tab:hover {
+				background: #e8eaf0;
+			}
+			button.account-tab.active {
+				background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+				color: #fff;
+				border-color: transparent;
+			}
+			.miche-account-tabs-strip {
+				margin-bottom: 10px;
 			}
 			.account-group-header {
 				background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
@@ -313,8 +371,8 @@
 				background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
 			}
 			.miche-section {
-				margin-top: 40px;
-				padding-top: 30px;
+				margin-top: 20px;
+				padding-top: 16px;
 				border-top: 2px solid #e0e0e0;
 			}
 			.miche-section h2 {
@@ -322,9 +380,12 @@
 				margin-bottom: 20px;
 				font-size: 1.5em;
 			}
+			.miche-section > h2:first-of-type {
+				margin-bottom: 8px;
+			}
 			.interested-stocks-section {
-				margin-top: 40px;
-				padding-top: 30px;
+				margin-top: 20px;
+				padding-top: 16px;
 				border-top: 2px solid #e0e0e0;
 			}
 			.interested-stocks-section h2 {
@@ -815,6 +876,44 @@
 			#miche-container table td:nth-child(9) {
 				width: 60px;
 			}
+			/* Per-account order tables (no Account column) */
+			#miche-container .miche-orders-table th:nth-child(1),
+			#miche-container .miche-orders-table td:nth-child(1) {
+				width: 80px;
+				max-width: 80px;
+				min-width: 80px;
+			}
+			#miche-container .miche-orders-table th:nth-child(2),
+			#miche-container .miche-orders-table td:nth-child(2) {
+				min-width: 100px;
+			}
+			#miche-container .miche-orders-table th:nth-child(3),
+			#miche-container .miche-orders-table td:nth-child(3) {
+				width: 80px;
+			}
+			#miche-container .miche-orders-table th:nth-child(4),
+			#miche-container .miche-orders-table td:nth-child(4) {
+				width: 80px;
+			}
+			#miche-container .miche-orders-table th:nth-child(5),
+			#miche-container .miche-orders-table td:nth-child(5) {
+				width: 160px;
+				text-align: right;
+			}
+			#miche-container .miche-orders-table th:nth-child(6),
+			#miche-container .miche-orders-table td:nth-child(6) {
+				width: 150px;
+				text-align: right;
+			}
+			#miche-container .miche-orders-table th:nth-child(7),
+			#miche-container .miche-orders-table td:nth-child(7) {
+				width: 80px;
+				text-align: right;
+			}
+			#miche-container .miche-orders-table th:nth-child(8),
+			#miche-container .miche-orders-table td:nth-child(8) {
+				width: 60px;
+			}
 			@media screen and (max-width: 1600px) {
 				#miche-container {
 					overflow-x: auto;
@@ -883,6 +982,62 @@
 					min-width: 170px;
 					white-space: nowrap;
 					overflow: hidden;
+				}
+				/* 8-column order tables (account tabs — no Account column) */
+				#miche-container .miche-orders-table th:nth-child(1),
+				#miche-container .miche-orders-table td:nth-child(1) {
+					width: 70px;
+					max-width: 70px;
+					min-width: 70px;
+					white-space: nowrap;
+					overflow: hidden;
+					font-size: 12px;
+				}
+				#miche-container .miche-orders-table th:nth-child(2),
+				#miche-container .miche-orders-table td:nth-child(2) {
+					width: 200px;
+					min-width: 200px;
+					white-space: nowrap;
+					overflow: hidden;
+				}
+				#miche-container .miche-orders-table th:nth-child(3),
+				#miche-container .miche-orders-table td:nth-child(3) {
+					width: 60px;
+					max-width: 60px;
+					min-width: 60px;
+					white-space: nowrap;
+					overflow: hidden;
+				}
+				#miche-container .miche-orders-table th:nth-child(4),
+				#miche-container .miche-orders-table td:nth-child(4) {
+					width: 60px;
+					max-width: 60px;
+					min-width: 60px;
+					white-space: nowrap;
+					overflow: hidden;
+				}
+				#miche-container .miche-orders-table th:nth-child(5),
+				#miche-container .miche-orders-table td:nth-child(5) {
+					width: 170px;
+					max-width: 170px;
+					min-width: 170px;
+					white-space: nowrap;
+					overflow: hidden;
+				}
+				#miche-container .miche-orders-table th:nth-child(6),
+				#miche-container .miche-orders-table td:nth-child(6) {
+					width: 170px;
+					max-width: 170px;
+					min-width: 170px;
+					white-space: nowrap;
+					overflow: hidden;
+				}
+				#miche-container .miche-orders-table th:nth-child(7),
+				#miche-container .miche-orders-table td:nth-child(7) {
+					width: 70px;
+					max-width: 70px;
+					min-width: 70px;
+					font-size: 12px;
 				}
 				/* Increase stock name width in account holdings section (2nd column) to prevent wrapping */
 				.account-group table th:nth-child(2),
@@ -1001,19 +1156,65 @@
 					</div>
 				</div>
 			</div>
+			<div id="account-tabs-strip" class="account-tabs-strip" style="display: none;" aria-label="Select account">
+				<div class="account-tabs-inner">
+					<span class="account-tabs-title">Account</span>
+					<div id="account-tabs-buttons" class="account-tabs-buttons"></div>
+				</div>
+			</div>
 			<div class="table-container" id="table-container">
 				<div class="empty-state">
 					<h2>Loading...</h2>
 					<p>Loading account holdings...</p>
 				</div>
 			</div>
+			<div class="buy-section" id="buy-section" style="margin-top: 20px; padding: 20px; background: #f8f9fa; border-radius: 8px;">
+				<h3>Buy</h3>
+				<div class="add-interested-form-content">
+					<div class="form-group">
+						<label for="buy-stock-code-input">Code</label>
+						<input type="text" id="buy-stock-code-input" placeholder="e.g., 005930" maxlength="8" />
+					</div>
+					<div class="form-group">
+						<label for="buy-stock-name-input">Name</label>
+						<input type="text" id="buy-stock-name-input" placeholder="e.g., Samsung Electronics" maxlength="20" readonly />
+					</div>
+					<div class="form-group">
+						<label for="buy-price-input">Price</label>
+						<input type="number" id="buy-price-input" placeholder="Price" step="0.01" min="0" maxlength="6" />
+					</div>
+					<div class="form-group">
+						<label for="buy-amount-input">Amount</label>
+						<input type="number" id="buy-amount-input" placeholder="amount" step="1" min="1" maxlength="8" />
+					</div>
+					<div class="form-group">
+						<label style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+							<span>Account</span>
+							<button type="button" id="buy-all-accounts-btn" style="padding:4px 10px; border:1px solid #ccc; border-radius:6px; background:#fff; cursor:pointer; font-size:12px;">ALL</button>
+						</label>
+						<div id="buy-account-checkboxes" style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center; min-height: 42px; padding: 10px 0;">
+							<!-- Account checkboxes will be populated here -->
+						</div>
+					</div>
+					<button class="btn-buy-interested" onclick="buyStock()" title="Buy stock">
+						Buy
+					</button>
+				</div>
+			</div>
 			<div class="miche-section" id="miche-section">
+				<h2>Orders</h2>
+				<div id="miche-account-tabs-strip" class="account-tabs-strip miche-account-tabs-strip" style="display: none;" aria-label="Orders by account">
+					<div class="account-tabs-inner">
+						<span class="account-tabs-title">Account</span>
+						<div id="miche-account-tabs-buttons" class="account-tabs-buttons"></div>
+					</div>
+				</div>
 				<div id="miche-container">
 					<div class="account-group">
 						<div class="account-group-header">
-							<h2>Unexecuted Orders</h2>
+							<h2>Loading…</h2>
 						</div>
-						<table>
+						<table class="miche-orders-table">
 							<thead>
 								<tr>
 									<th>Code</th>
@@ -1022,14 +1223,13 @@
 									<th>Order Qty</th>
 									<th>Order / Current</th>
 									<th>REMAIN</th>
-									<th>Exchange</th>
 									<th>Time</th>
 									<th>Action</th>
 								</tr>
 							</thead>
 							<tbody>
 								<tr>
-									<td colspan="9" style="text-align: center; padding: 20px; color: #7f8c8d;">
+									<td colspan="8" style="text-align: center; padding: 20px; color: #7f8c8d;">
 										Loading...
 									</td>
 								</tr>
@@ -1079,6 +1279,7 @@
 						<div class="form-group">
 							<input type="number" id="interested-stock-gaprate-input" placeholder="GapRate" step="0.01" />
 						</div>
+						<input type="hidden" id="interested-stock-yyyymmdd-input" value="" />
 						<button class="btn-add-interested" onclick="addInterestedStock()">Add/Update</button>
 						<button class="btn-delete" onclick="deleteInterestedStockFromForm()">Delete</button>
 					</div>
@@ -1103,40 +1304,6 @@
 						</table>
 					</div>
 				</div>
-				<div class="buy-section" id="buy-section" style="margin-top: 20px; padding: 20px; background: #f8f9fa; border-radius: 8px;">
-					<h3>Buy</h3>
-					<div class="add-interested-form-content">
-						<div class="form-group">
-							<label for="buy-stock-code-input">Code</label>
-							<input type="text" id="buy-stock-code-input" placeholder="e.g., 005930" maxlength="8" />
-						</div>
-						<div class="form-group">
-							<label for="buy-stock-name-input">Name</label>
-							<input type="text" id="buy-stock-name-input" placeholder="e.g., Samsung Electronics" maxlength="20" readonly />
-						</div>
-						<div class="form-group">
-							<label for="buy-price-input">Price</label>
-							<input type="number" id="buy-price-input" placeholder="Price" step="0.01" min="0" maxlength="6" />
-						</div>
-						<div class="form-group">
-							<label for="buy-amount-input">Amount</label>
-							<input type="number" id="buy-amount-input" placeholder="amount" step="1" min="1" maxlength="8" />
-						</div>
-						<div class="form-group">
-							<label style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
-								<span>Account</span>
-								<button type="button" id="buy-all-accounts-btn" style="padding:4px 10px; border:1px solid #ccc; border-radius:6px; background:#fff; cursor:pointer; font-size:12px;">ALL</button>
-							</label>
-							<div id="buy-account-checkboxes" style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center; min-height: 42px; padding: 10px 0;">
-								<!-- Account checkboxes will be populated here -->
-							</div>
-						</div>
-						<button class="btn-buy-interested" onclick="buyStock()" title="Buy stock">
-							Buy
-						</button>
-					</div>
-				</div>
-			</div>
 			</div>
 		</div>
 		<script>
@@ -1164,6 +1331,15 @@
 			if (profitValue < 0) return 'profit-negative';
 			return 'profit-zero';
 		}
+
+		function formatProfitRateCellHtml(item) {
+			const rate = item.profit_rate || '';
+			const pl = item.profit_loss;
+			if (pl) {
+				return `${rate}<br><span class="profit-loss-amount">${pl}</span>`;
+			}
+			return rate;
+		}
 		
 		function createRow(item) {
 			const rowId = item.account + '_' + item.stock_code;
@@ -1176,7 +1352,7 @@
 					<td>${item.stock_name}</td>
 					<td>${item.tradeable_qty} / ${rmndQty}</td>
 					<td>${item.avg_buy_price}</td>
-					<td class="${profitClass}">${item.profit_rate}</td>
+					<td class="${profitClass}">${formatProfitRateCellHtml(item)}</td>
 					<td>${item.preset_sell_price}</td>
 				</tr>
 			`;
@@ -1269,6 +1445,7 @@
 				let sellgap = '';
 				let sellrateFromAPI = '';
 				let bamount = '';
+				let yyyymmddFromAPI = '';
 				fetch('./api/interested-stocks?t=' + Date.now())
 					.then(response => response.json())
 					.then(result => {
@@ -1278,17 +1455,20 @@
 							sellgap = result.data[stockCode].sellgap || '';
 							sellrateFromAPI = result.data[stockCode].sellrate || '';
 							bamount = result.data[stockCode].bamount || '';
+							yyyymmddFromAPI = result.data[stockCode].yyyymmdd || '';
 						}
 						
 						// Use sell price from API if available, otherwise use from row attribute
 						const finalSellPrice = sellPriceFromAPI || (sellPrice && sellPrice !== '-' ? sellPrice : '') || '';
 						// Use sellrate from API if available, otherwise use from row attribute
 						const finalSellRate = sellrateFromAPI || sellRate || '';
+						const ymdVal = (yyyymmddFromAPI && String(yyyymmddFromAPI).length === 8) ? String(yyyymmddFromAPI) : '';
 						
 						// Create edit form
 						editArea.innerHTML = `
 							<td colspan="7">
 								<div class="sell-price-edit-form">
+									<input type="hidden" id="edit-yyyymmdd-${stockCode}" value="${ymdVal}">
 									<div>
 										<label>Sell Price:</label>
 										<input type="number" id="edit-sell-price-${stockCode}" placeholder="Price" step="0.01" value="${finalSellPrice || ''}">
@@ -1347,6 +1527,7 @@
 						editArea.innerHTML = `
 							<td colspan="7">
 								<div class="sell-price-edit-form">
+									<input type="hidden" id="edit-yyyymmdd-${stockCode}" value="">
 									<div>
 										<label>Sell Price:</label>
 										<input type="number" id="edit-sell-price-${stockCode}" placeholder="Price" step="0.01" value="${fallbackSellPrice || ''}">
@@ -1536,6 +1717,10 @@
 							Object.values(accountGroups).some(stocks => stocks && stocks.length > 0);
 						
 						if (!hasData) {
+							const tabStrip = document.getElementById('account-tabs-strip');
+							if (tabStrip) tabStrip.style.display = 'none';
+							const micheTabStrip = document.getElementById('miche-account-tabs-strip');
+							if (micheTabStrip) micheTabStrip.style.display = 'none';
 							if (!tableContainer.querySelector('.empty-state')) {
 								tableContainer.innerHTML = `
 									<div class="empty-state">
@@ -1598,7 +1783,7 @@
 												<th>Name</th>
 												<th>Qty</th>
 												<th>AVGCUR PRC</th>
-												<th>Profit Rate</th>
+												<th>Profit Rate / P&amp;L</th>
 												<th>PRESET PRC/RATE</th>
 											</tr>
 										</thead>
@@ -1660,12 +1845,13 @@
 									sellRate = parts[1].trim() !== '-' ? parts[1].trim().replace('%', '') : '';
 								}
 								
+								const profitCellHtml = formatProfitRateCellHtml(item);
 								const cellContent = `
 									<td><strong>${item.stock_code}</strong></td>
 									<td>${item.stock_name}</td>
 									<td>${item.tradeable_qty} / ${rmndQty}</td>
 									<td>${item.avg_buy_price}</td>
-									<td class="${profitClass}">${item.profit_rate}</td>
+									<td class="${profitClass}">${profitCellHtml}</td>
 									<td>${presetPrcRate}</td>
 								`;
 								
@@ -1683,9 +1869,9 @@
 										if (cells[1].textContent !== item.stock_name) cells[1].textContent = item.stock_name;
 										if (cells[2].textContent !== `${item.tradeable_qty} / ${rmndQty}`) cells[2].textContent = `${item.tradeable_qty} / ${rmndQty}`;
 										if (cells[3].textContent !== item.avg_buy_price) cells[3].textContent = item.avg_buy_price;
-										if (cells[4].className !== profitClass || cells[4].textContent !== item.profit_rate) {
+										if (cells[4].className !== profitClass || cells[4].innerHTML !== profitCellHtml) {
 											cells[4].className = profitClass;
-											cells[4].textContent = item.profit_rate;
+											cells[4].innerHTML = profitCellHtml;
 										}
 										if (cells[5].textContent !== presetPrcRate) cells[5].textContent = presetPrcRate;
 									} else {
@@ -1736,6 +1922,7 @@
 								}
 							}
 						}
+						rebuildAccountTabs();
 					}
 				})
 				.catch(error => {
@@ -1919,8 +2106,8 @@
 			alert(message);
 		}
 
-		// Orders (miche) sort state
-		let micheSortState = { key: 'account', dir: 'asc' }; // key: account|code|name|type
+		// Orders (miche) sort state — per-account tables omit Account column; default sort by code
+		let micheSortState = { key: 'code', dir: 'asc' }; // key: code|name|type (account column removed in tab view)
 
 		function normalizeMicheCode(code) {
 			const s = (code || '').toString().trim();
@@ -1979,6 +2166,72 @@
 			});
 		}
 
+		function buildMicheOrderRowHtml(order) {
+			const stkCd = order.stk_cd || '';
+			const stkCdClean = stkCd && stkCd[0] === 'A' ? stkCd.substring(1) : stkCd;
+			let ordQty = 0;
+			if (order.ord_qty) {
+				const ordQtyStr = order.ord_qty.toString().replace(/^0+/, '') || '0';
+				ordQty = parseInt(ordQtyStr) || 0;
+				if (isNaN(ordQty)) ordQty = 0;
+			}
+			let osoQty = 0;
+			if (order.oso_qty) {
+				const osoQtyStr = order.oso_qty.toString().replace(/^0+/, '') || '0';
+				osoQty = parseInt(osoQtyStr) || 0;
+				if (isNaN(osoQty)) osoQty = 0;
+			}
+			let ordPric = 0;
+			if (order.ord_pric) {
+				const ordPricStr = order.ord_pric.toString().replace(/^0+/, '') || '0';
+				ordPric = parseInt(ordPricStr) || 0;
+				if (isNaN(ordPric)) ordPric = 0;
+			}
+			let curPrc = 0;
+			if (order.cur_prc) {
+				const curPrcStr = order.cur_prc.toString().replace(/^0+/, '') || '0';
+				curPrc = parseInt(curPrcStr) || 0;
+				if (isNaN(curPrc)) curPrc = 0;
+			}
+			const ordNo = order.ord_no || '';
+			const stexTp = order.stex_tp || '0';
+			let priceDisplay = '-';
+			if (ordPric > 0 && curPrc > 0) {
+				priceDisplay = ordPric.toLocaleString() + ' / ' + curPrc.toLocaleString();
+			} else if (ordPric > 0) {
+				priceDisplay = ordPric.toLocaleString() + ' / -';
+			} else if (curPrc > 0) {
+				priceDisplay = '- / ' + curPrc.toLocaleString();
+			}
+			const nm = (order.stk_nm || '').replace(/"/g, '&quot;');
+			return `
+				<tr class="miche-row"
+					data-stock-code="${stkCdClean}"
+					data-stock-name="${nm}"
+					data-order-price="${ordPric || ''}"
+					data-current-price="${curPrc || ''}"
+					onclick="selectMicheRow(this)"
+					style="cursor: pointer;">
+					<td><strong>${stkCdClean}</strong></td>
+					<td>${order.stk_nm || '-'}</td>
+					<td>${order.io_tp_nm || '-'}</td>
+					<td>${ordQty > 0 ? ordQty.toLocaleString() : '0'}</td>
+					<td>${priceDisplay}</td>
+					<td><strong>${osoQty > 0 ? osoQty.toLocaleString() : '0'}</strong></td>
+					<td>${order.tm || '-'}</td>
+					<td>
+						<button class="btn-cancel"
+							data-acct="${order.ACCT || ''}"
+							data-stex-tp="${stexTp}"
+							data-ord-no="${ordNo}"
+							data-stk-cd="${stkCd}"
+							onclick="event.stopPropagation(); cancelOrder(this)">
+							Cancel
+						</button>
+					</td>
+				</tr>`;
+		}
+
 		function setupMicheSortHeaders() {
 			const ths = document.querySelectorAll('#miche-container table thead th.miche-sortable');
 			ths.forEach(th => {
@@ -1996,7 +2249,7 @@
 				if (th.__boundSort) return;
 				th.__boundSort = true;
 				th.addEventListener('click', () => {
-					if (!micheSortState) micheSortState = { key: 'account', dir: 'asc' };
+					if (!micheSortState) micheSortState = { key: 'code', dir: 'asc' };
 					if (micheSortState.key === key) {
 						micheSortState.dir = (micheSortState.dir === 'asc') ? 'desc' : 'asc';
 					} else {
@@ -2045,6 +2298,86 @@
 			});
 		}
 
+		const ACCOUNT_TAB_STORAGE_KEY = 'autotr_selected_account';
+
+		function accountTabSortIds(ids) {
+			return [...ids].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+		}
+
+		function getMergedAccountIdsFromDom() {
+			const ids = new Set();
+			document.querySelectorAll('#table-container .account-group').forEach(el => {
+				const id = el.id.replace('account-group-', '');
+				if (id) ids.add(id);
+			});
+			document.querySelectorAll('#miche-container .miche-account-panel').forEach(el => {
+				const a = el.getAttribute('data-account');
+				if (a) ids.add(a);
+			});
+			return accountTabSortIds(ids);
+		}
+
+		function selectAccountTab(accountId) {
+			if (!accountId) return;
+			try { sessionStorage.setItem(ACCOUNT_TAB_STORAGE_KEY, accountId); } catch (e) {}
+			document.querySelectorAll('#table-container .account-group').forEach(el => {
+				const id = el.id.replace('account-group-', '');
+				el.style.display = (id === accountId) ? '' : 'none';
+			});
+			document.querySelectorAll('#miche-container .miche-account-panel').forEach(el => {
+				const a = el.getAttribute('data-account');
+				el.style.display = (a === accountId) ? '' : 'none';
+			});
+			document.querySelectorAll('#account-tabs-buttons .account-tab, #miche-account-tabs-buttons .account-tab').forEach(btn => {
+				btn.classList.toggle('active', btn.getAttribute('data-account') === accountId);
+			});
+		}
+
+		function rebuildAccountTabs() {
+			const ids = getMergedAccountIdsFromDom();
+			const tabTargets = [
+				{ strip: document.getElementById('account-tabs-strip'), buttons: document.getElementById('account-tabs-buttons') },
+				{ strip: document.getElementById('miche-account-tabs-strip'), buttons: document.getElementById('miche-account-tabs-buttons') }
+			];
+			for (const { strip, buttons } of tabTargets) {
+				if (!strip || !buttons) continue;
+				if (ids.length === 0) {
+					strip.style.display = 'none';
+					buttons.innerHTML = '';
+					continue;
+				}
+				strip.style.display = '';
+				buttons.innerHTML = '';
+				ids.forEach(id => {
+					const btn = document.createElement('button');
+					btn.type = 'button';
+					btn.className = 'account-tab';
+					btn.setAttribute('data-account', id);
+					btn.textContent = id;
+					btn.addEventListener('click', () => selectAccountTab(id));
+					buttons.appendChild(btn);
+				});
+			}
+			let sel = null;
+			try { sel = sessionStorage.getItem(ACCOUNT_TAB_STORAGE_KEY); } catch (e) {}
+			if (!sel || !ids.includes(sel)) sel = ids[0];
+			if (ids.length > 0) selectAccountTab(sel);
+		}
+
+		function restoreMicheContainerScroll(savedLeft) {
+			const el = document.getElementById('miche-container');
+			if (!el || typeof savedLeft !== 'number' || Number.isNaN(savedLeft)) return;
+			const apply = () => {
+				const max = Math.max(0, el.scrollWidth - el.clientWidth);
+				el.scrollLeft = Math.min(Math.max(0, savedLeft), max);
+			};
+			apply();
+			requestAnimationFrame(() => {
+				apply();
+				requestAnimationFrame(apply);
+			});
+		}
+
 		function setupInterestedStocksSortHeaders() {
 			const ths = document.querySelectorAll('#interested-stocks-container table thead th.istk-sortable');
 			ths.forEach(th => {
@@ -2076,49 +2409,39 @@
 			fetch('./api/miche-data')
 				.then(response => response.json())
 				.then(result => {
+					const micheContainer = document.getElementById('miche-container');
+					const savedMicheScrollLeft = micheContainer ? micheContainer.scrollLeft : 0;
 					if (result.status === 'success') {
 						const micheData = result.data || [];
-						const micheContainer = document.getElementById('miche-container');
 						const micheSection = document.getElementById('miche-section');
 						
-						// Collect all orders into a single list
 						const allOrders = [];
 						const micheValues = Array.isArray(micheData) ? micheData : Object.values(micheData);
 						for (const item of micheValues) {
 							const acctNo = item.ACCT || '';
-							// Extract oso (unexecuted orders) from each account
 							if (item.oso && Array.isArray(item.oso)) {
 								for (const order of item.oso) {
-									// Add ACCT to each order for cancellation
-									const orderWithAcct = {
-										...order,
-										ACCT: acctNo
-									};
-									allOrders.push(orderWithAcct);
+									allOrders.push({ ...order, ACCT: acctNo });
 								}
 							}
 						}
 						
-						// Check if we have any data
-						const hasData = allOrders.length > 0;
+						const ordersByAcct = {};
+						for (const order of allOrders) {
+							const acct = order.ACCT || '';
+							if (!ordersByAcct[acct]) ordersByAcct[acct] = [];
+							ordersByAcct[acct].push(order);
+						}
 						
-						// Always show miche section
+						const holdingsIds = [...document.querySelectorAll('#table-container .account-group')]
+							.map(el => el.id.replace('account-group-', ''))
+							.filter(Boolean);
+						const orderIds = Object.keys(ordersByAcct);
+						const mergedIds = accountTabSortIds([...new Set([...holdingsIds, ...orderIds])]);
+						
 						micheSection.style.display = 'block';
 						
-						// Build HTML for grouped miche orders
-						let htmlContent = '';
-						
-						if (!hasData) {
-							// Show table with headers but empty tbody
-							htmlContent += `
-								<div class="account-group">
-									<div class="account-group-header">
-										<h2>Orders</h2>
-									</div>
-									<table>
-										<thead>
-											<tr>
-												<th class="miche-sortable" data-sort-key="account">Account</th>
+						const theadCells = `
 												<th class="miche-sortable" data-sort-key="code">Code</th>
 												<th class="miche-sortable" data-sort-key="name">Name</th>
 												<th class="miche-sortable" data-sort-key="type">TYPE</th>
@@ -2126,143 +2449,74 @@
 												<th>Order / Current</th>
 												<th>REMAIN</th>
 												<th>Time</th>
-												<th>Action</th>
+												<th>Action</th>`;
+						
+						let htmlContent = '';
+						
+						if (mergedIds.length === 0) {
+							htmlContent = `
+								<div class="account-group">
+									<div class="account-group-header">
+										<h2>Orders</h2>
+									</div>
+									<table class="miche-orders-table">
+										<thead>
+											<tr>
+												${theadCells}
 											</tr>
 										</thead>
 										<tbody>
 											<tr>
-												<td colspan="9" style="text-align: center; padding: 20px; color: #7f8c8d;">
-													No unexecuted orders available
+												<td colspan="8" style="text-align: center; padding: 20px; color: #7f8c8d;">
+													No unexecuted orders (no accounts)
 												</td>
 											</tr>
 										</tbody>
 									</table>
-								</div>
-							`;
+								</div>`;
 						} else {
-							// Sort orders: Account -> Stock Code -> Order Type
-							applyMicheSort(allOrders);
-							
-							// Single table with one header
-							htmlContent += `
-								<div class="account-group">
-									<div class="account-group-header">
-										<h2>Orders</h2>
-									</div>
-									<table>
-										<thead>
-											<tr>
-												<th class="miche-sortable" data-sort-key="account">Account</th>
-												<th class="miche-sortable" data-sort-key="code">Code</th>
-												<th class="miche-sortable" data-sort-key="name">Name</th>
-												<th class="miche-sortable" data-sort-key="type">TYPE</th>
-												<th>Order Qty</th>
-												<th>Order / Current</th>
-												<th>REMAIN</th>
-												<th>Time</th>
-												<th>Action</th>
-											</tr>
-										</thead>
-										<tbody>
-							`;
-							
-							for (const order of allOrders) {
-								const stkCd = order.stk_cd || '';
-								const stkCdClean = stkCd && stkCd[0] === 'A' ? stkCd.substring(1) : stkCd;
-								let ordQty = 0;
-								if (order.ord_qty) {
-									const ordQtyStr = order.ord_qty.toString().replace(/^0+/, '') || '0';
-									ordQty = parseInt(ordQtyStr) || 0;
-									if (isNaN(ordQty)) ordQty = 0;
-								}
-								let osoQty = 0;
-								if (order.oso_qty) {
-									const osoQtyStr = order.oso_qty.toString().replace(/^0+/, '') || '0';
-									osoQty = parseInt(osoQtyStr) || 0;
-									if (isNaN(osoQty)) osoQty = 0;
-								}
-								// Parse ord_pric field - handle zero-padded strings
-								let ordPric = 0;
-								if (order.ord_pric) {
-									const ordPricStr = order.ord_pric.toString().replace(/^0+/, '') || '0';
-									ordPric = parseInt(ordPricStr) || 0;
-									if (isNaN(ordPric)) ordPric = 0;
-								}
-								let curPrc = 0;
-								if (order.cur_prc) {
-									const curPrcStr = order.cur_prc.toString().replace(/^0+/, '') || '0';
-									curPrc = parseInt(curPrcStr) || 0;
-									if (isNaN(curPrc)) curPrc = 0;
-								}
-								const ordNo = order.ord_no || '';
-								const stexTp = order.stex_tp || '0';
-								
-								// Format order price / current price
-								let priceDisplay = '-';
-								if (ordPric > 0 && curPrc > 0) {
-									priceDisplay = ordPric.toLocaleString() + ' / ' + curPrc.toLocaleString();
-								} else if (ordPric > 0) {
-									priceDisplay = ordPric.toLocaleString() + ' / -';
-								} else if (curPrc > 0) {
-									priceDisplay = '- / ' + curPrc.toLocaleString();
-								}
-								
+							for (const acct of mergedIds) {
+								const list = ordersByAcct[acct] ? [...ordersByAcct[acct]] : [];
+								applyMicheSort(list);
+								const rows = list.map(o => buildMicheOrderRowHtml(o)).join('');
+								const emptyRow = '<tr><td colspan="8" style="text-align: center; padding: 16px; color: #7f8c8d;">No unexecuted orders for this account</td></tr>';
 								htmlContent += `
-									<tr class="miche-row" 
-										data-stock-code="${stkCdClean}" 
-										data-stock-name="${order.stk_nm || ''}" 
-										data-order-price="${ordPric || ''}"
-										data-current-price="${curPrc || ''}"
-										onclick="selectMicheRow(this)"
-										style="cursor: pointer;">
-										<td class="account-cell">${order.ACCT}</td>
-										<td><strong>${stkCdClean}</strong></td>
-										<td>${order.stk_nm || '-'}</td>
-										<td>${order.io_tp_nm || '-'}</td>
-										<td>${ordQty > 0 ? ordQty.toLocaleString() : '0'}</td>
-										<td>${priceDisplay}</td>
-										<td><strong>${osoQty > 0 ? osoQty.toLocaleString() : '0'}</strong></td>
-										<td>${order.tm || '-'}</td>
-										<td>
-											<button class="btn-cancel" 
-												data-acct="${order.ACCT || ''}"
-												data-stex-tp="${stexTp}"
-												data-ord-no="${ordNo}"
-												data-stk-cd="${stkCd}"
-												onclick="event.stopPropagation(); cancelOrder(this)">
-												Cancel
-											</button>
-										</td>
-									</tr>
-								`;
+									<div class="miche-account-panel" data-account="${acct}" style="display:none;">
+										<div class="account-group">
+											<div class="account-group-header">
+												<h2>Orders</h2>
+											</div>
+											<table class="miche-orders-table">
+												<thead>
+													<tr>
+														${theadCells}
+													</tr>
+												</thead>
+												<tbody>
+													${rows || emptyRow}
+												</tbody>
+											</table>
+										</div>
+									</div>`;
 							}
-							
-							htmlContent += `
-										</tbody>
-									</table>
-								</div>
-							`;
 						}
 						
 						micheContainer.innerHTML = htmlContent;
-						// Update mobile display after table is rendered
 						updateMobileDisplay();
-						// Enable sort interactions (table is recreated frequently)
 						setupMicheSortHeaders();
+						rebuildAccountTabs();
+						restoreMicheContainerScroll(savedMicheScrollLeft);
 					} else {
-						// Show empty table even on API error
 						const micheSection = document.getElementById('miche-section');
-						const micheContainer = document.getElementById('miche-container');
 						micheSection.style.display = 'block';
 						micheContainer.innerHTML = `
 							<div class="account-group">
 								<div class="account-group-header">
 									<h2>Orders</h2>
 								</div>
-								<table>
+								<table class="miche-orders-table">
 									<thead>
 									<tr>
-										<th class="miche-sortable" data-sort-key="account">Account</th>
 										<th class="miche-sortable" data-sort-key="code">Code</th>
 										<th class="miche-sortable" data-sort-key="name">Name</th>
 										<th class="miche-sortable" data-sort-key="type">TYPE</th>
@@ -2275,7 +2529,7 @@
 								</thead>
 								<tbody>
 									<tr>
-										<td colspan="9" style="text-align: center; padding: 20px; color: #7f8c8d;">
+										<td colspan="8" style="text-align: center; padding: 20px; color: #7f8c8d;">
 											Error loading unexecuted orders
 										</td>
 									</tr>
@@ -2283,25 +2537,26 @@
 							</table>
 						</div>
 					`;
-						// Update mobile display after error table is rendered
 						updateMobileDisplay();
 						setupMicheSortHeaders();
+						rebuildAccountTabs();
+						restoreMicheContainerScroll(savedMicheScrollLeft);
 				}
 			})
 			.catch(error => {
 				console.error('Error updating miche:', error);
 				const micheSection = document.getElementById('miche-section');
 				const micheContainer = document.getElementById('miche-container');
+				const savedMicheScrollLeft = micheContainer ? micheContainer.scrollLeft : 0;
 				micheSection.style.display = 'block';
 				micheContainer.innerHTML = `
 					<div class="account-group">
 						<div class="account-group-header">
 							<h2>Unexecuted Orders</h2>
 						</div>
-						<table>
+						<table class="miche-orders-table">
 							<thead>
 								<tr>
-									<th class="miche-sortable" data-sort-key="account">Account</th>
 									<th class="miche-sortable" data-sort-key="code">Code</th>
 									<th class="miche-sortable" data-sort-key="name">Name</th>
 									<th class="miche-sortable" data-sort-key="type">TYPE</th>
@@ -2314,7 +2569,7 @@
 							</thead>
 							<tbody>
 								<tr>
-									<td colspan="9" style="text-align: center; padding: 20px; color: #7f8c8d;">
+									<td colspan="8" style="text-align: center; padding: 20px; color: #7f8c8d;">
 										Error loading unexecuted orders
 									</td>
 								</tr>
@@ -2322,9 +2577,10 @@
 						</table>
 					</div>
 				`;
-				// Update mobile display after error table is rendered
 				updateMobileDisplay();
 				setupMicheSortHeaders();
+				rebuildAccountTabs();
+				restoreMicheContainerScroll(savedMicheScrollLeft);
 			});
 		}
 		
@@ -2643,6 +2899,7 @@
 				let sellgap = '';
 				let sellrateFromAPI = '';
 				let bamount = '';
+				let yyyymmddFromAPI = '';
 				fetch('./api/interested-stocks?t=' + Date.now())
 					.then(response => response.json())
 					.then(result => {
@@ -2652,17 +2909,20 @@
 							sellgap = result.data[stockCode].sellgap || '';
 							sellrateFromAPI = result.data[stockCode].sellrate || '';
 							bamount = result.data[stockCode].bamount || '';
+							yyyymmddFromAPI = result.data[stockCode].yyyymmdd || '';
 						}
 						
 						// Use sell price from API if available, otherwise use from row attribute
 						const finalSellPrice = sellPriceFromAPI || (sellPrice && sellPrice !== '-' ? sellPrice : '') || '';
 						// Use sellrate from API if available, otherwise use from row attribute
 						const finalSellRate = sellrateFromAPI || sellRate || '';
+						const ymdVal = (yyyymmddFromAPI && String(yyyymmddFromAPI).length === 8) ? String(yyyymmddFromAPI) : '';
 						
 						// Create edit form
 						editArea.innerHTML = `
 							<td colspan="7">
 								<div class="sell-price-edit-form">
+									<input type="hidden" id="edit-yyyymmdd-${stockCode}" value="${ymdVal}">
 									<div>
 										<label>Sell Price:</label>
 										<input type="number" id="edit-sell-price-${stockCode}" placeholder="Price" step="0.01" value="${finalSellPrice || ''}">
@@ -2721,6 +2981,7 @@
 						editArea.innerHTML = `
 							<td colspan="7">
 								<div class="sell-price-edit-form">
+									<input type="hidden" id="edit-yyyymmdd-${stockCode}" value="">
 									<div>
 										<label>Sell Price:</label>
 										<input type="number" id="edit-sell-price-${stockCode}" placeholder="Price" step="0.01" value="${fallbackSellPrice || ''}">
@@ -2986,6 +3247,7 @@
 			const stockBamount = document.getElementById('interested-stock-bamount-input').value.trim();
 			const stockRate = document.getElementById('interested-stock-rate-input').value.trim();
 			const stockGaprate = document.getElementById('interested-stock-gaprate-input').value.trim();
+			const stockYyyymmdd = document.getElementById('interested-stock-yyyymmdd-input').value.trim();
 			
 			if (!stockCode) {
 				showMessage('Please enter a stock code', 'error');
@@ -3003,6 +3265,9 @@
 				sellrate: stockRate || '0',
 				sellgap: stockGaprate || '0'
 			};
+			if (stockYyyymmdd && stockYyyymmdd.length === 8) {
+				data.yyyymmdd = stockYyyymmdd;
+			}
 			
 			fetch('./api/interested-stocks', {
 				method: 'POST',
@@ -3035,6 +3300,7 @@
 					document.getElementById('interested-stock-bamount-input').value = '';
 					document.getElementById('interested-stock-rate-input').value = '';
 					document.getElementById('interested-stock-gaprate-input').value = '';
+					document.getElementById('interested-stock-yyyymmdd-input').value = '';
 					// Update immediately
 					updateInterestedStocks();
 				} else {
@@ -3171,6 +3437,7 @@
 			const stockBamount = rowElement.getAttribute('data-stock-bamount') || '';
 			const stockRate = rowElement.getAttribute('data-stock-rate') || '';
 			const stockGaprate = rowElement.getAttribute('data-stock-gaprate') || '';
+			const stockYyyymmdd = rowElement.getAttribute('data-stock-yyyymmdd') || '';
 			
 			// Fill the interested stocks form fields
 			document.getElementById('interested-stock-code-input').value = stockCode;
@@ -3181,6 +3448,7 @@
 			// Display sellrate as-is from backend (no conversion)
 			document.getElementById('interested-stock-rate-input').value = stockRate && stockRate !== '0' ? stockRate : '';
 			document.getElementById('interested-stock-gaprate-input').value = stockGaprate !== '0' ? stockGaprate : '';
+			document.getElementById('interested-stock-yyyymmdd-input').value = stockYyyymmdd && stockYyyymmdd.length === 8 ? stockYyyymmdd : '';
 			
 			// Fill buy section
 			document.getElementById('buy-stock-code-input').value = stockCode;
@@ -3448,15 +3716,13 @@
 							h2.textContent = 'ACCNT: ' + acctNo;
 						}
 					});
-					// On mobile, ensure "ACCT" is shown (table might have been recreated)
 					document.querySelectorAll('#miche-container table thead th:first-child').forEach(th => {
 						const currentText = th.textContent.trim();
 						if (currentText === 'Account') {
 							th.textContent = 'ACCT';
 						}
 					});
-					// On mobile, ensure "QTY" is shown (table might have been recreated)
-					document.querySelectorAll('#miche-container table thead th:nth-child(5)').forEach(th => {
+					document.querySelectorAll('#miche-container .miche-orders-table thead th:nth-child(4)').forEach(th => {
 						const currentText = th.textContent.trim().toUpperCase();
 						if (currentText === 'ORDER QTY' || (currentText !== 'QTY' && currentText.includes('ORDER'))) {
 							th.textContent = 'QTY';
@@ -3464,15 +3730,13 @@
 						}
 					});
 				} else {
-					// On PC, ensure "Account" is shown (table might have been recreated)
 					document.querySelectorAll('#miche-container table thead th:first-child').forEach(th => {
 						const currentText = th.textContent.trim();
 						if (currentText === 'ACCT') {
 							th.textContent = 'Account';
 						}
 					});
-					// On PC, ensure "Order Qty" is shown (table might have been recreated)
-					document.querySelectorAll('#miche-container table thead th:nth-child(5)').forEach(th => {
+					document.querySelectorAll('#miche-container .miche-orders-table thead th:nth-child(4)').forEach(th => {
 						const currentText = th.textContent.trim();
 						if (currentText === 'QTY') {
 							th.textContent = 'Order Qty';
@@ -3498,15 +3762,12 @@
 					}
 				});
 				
-				// Change "Account" header to "ACCT" in miche table
 				document.querySelectorAll('#miche-container table thead th:first-child').forEach(th => {
 					if (th.textContent.trim() === 'Account') {
 						th.textContent = 'ACCT';
 					}
 				});
-				
-				// Change "Order Qty" to "QTY" in orders section (5th column)
-				document.querySelectorAll('#miche-container table thead th:nth-child(5)').forEach(th => {
+				document.querySelectorAll('#miche-container .miche-orders-table thead th:nth-child(4)').forEach(th => {
 					const text = th.textContent.trim().toUpperCase();
 					if (text === 'ORDER QTY') {
 						th.textContent = 'QTY';
@@ -3523,15 +3784,12 @@
 					}
 				});
 				
-				// Restore "Account" header in desktop
 				document.querySelectorAll('#miche-container table thead th:first-child').forEach(th => {
 					if (th.textContent.trim() === 'ACCT') {
 						th.textContent = 'Account';
 					}
 				});
-				
-				// Restore "Order Qty" in desktop
-				document.querySelectorAll('#miche-container table thead th:nth-child(5)').forEach(th => {
+				document.querySelectorAll('#miche-container .miche-orders-table thead th:nth-child(4)').forEach(th => {
 					if (th.textContent.trim() === 'QTY') {
 						th.textContent = 'Order Qty';
 						th.style.textTransform = '';
@@ -3653,6 +3911,8 @@
 			const sellRate = document.getElementById(`edit-sell-rate-${stockCode}`).value.trim();
 			const sellgap = document.getElementById(`edit-sell-gap-${stockCode}`).value.trim();
 			const bamount = document.getElementById(`edit-bamount-${stockCode}`).value.trim();
+			const yyyymmddEl = document.getElementById(`edit-yyyymmdd-${stockCode}`);
+			const yyyymmdd = yyyymmddEl ? yyyymmddEl.value.trim() : '';
 			
 			// Prepare request data - use same format as interested-stocks endpoint
 			const requestData = {
@@ -3663,6 +3923,9 @@
 				sellgap: sellgap || '0',
 				bamount: bamount || null
 			};
+			if (yyyymmdd && yyyymmdd.length === 8) {
+				requestData.yyyymmdd = yyyymmdd;
+			}
 			
 			// Call API to update interested stocks (will create entry if doesn't exist)
 			fetch('./api/interested-stocks', {

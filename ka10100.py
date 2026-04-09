@@ -35,45 +35,45 @@ def fn_ka10100(token, data, cont_yn='N', next_key=''):
 # Determine the directory where this script is located
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Define chart data directory: chart_data/day
-STOCKNAMES_FILE = os.path.join(BASE_DIR, 'stocknames.json')
+STOCKINFOS_FILE = os.path.join(BASE_DIR, 'stockinfos.json')
 
 
-def load_stocknames():
+def load_stockinfos():
     """Load interested stocks from JSON file."""
-    if not os.path.exists(STOCKNAMES_FILE):
-        print(f"Interested stocks file not found: {STOCKNAMES_FILE}")
+    if not os.path.exists(STOCKINFOS_FILE):
+        print(f"Interested stocks file not found: {STOCKINFOS_FILE}")
         return {}
 
     try:
-        with open(STOCKNAMES_FILE, 'r', encoding='utf-8') as f:
+        with open(STOCKINFOS_FILE, 'r', encoding='utf-8') as f:
             return json.load(f)
     except Exception as e:
-        print(f"Error loading {STOCKNAMES_FILE}: {e}")
+        print(f"Error loading {STOCKINFOS_FILE}: {e}")
         return {}
 
-stocknames = load_stocknames()
+stockinfos = load_stockinfos()
 
-def save_stocknames(stocknames):
+def save_stockinfos(stockinfos):
     try:
-        with open(STOCKNAMES_FILE, 'w', encoding='utf-8') as f:
-            json.dump(stocknames, f, indent=2, ensure_ascii=False)
-        print(f"Saved stocknames to {STOCKNAMES_FILE}")
+        with open(STOCKINFOS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(stockinfos, f, indent=2, ensure_ascii=False)
+        print(f"Saved stockinfos to {STOCKINFOS_FILE}")
         return True
     except Exception as e:
-        print(f"Error saving stocknames: {e}")
+        print(f"Error saving stockinfos: {e}")
         return False
 
 
 # 실행 구간
-def get_stockname(stk_cd):
-    global stocknames
+def get_stockinfo(stk_cd):
+    global stockinfos
 
     if stk_cd == '000000':
-        return 'SYSTEMLOG'
-    if stk_cd in stocknames:
-        return stocknames[stk_cd]
+        return { "code": "005930", "name": "SYSTEMLOG", "nxtEnable": "Y" }
+    if stk_cd in stockinfos:
+        return stockinfos[stk_cd]
 
-    print('in get_stockname')
+    print('in get_stockinfo')
     MY_ACCESS_TOKEN = get_one_token()
     # 2. 요청 데이터
     params = {
@@ -84,19 +84,11 @@ def get_stockname(stk_cd):
     # 3. API 실행
     json = fn_ka10100(token=MY_ACCESS_TOKEN, data=params)
     if 'name' in json:
-        stocknames[stk_cd] = json['name']
-        save_stocknames(stocknames)
-        return json['name']
-    print('no name in fn_ka10100 result')
+        stockinfos[stk_cd] = json
+        save_stockinfos(stockinfos)
+        return json
 
-    # no name in fn_ka10100 response
-    result = next_getname(stk_cd, MY_ACCESS_TOKEN)
-    if 'stk_nm' in result:
-        return result['stk_nm']
-
-    print('No name field in next_getname result')
-    return ''
-
+    return {"code": f"{stk_cd}", "name": "", "nxtEnable": ""}
 
 def next_getname(stk_cd, MY_ACCESS_TOKEN):
     params = {

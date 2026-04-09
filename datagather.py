@@ -13,7 +13,7 @@ import csv
 from ka10081 import get_day_chart
 from ka10080 import get_bun_chart
 from au1001 import get_one_token
-from ka10100 import get_stockname
+from ka10100 import get_stockinfo
 
 # Configuration
 # Determine the directory where this script is located
@@ -1094,7 +1094,7 @@ def get_stock_list():
                         # If stock name is still just the stock code, try to get it from API
                         if stock_name == stock_code:
                             try:
-                                stock_name = get_stockname(stock_code)
+                                stock_info = get_stockinfo(stock_code)
                                 if not stock_name or stock_name == '':
                                     stock_name = stock_code
                             except Exception as e:
