@@ -2871,6 +2871,7 @@ async def add_interested_stock_api(request: dict, proxy_path: str = "",
             log_print('', stock_code, 'pctoken True sellrate 1.5 stime = {}, yyyymmdd = {}'.format(stime, yyyymmdd))
             if sellrate == 1.5:
                 sellrate = 1.5
+            bamount = '1000000'
         else:
             log_print('', stock_code, 'pctoken False stime = {}, yyyymmdd = {}'.format(stime, yyyymmdd))
 
