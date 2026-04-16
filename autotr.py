@@ -582,9 +582,11 @@ def calculate_sell_price(ACCT, MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk
             cl_price = round_trunc(int(lowest + gap * sellgap))
             last_cl_price[stk_cd] = cl_price
             log_print('', stk_cd, f' cl_price is {cl_price}, gap={gap}, lowest={lowest}, gaprate={sellgap}')
-            if cl_price < pur_pric * 1.01 :
-                cl_price = round_trunc(int(pur_pric * 1.01))
-                log_print('', stk_cd, f' cl_price is {cl_price} < {pur_pric}, return *1.01')
+            pp101 = round_trunc(int(pur_pric * 1.01))
+            if cl_price < pp101 :
+                cl_price = pp101
+                log_print('', stk_cd, f' set cl_price is to pp101={pp101}')
+            log_print('', stk_cd, f' return cl_price {cl_price}')
             return cl_price
 
     log_print('', stk_cd, f' calculate_sell_price returns 0')
@@ -603,6 +605,7 @@ def call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_co
 
     try:
         sell_price = calculate_sell_price(ACCT, MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk_nm)
+        log_print(ACCT, stk_cd, f' Got sell_price = {sell_price}')
         if sell_price == 0: # price is not calculated
             return
     except Exception as ex:
@@ -629,17 +632,23 @@ def call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_co
     # 6:최유리지정가 , 7:최우선지정가 , 10:보통(IOC) , 13:시장가(IOC) , 16:최유리(IOC) , 20:보통(FOK) ,
     # 23:시장가(FOK) , 26:최유리(FOK) , 28:스톱지정가,29:중간가,30:중간가(IOC),31:중간가(FOK)
     nxt_yn = get_stockinfo(stk_cd)['nxtEnable']
-    if nxt_yn == 'Y':
-        market = 'SOR'
-    else:
-        if market == 'AFT':
-            market = 'KRX'
+    if market == 'NXT':
+        if nxt_yn == 'Y':
+            log_print(ACCT, stk_cd, f' in call_sell_order {stk_cd} {stk_nm} market={market}')
+        else:
+            log_print(ACCT, stk_cd, f' in call_sell_order skip {stk_cd} {stk_nm}, not a NXT stock market={market}')
+            return
+    elif market == 'AFT':
+        if get_stockinfo(stk_cd)['nxtEnable'] == 'Y':
+            market = 'NXT'
+        else:
             if after_exceeded.get(stk_cd, False):
                 log_print(ACCT, stk_cd, f' in call_sell_order {stk_cd} market={market}, exceeded upper limit return')
                 return # 계정마다 가격이 다를 수 있으므로 일괄처리하기가 어렵자
+            market = 'KRX'
             trde_tp = '62' # 62:시간외단일가
-        else:
-            market = 'SOR'
+    else:
+        pass
 
     oprice = old_sel_price.get(stk_cd, 0)
     if oprice != sell_price:
@@ -826,7 +835,7 @@ def get_miche():
 
     if get_miche_failed:
         get_miche_failed = False
-        print(f"get_miche recovered.")
+        log_print('', '000000', f"get_miche recovered.")
 
     return miche
 
@@ -864,8 +873,8 @@ oso 미체결 LIST    N
 - stop_pric 스톱가 String  N   20  스톱지정가주문 스톱가
 """
 
-# KRX, NXT에 따라서 매수 매도를 가리지 않고 무조건 취소한다.
-def cancel_all_trade(now, stex):
+# 매도를 무조건 취소한다.
+def cancel_krx_sell(now):
     global interested_stocks
     miche = get_miche()
     for m in miche.values():
@@ -873,18 +882,13 @@ def cancel_all_trade(now, stex):
         if 'oso' in m:
             oso = m['oso']
             for o in oso:
-                stex_tp = o['stex_tp']
-                ord_no = o['ord_no']
-                stk_cd = o['stk_cd']
-                if stk_cd in interested_stocks:
-                    if o['io_tp_nm'] == '-매도':
-                        if stex == 'KRX' and stex_tp == '1': # KRX를 취소한다.
-                            log_print('', stk_cd, 'cancel KRX order {} {}'.format(o['io_tp_nm'], ord_no))
-                            cancel_order_main(acct, now, m['TOKEN'], 'KRX', ord_no, stk_cd)
-                            pass
-                        elif stex == 'NXT' and stex_tp == '2': # NXT를 취소한다.
-                            log_print('', stk_cd, 'cancel NXT order {} {}'.format(o['io_tp_nm'], ord_no))
-                            cancel_order_main(acct, now, m['TOKEN'], 'NXT', ord_no, stk_cd)
+                if o['io_tp_nm'] == '-매도':
+                    stex = o['stex_tp_txt']
+                    ord_no = o['ord_no']
+                    stk_cd = o['stk_cd']
+                    if stk_cd in interested_stocks : # 관리 대상 종목인지 검사한다.
+                        log_print(acct, stk_cd, 'cancel sell order {} {}'.format(o['io_tp_nm'], ord_no))
+                        cancel_order_main(acct, now, m['TOKEN'], stex, ord_no, stk_cd)
         pass
 
 
@@ -1187,6 +1191,7 @@ def daily_work():
 
     try:
         stored_miche_data = get_miche()
+        log_print('', '000000', f"1194 get_miche succeeded.")
     except Exception as e:
         get_miche_failed = True
         log_print('', '000000', f"Error updating miche data: {e}")
@@ -1212,33 +1217,38 @@ def daily_work():
     stored_jango_data = new_jango_data
     if is_between(now, nxt_start_time, nxt_end_time):
         current_status = 'NXT'
-        sell_jango(stored_jango_data, 'NXT')
+        sell_jango(stored_jango_data, 'SOR')
         buy_cl(now, 'NXT')
     elif is_between(now, nxt_end_time, krx_start_time): # NXT 끝나고 KRX 시작 전
         current_status = 'NXT->KRX'
         if not nxt_cancelled:
             nxt_cancelled = True
-            cancel_all_trade(now, 'NXT')
+            log_print('', '000000', '1225 calling cancel_krx_sell between(nxt_end_time, krx_start_time)')
+            cancel_krx_sell(now)
     elif is_between(now, krx_start_time, krx_end_time):
         current_status = 'KRX'
+        log_print('', '000000', '1229 calling sell_jango is_between(now, krx_start_time, krx_end_time)')
         sell_jango(stored_jango_data, 'KRX')
         working_status='calling buy_cl KRX'
         buy_cl(now, 'KRX')
     elif is_between(now, krx_end_time, nxt_fin_time):  # KRX 거래소 시작시간과 NXT 종료 시간 사이
+        log_print('', '000000', '1234 calling sell_jango is_between(now, krx_end_time, nxt_fin_time)')
         current_status = 'NXT'
         if krx_after_state == 0 :
-            cancel_all_trade(now, 'KRX')
+            cancel_krx_sell(now)
             krx_after_state = 1
         elif krx_after_state == 1: # NXT sell
             sell_jango(stored_jango_data, 'NXT')
             buy_cl(now, 'NXT')
             sell_jango(stored_jango_data, 'AFT') # NXT 에서 안 팔린 거는 여기서 매도
     else:
+        log_print('', '000000', '1244 OFF')
         current_status = 'OFF'
         if (new_day):
             set_new_day(False)
-            print('{} {} Setting new day=False'.format(cur_date(), now))
-            log_print('', '000000', ' Setting new day=False')
+            msg = '{} {} Setting new day=False'.format(cur_date(), now)
+            print(msg)
+            log_print('', '000000', msg)
 
 
 def clear_for_new_day():
@@ -1883,6 +1893,25 @@ def calculate_pl():
         total_pl[ACCT] = pl
     save_total_pl(today_yyyymmdd, total_pl)
 
+def order_queued_buy(bqlen):
+    global buy_queue
+    for bidx in range(bqlen):
+        bq = buy_queue[bidx]
+        if now.hour >= bq[0]:  # trade_begin_hour
+            stk_cd = bq[1]
+            stk_nm = bq[2]
+            ord_uv = bq[3]
+            ord_qty = bq[4]
+            accounts = bq[5]
+            stex = bq[6]
+            trde_tp = bq[7]
+            log_print('', stk_cd,
+                      f"Buy queued orders {bq[0]} o'clock : {ord_qty} shares of {stk_nm or stk_cd} at {ord_uv}")
+            call_issue_buy_order(stk_cd, stk_nm, ord_uv, ord_qty, accounts, stex, trde_tp)
+            del buy_queue[bidx]
+            break
+
+
 def periodic_timer_handler():
     """Periodic timer event handler that runs the trading loop logic"""
     global prev_hour, new_day, stored_jango_data, stored_miche_data, working_status, now, cleanup_run_today
@@ -1917,14 +1946,18 @@ def periodic_timer_handler():
     if wait_hour_change: # 장 개시 전이면 한시간씩 기다린다.
         return
 
-    if is_between(now, day_start_time, nxt_start_time):
-        set_new_day(True)
-    else:
-        try:
-            daily_work()
-        except Exception as ex:
-            traceback.print_exc()
-            log_print('', '000000', 'currrent status={}'.format(working_status))
+    try:
+        if is_between(now, day_start_time, nxt_start_time):
+            set_new_day(True)
+        else:
+            bqlen = len(buy_queue)
+            if bqlen > 0 :
+                order_queued_buy()
+            else:
+                daily_work()
+    except Exception as ex:
+        traceback.print_exc()
+        log_print('', '000000', 'currrent status={}'.format(working_status))
 
 def format_account_data():
     """Format account data for display in UI"""
@@ -2239,10 +2272,13 @@ async def get_miche_data_api(proxy_path: str = "", token: str = Cookie(None, ali
     current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     return {"status": "success", "data": stored_miche_data, "timestamp": current_time}
 
+
+stex_map = {"1": "KRX", "2": "NXT", "3": "SOR"}
+
 @app.post("/api/cancel-order")
 @app.post("/stock/api/cancel-order")
 async def cancel_order_api(request: dict, proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
-    global key_list
+    global key_list, stex_map, stored_miche_data
     """API endpoint to cancel an order"""
     # Check authentication
     if not token or not verify_token(token):
@@ -2253,7 +2289,7 @@ async def cancel_order_api(request: dict, proxy_path: str = "", token: str = Coo
 
     def _resolve_cancel_exchange(acct_no: str, orig_ord_no: str, stock_code: str) -> str:
         """Resolve exchange (KRX/NXT/SOR) from stored miche data if possible."""
-        global stored_miche_data
+        global stored_miche_data, stex_map
         miche = stored_miche_data.get(acct_no) if isinstance(stored_miche_data, dict) else None
         oso = miche.get("oso", []) if isinstance(miche, dict) else []
         for o in oso:
@@ -2263,9 +2299,8 @@ async def cancel_order_api(request: dict, proxy_path: str = "", token: str = Coo
                     if stex_tp_txt in {"KRX", "NXT", "SOR"}:
                         return stex_tp_txt
                     stex_tp = (o.get("stex_tp") or "").strip()
-                    stex_map_local = {"1": "KRX", "2": "NXT", "3": "SOR"}
-                    if stex_tp in stex_map_local:
-                        return stex_map_local[stex_tp]
+                    if stex_tp in stex_map:
+                        return stex_map[stex_tp]
             except Exception:
                 continue
         return ""
@@ -2306,7 +2341,6 @@ async def cancel_order_api(request: dict, proxy_path: str = "", token: str = Coo
             stex = stex_upper
         else:
             # If UI sends numeric stex_tp, map it. Treat '0'(통합) as unknown and try to resolve from miche.
-            stex_map = {"1": "KRX", "2": "NXT", "3": "SOR"}
             if stex in stex_map:
                 stex = stex_map[stex]
             else:
@@ -2402,9 +2436,36 @@ def active_market():
     return ''
 
 
+buy_queue = []
+
+
+def call_issue_buy_order(stk_cd, stk_nm, ord_uv, ord_qty, accounts, stex, trde_tp):
+    results = []
+    for account in accounts:
+        try:
+            ret_status = issue_buy_order(stk_nm, stk_cd, ord_uv, ord_qty, stex, trde_tp, account=account)
+            rc = ret_status.get('return_code') if isinstance(ret_status, dict) else None
+            ok = _is_success_return_code(rc)
+            results.append({
+                'account': account,
+                'status': 'success' if ok else 'error',
+                'data': ret_status
+            })
+        except Exception as e:
+            msg = 'buy_order_api exception for account {}: {}'.format(account, e)
+            log_print('', msg)
+            print(msg)
+            results.append({
+                'account': account,
+                'status': 'error',
+                'message': str(e)
+            })
+    return results
+
 @app.post("/api/buy-order")
 @app.post("/stock/api/buy-order")
 async def buy_order_api(request: dict, proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
+    global buy_queue
     """API endpoint to place a buy order for specified accounts"""
     # Check authentication
     if not token or not verify_token(token):
@@ -2424,6 +2485,26 @@ async def buy_order_api(request: dict, proxy_path: str = "", token: str = Cookie
             log_print('', stk_cd, 'buy amount = changed to {}, less than 1000'.format(ord_amount))
         ord_qty = ord_amount // ord_uv
         accounts = request.get('accounts', [])  # List of accounts
+
+        stex = 'SOR' # 20260409
+        #stex = active_market()
+        #if stex == '':
+        #    return {"status": "error", "message": "Market is not active."}
+
+        trde_tp = '0'
+
+        trade_begin_hour = 9
+        if get_stockinfo(stk_cd)['nxtEnable'] == 'Y':
+            trade_begin_hour = 8
+        now = datetime.now()
+        if now.hour < trade_begin_hour:
+            buy_queue.append((trade_begin_hour, stk_cd, stk_nm, ord_uv, ord_qty, accounts, stex, trde_tp))
+            msg = f"Buy orders queued for {trade_begin_hour} o'clock : {ord_qty} shares of {stk_nm or stk_cd} at {ord_uv}"
+            log_print('', stk_cd, msg)
+            return {
+                'status': 'success',
+                'message': msg
+            }
 
         # Ensure accounts is a list (handle case where it might be a string or other type)
         if not isinstance(accounts, list):
@@ -2447,36 +2528,12 @@ async def buy_order_api(request: dict, proxy_path: str = "", token: str = Cookie
         if stk_cd and stk_cd[0] == 'A':
             stk_cd = stk_cd[1:]
 
-        stex = 'SOR' # 20260409
-        #stex = active_market()
-        #if stex == '':
-        #    return {"status": "error", "message": "Market is not active."}
-
-        trde_tp = '0'
-
         # If no accounts specified, use all accounts
         if not accounts or len(accounts) == 0:
             accounts = list(key_list.keys())
         print('buy_order_api accounts={}'.format(accounts))
 
-        results = []
-        for account in accounts:
-            try:
-                ret_status = issue_buy_order(stk_nm, stk_cd, ord_uv, ord_qty, stex, trde_tp, account=account)
-                rc = ret_status.get('return_code') if isinstance(ret_status, dict) else None
-                ok = _is_success_return_code(rc)
-                results.append({
-                    'account': account,
-                    'status': 'success' if ok else 'error',
-                    'data': ret_status
-                })
-            except Exception as e:
-                print('buy_order_api exception for account {}: {}'.format(account, e))
-                results.append({
-                    'account': account,
-                    'status': 'error',
-                    'message': str(e)
-                })
+        results = call_issue_buy_order(stk_cd, stk_nm, ord_uv, ord_qty, accounts, stex, trde_tp)
 
         all_success = all(r.get('status') == 'success' for r in results)
         if all_success:
@@ -2675,7 +2732,7 @@ def clear_ordered_count(stk_cd):
 def set_interested_rate(stock_code, stock_name='', color=None,
                     btype='', bamount='0',
                     stime='', yyyymmdd='', sellprice='0',
-                    sellrate='0', sellgap='0'):
+                    sellrate=0.0, sellgap='0'):
     global interested_stocks, interested_stocks_lock
     try:
         need_cancel_old_buy = False
@@ -2804,14 +2861,16 @@ async def add_interested_stock_api(request: dict, proxy_path: str = "",
         stime = request.get('stime')
         yyyymmdd = request.get('yyyymmdd')
         sellprice = request.get('sellprice', '0')
-        sellrate = request.get('sellrate', '0')
+        sellrate = float(request.get('sellrate', '0'))
         sellgap = request.get('sellgap', '0')
 
         if not stock_code:
             return {"status": "error", "message": "stock_code is required"}
 
         if pctoken:
-            log_print('', stock_code, 'pctoken True stime = {}, yyyymmdd = {}'.format(stime, yyyymmdd))
+            log_print('', stock_code, 'pctoken True sellrate 1.5 stime = {}, yyyymmdd = {}'.format(stime, yyyymmdd))
+            if sellrate == 1.5:
+                sellrate = 1.5
         else:
             log_print('', stock_code, 'pctoken False stime = {}, yyyymmdd = {}'.format(stime, yyyymmdd))
 
@@ -2988,7 +3047,7 @@ async def cancel_nxt_trade_endpoint():
     """Cancel NXT trades"""
     try:
         now = datetime.now()
-        cancel_all_trade(now, 'NXT')
+        cancel_krx_sell(now)
         return {"status": "success", "message": "Cancel NXT trade executed"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
