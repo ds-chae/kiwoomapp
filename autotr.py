@@ -534,7 +534,7 @@ def calculate_sell_price(ACCT, MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk
     if ord_uv != 0:
         return ord_uv
 
-    sellrate = float(sell_cond.get('sellrate', '0.0'))
+    sellrate = float(sell_cond.get('sellrate', 0.0))
     if sellrate != 0.0 :
         # sellrate is stored as-is (percentage), divide by 100 for calculation
         s_rate = sellrate / 100.0
@@ -2590,7 +2590,7 @@ async def delete_sell_prices_api(stock_code: str, proxy_path: str = "", token: s
         with interested_stocks_lock:
             if stock_code in interested_stocks:
                 interested_stocks[stock_code]['sellprice'] = '0'
-                interested_stocks[stock_code]['sellrate'] = '0'
+                interested_stocks[stock_code]['sellrate'] = 0
                 found = True
             else:
                 found = False
@@ -2732,8 +2732,13 @@ def clear_ordered_count(stk_cd):
 def set_interested_rate(stock_code, stock_name='', color=None,
                     btype='', bamount='0',
                     stime='', yyyymmdd='', sellprice='0',
-                    sellrate=0.0, sellgap='0'):
+                    sellrate=0.0, sellgap='0', is_pctoken=False):
     global interested_stocks, interested_stocks_lock
+    if is_pctoken:
+        bamount = '1000000'
+    else:
+        log_print('', stock_code, 'pctoken False stime = {}, yyyymmdd = {}'.format(stime, yyyymmdd))
+
     try:
         need_cancel_old_buy = False
         need_clear_ordered_count = False
@@ -2795,7 +2800,13 @@ def set_interested_rate(stock_code, stock_name='', color=None,
             stock['yyyymmdd'] = yyyymmdd
 
             stock['sellprice'] = sellprice
-            stock['sellrate'] = sellrate
+            if is_pctoken:
+                if float(stock.get('sellrate', 0)) == 0.0:
+                    log_print('', stock_code, f'pctoken True sellrate 1.5 stime = {stime}, yyyymmdd = {yyyymmdd}')
+                    if sellrate == 0.0:
+                        stock['sellrate'] = 1.5
+            else:
+                stock['sellrate'] = sellrate
             if int(sellgap) > 60:
                 stock['sellgap'] = '60'
             else:
@@ -2843,8 +2854,9 @@ async def add_interested_stock_api(request: dict, proxy_path: str = "",
             print('pctoken={}'.format(pctoken))
 
     if pctoken and pctoken == env_pctoken:
-        pass
+        is_pctoken = True
     else:
+        is_pctoken = False
         if not token or not verify_token(token):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -2867,18 +2879,10 @@ async def add_interested_stock_api(request: dict, proxy_path: str = "",
         if not stock_code:
             return {"status": "error", "message": "stock_code is required"}
 
-        if pctoken:
-            log_print('', stock_code, 'pctoken True sellrate 1.5 stime = {}, yyyymmdd = {}'.format(stime, yyyymmdd))
-            if sellrate == 1.5:
-                sellrate = 1.5
-            bamount = '1000000'
-        else:
-            log_print('', stock_code, 'pctoken False stime = {}, yyyymmdd = {}'.format(stime, yyyymmdd))
-
         return set_interested_rate(stock_code, stock_name, color=color,
                             btype = btype, bamount = bamount,
                             stime = stime, yyyymmdd = yyyymmdd, sellprice = sellprice,
-                            sellrate = sellrate, sellgap = sellgap)
+                            sellrate = sellrate, sellgap = sellgap, is_pctoken=is_pctoken)
     except Exception as e:
         print('Exception-> {}'.format(e))
         return {"status": "error", "message": str(e)}
