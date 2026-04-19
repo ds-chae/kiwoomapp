@@ -812,6 +812,44 @@
 				color: #e74c3c;
 			}
 
+			.upload-test-hint {
+				color: #666;
+				font-size: 0.9rem;
+				margin-bottom: 14px;
+				line-height: 1.4;
+			}
+			.upload-test-file {
+				width: 100%;
+				padding: 10px;
+				margin-top: 6px;
+				margin-bottom: 12px;
+				border: 2px dashed #ccc;
+				border-radius: 8px;
+				background: #fafafa;
+			}
+			.upload-test-preview {
+				max-width: 100%;
+				margin-top: 12px;
+				border-radius: 8px;
+				box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+				display: none;
+			}
+			.upload-test-out {
+				margin-top: 14px;
+				padding: 12px;
+				background: #1e1e1e;
+				color: #d4d4d4;
+				border-radius: 8px;
+				font-size: 12px;
+				white-space: pre-wrap;
+				word-break: break-all;
+				display: none;
+			}
+			#upload-test-err {
+				text-align: left;
+				padding: 10px 12px;
+			}
+
 			#miche-container {
 				overflow-x: auto;
 				-webkit-overflow-scrolling: touch;
@@ -1152,6 +1190,7 @@
 					</div>
 					<div style="display: flex; gap: 10px; align-items: center;">
 						<a href="/stock/data" class="btn-logout" style="text-decoration: none; display: inline-block;">Data</a>
+						<button type="button" class="btn-logout" onclick="openUploadTestDialog()">Upload test</button>
 						<button class="btn-logout" onclick="logout()">Logout</button>
 					</div>
 				</div>
@@ -3896,12 +3935,33 @@
 			const dialog = document.getElementById('stock-price-dialog');
 			dialog.classList.remove('show');
 		}
+
+		function openUploadTestDialog() {
+			const d = document.getElementById('upload-test-dialog');
+			document.getElementById('upload-test-err').style.display = 'none';
+			const outEl = document.getElementById('upload-test-out');
+			outEl.style.display = 'none';
+			outEl.textContent = '';
+			const previewEl = document.getElementById('upload-test-preview');
+			previewEl.style.display = 'none';
+			previewEl.removeAttribute('src');
+			document.getElementById('upload-test-file-input').value = '';
+			d.classList.add('show');
+		}
+
+		function closeUploadTestDialog() {
+			document.getElementById('upload-test-dialog').classList.remove('show');
+		}
 		
 		// Close dialog when clicking outside
 		window.onclick = function(event) {
-			const dialog = document.getElementById('stock-price-dialog');
-			if (event.target === dialog) {
+			const priceDialog = document.getElementById('stock-price-dialog');
+			if (event.target === priceDialog) {
 				closeStockPriceDialog();
+			}
+			const uploadDialog = document.getElementById('upload-test-dialog');
+			if (event.target === uploadDialog) {
+				closeUploadTestDialog();
 			}
 		}
 
@@ -3978,8 +4038,90 @@
 			}
 		}
 
+		(function initUploadTestDialog() {
+			function bindUploadTestControls() {
+				const fileInput = document.getElementById('upload-test-file-input');
+				const btn = document.getElementById('upload-test-submit-btn');
+				if (!fileInput || !btn) return;
+				const errEl = document.getElementById('upload-test-err');
+				const outEl = document.getElementById('upload-test-out');
+				const previewEl = document.getElementById('upload-test-preview');
+				fileInput.addEventListener('change', function () {
+					errEl.style.display = 'none';
+					const f = fileInput.files[0];
+					if (!f) {
+						previewEl.style.display = 'none';
+						previewEl.removeAttribute('src');
+						return;
+					}
+					previewEl.src = URL.createObjectURL(f);
+					previewEl.style.display = 'block';
+				});
+				btn.addEventListener('click', async function () {
+					errEl.style.display = 'none';
+					outEl.style.display = 'none';
+					const f = fileInput.files[0];
+					if (!f) {
+						errEl.textContent = 'Choose a file first.';
+						errEl.style.display = 'block';
+						return;
+					}
+					const fd = new FormData();
+					fd.append('file', f, f.name);
+					btn.disabled = true;
+					try {
+						const res = await fetch('./api/upload-image', {
+							method: 'POST',
+							body: fd,
+							credentials: 'same-origin'
+						});
+						const text = await res.text();
+						let data;
+						try { data = JSON.parse(text); } catch (e) { data = { raw: text }; }
+						if (!res.ok) {
+							const detail = data.detail || data.message || text || res.statusText;
+							errEl.textContent = 'Error ' + res.status + ': ' + (typeof detail === 'string' ? detail : JSON.stringify(detail));
+							errEl.style.display = 'block';
+							return;
+						}
+						outEl.textContent = JSON.stringify(data, null, 2);
+						outEl.style.display = 'block';
+					} catch (e) {
+						errEl.textContent = String(e);
+						errEl.style.display = 'block';
+					} finally {
+						btn.disabled = false;
+					}
+				});
+			}
+			if (document.readyState === 'loading') {
+				document.addEventListener('DOMContentLoaded', bindUploadTestControls);
+			} else {
+				bindUploadTestControls();
+			}
+		})();
+
 		</script>
 	
+		<!-- Upload test dialog -->
+		<div id="upload-test-dialog" class="stock-price-dialog">
+			<div class="stock-price-dialog-content" style="max-width: 520px;">
+				<div class="stock-price-dialog-header">
+					<h2>Image upload test</h2>
+					<span class="stock-price-dialog-close" onclick="closeUploadTestDialog()">&times;</span>
+				</div>
+				<div>
+					<p class="upload-test-hint">JPEG, PNG, GIF, or WebP — max 10 MB. Uses your session cookie.</p>
+					<label for="upload-test-file-input">Image file</label>
+					<input type="file" id="upload-test-file-input" class="upload-test-file" accept="image/jpeg,image/png,image/gif,image/webp">
+					<button type="button" class="btn-update" id="upload-test-submit-btn">Upload</button>
+					<div id="upload-test-err" class="stock-price-dialog-error" style="display: none;"></div>
+					<img id="upload-test-preview" class="upload-test-preview" alt="Preview">
+					<pre id="upload-test-out" class="upload-test-out"></pre>
+				</div>
+			</div>
+		</div>
+
 		<!-- Stock Price Info Dialog -->
 		<div id="stock-price-dialog" class="stock-price-dialog">
 			<div class="stock-price-dialog-content">

@@ -12,12 +12,13 @@ from au1001 import get_token, get_key_list, get_one_token
 import time as time_module
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from fastapi import FastAPI, HTTPException, status, Cookie, Request
+from fastapi import FastAPI, HTTPException, status, Cookie, Request, File, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 import uvicorn
 from contextlib import asynccontextmanager
 import secrets
 import socket
+import uuid
 
 
 from ka10080 import get_bun_chart, get_price_index
@@ -52,6 +53,52 @@ interested_stocks_lock = threading.RLock()
 
 # Jango data file
 JANGO_DATA_FILE = 'jango_data.json'
+
+# Image uploads (multipart API)
+IMAGE_UPLOAD_DIR = os.path.join('uploads', 'images')
+MAX_IMAGE_UPLOAD_BYTES = 10 * 1024 * 1024
+IMAGE_CONTENT_TYPE_EXT = {
+    'image/jpeg': '.jpg',
+    'image/jpg': '.jpg',
+    'image/png': '.png',
+    'image/gif': '.gif',
+    'image/webp': '.webp',
+}
+MAX_IMAGE_STEM_LEN = 180
+
+
+def _safe_image_stem_from_filename(filename: str) -> str:
+    """Basename stem only, safe for a single path segment (no slashes)."""
+    base = os.path.basename((filename or "").strip()) or "upload"
+    stem, _ = os.path.splitext(base)
+    parts = []
+    for ch in stem:
+        if ch.isalnum() or ch in "-_.":
+            parts.append(ch)
+        elif ch.isspace():
+            parts.append("_")
+        else:
+            parts.append("_")
+    stem = "".join(parts).strip("._")
+    stem = "_".join(s for s in stem.split("_") if s)
+    if not stem:
+        stem = "upload"
+    if len(stem) > MAX_IMAGE_STEM_LEN:
+        stem = stem[:MAX_IMAGE_STEM_LEN].rstrip("._") or "upload"
+    return stem
+
+
+def _allocate_image_store_path(stem: str, ext: str) -> tuple[str, str]:
+    """Pick a stored filename under IMAGE_UPLOAD_DIR; ext must start with '.'."""
+    os.makedirs(IMAGE_UPLOAD_DIR, exist_ok=True)
+    candidate = f"{stem}{ext}"
+    path = os.path.join(IMAGE_UPLOAD_DIR, candidate)
+    if not os.path.exists(path):
+        return candidate, path
+    candidate = f"{stem}_{uuid.uuid4().hex[:8]}{ext}"
+    path = os.path.join(IMAGE_UPLOAD_DIR, candidate)
+    return candidate, path
+
 
 # Authentication configuration
 LOGIN_USERNAME = os.getenv('LOGIN_USERNAME')
@@ -1830,6 +1877,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"Error starting bun_charts update thread: {e}")
     
+    os.makedirs(IMAGE_UPLOAD_DIR, exist_ok=True)
     print("Application startup complete")
     yield
     
@@ -2227,6 +2275,7 @@ async def root(token: str = Cookie(None, alias="stoken")):
     html_content = load_text_file('./autotr.html')
     html_content = html_content.replace('{IP_SUFFIX}', ip_suffix)
     return html_content
+
 
 @app.get("/api/accounts")
 @app.get("/stock/api/accounts")
@@ -3021,6 +3070,47 @@ async def get_stock_price_info(stock_code: str, token: str = Cookie(None, alias=
             "high_date": gap_price['high_date'],
             "low_date": gap_price['low_date'],
         }
+    }
+
+
+@app.post("/api/upload-image")
+@app.post("/stock/api/upload-image")
+async def upload_image_api(
+    file: UploadFile = File(...),
+    proxy_path: str = "",
+    token: str = Cookie(None, alias="stoken"),
+):
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    ct = (file.content_type or "").split(";")[0].strip().lower()
+    ext = IMAGE_CONTENT_TYPE_EXT.get(ct)
+    if not ext:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unsupported or missing image content type (use JPEG, PNG, GIF, or WebP)",
+        )
+    contents = await file.read()
+    if len(contents) > MAX_IMAGE_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File too large (max {MAX_IMAGE_UPLOAD_BYTES // (1024 * 1024)} MB)",
+        )
+    stem = _safe_image_stem_from_filename(file.filename or "upload")
+    stored_name, out_path = _allocate_image_store_path(stem, ext)
+    with open(out_path, "wb") as out_f:
+        out_f.write(contents)
+    rel_path = os.path.join(IMAGE_UPLOAD_DIR.replace("\\", "/"), stored_name)
+    original = os.path.basename(file.filename or "upload")
+    return {
+        "status": "success",
+        "stored_filename": stored_name,
+        "original_filename": original,
+        "size": len(contents),
+        "content_type": ct,
+        "path": rel_path,
     }
 
 
