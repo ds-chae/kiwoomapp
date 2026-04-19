@@ -4,6 +4,7 @@ import copy
 import requests
 import json
 import os
+import mimetypes
 from datetime import datetime, timedelta, time, date
 
 # load_dotenv is not required, as it is called in au1001
@@ -13,7 +14,7 @@ import time as time_module
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from fastapi import FastAPI, HTTPException, status, Cookie, Request, File, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, FileResponse
 import uvicorn
 from contextlib import asynccontextmanager
 import secrets
@@ -65,6 +66,24 @@ IMAGE_CONTENT_TYPE_EXT = {
     'image/webp': '.webp',
 }
 MAX_IMAGE_STEM_LEN = 180
+UPLOAD_IMAGE_FILE_SUFFIXES = ('.jpg', '.jpeg', '.png', '.gif', '.webp')
+
+
+def _is_upload_image_filename(name: str) -> bool:
+    base = os.path.basename(name or '')
+    lower = base.lower()
+    return any(lower.endswith(s) for s in UPLOAD_IMAGE_FILE_SUFFIXES)
+
+
+def _list_upload_image_filenames() -> list[str]:
+    if not os.path.isdir(IMAGE_UPLOAD_DIR):
+        return []
+    out: list[str] = []
+    for fn in os.listdir(IMAGE_UPLOAD_DIR):
+        path = os.path.join(IMAGE_UPLOAD_DIR, fn)
+        if os.path.isfile(path) and _is_upload_image_filename(fn):
+            out.append(fn)
+    return out
 
 
 def _safe_image_stem_from_filename(filename: str) -> str:
@@ -2277,6 +2296,26 @@ async def root(token: str = Cookie(None, alias="stoken")):
     return html_content
 
 
+@app.get("/images", response_class=HTMLResponse)
+async def images_gallery_page_root(token: str = Cookie(None, alias="stoken")):
+    if not token or not verify_token(token):
+        return RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
+    ip_suffix = get_server_ip_last_digit()
+    html_content = load_text_file("./images_gallery.html")
+    html_content = html_content.replace("{IP_SUFFIX}", ip_suffix)
+    return HTMLResponse(content=html_content)
+
+
+@app.get("/stock/images", response_class=HTMLResponse)
+async def images_gallery_page_stock(token: str = Cookie(None, alias="stoken")):
+    if not token or not verify_token(token):
+        return RedirectResponse(url="/stock/login", status_code=status.HTTP_302_FOUND)
+    ip_suffix = get_server_ip_last_digit()
+    html_content = load_text_file("./images_gallery.html")
+    html_content = html_content.replace("{IP_SUFFIX}", ip_suffix)
+    return HTMLResponse(content=html_content)
+
+
 @app.get("/api/accounts")
 @app.get("/stock/api/accounts")
 async def get_accounts_api(proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
@@ -3112,6 +3151,50 @@ async def upload_image_api(
         "content_type": ct,
         "path": rel_path,
     }
+
+
+@app.get("/api/upload-images")
+@app.get("/stock/api/upload-images")
+async def list_upload_images_api(
+    proxy_path: str = "",
+    token: str = Cookie(None, alias="stoken"),
+):
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    names = _list_upload_image_filenames()
+    names.sort(key=lambda s: s.lower())
+    return {"status": "success", "data": names}
+
+
+@app.get("/api/upload-images/{filename}/file")
+@app.get("/stock/api/upload-images/{filename}/file")
+async def serve_upload_image_file(
+    filename: str,
+    proxy_path: str = "",
+    token: str = Cookie(None, alias="stoken"),
+):
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    safe = os.path.basename(filename)
+    if not _is_upload_image_filename(safe):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Not found",
+        )
+    path = os.path.join(IMAGE_UPLOAD_DIR, safe)
+    if not os.path.isfile(path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Not found",
+        )
+    media_type, _ = mimetypes.guess_type(path)
+    return FileResponse(path, media_type=media_type or "application/octet-stream")
 
 
 @app.get("/health")

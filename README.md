@@ -307,3 +307,4 @@ previoud jango should be updated when jango is changed.
 
 previous_jango_data_simplified is initialized at startup and dail_work iis called after that. why test if previous_jango_data_simplified is none every time?
 
+ui에 uploads/image를 image list로 볼 수 있는 button을 추가한다. 목록은 화면 너비에 따라서 타일 형식으로 보여준다.  이미지 파일 이름으로 오름차순 또는 내림차순으로 정렬 가능하다.
