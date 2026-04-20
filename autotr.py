@@ -3118,12 +3118,20 @@ async def upload_image_api(
     file: UploadFile = File(...),
     proxy_path: str = "",
     token: str = Cookie(None, alias="stoken"),
-):
-    if not token or not verify_token(token):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-        )
+    pctoken: str = Cookie(default=None),
+    ):
+    global env_pctoken
+    """API endpoint to add a stock to interested stocks list"""
+
+    if pctoken and pctoken == env_pctoken:
+        pass
+    else:
+        if not token or not verify_token(token):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Not authenticated"
+            )
+
     ct = (file.content_type or "").split(";")[0].strip().lower()
     ext = IMAGE_CONTENT_TYPE_EXT.get(ct)
     if not ext:

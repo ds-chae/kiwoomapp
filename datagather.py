@@ -453,10 +453,10 @@ def run_daily_job():
         try:
             if not should_fetch_minute_chart(update_date, current_date_str):
                 print(f"[{stock_code}] Daily chart {update_date} is beyond 10-day limit. Skipping minute chart.")
-            continue
+                continue
         
             # Fetch data using ka10081 with the update date
-            result = get_day_chart(token, stock_code, date=current_date_str)
+            result = get_day_chart(token, stock_code, stock_name)
             
             # Basic validation of result
             if not isinstance(result, dict):
