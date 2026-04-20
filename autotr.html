@@ -38,6 +38,20 @@
 				font-size: 1.1em;
 				opacity: 0.9;
 			}
+			.header-top {
+				display: flex;
+				justify-content: space-between;
+				align-items: center;
+				gap: 16px;
+				width: 100%;
+			}
+			.header-actions {
+				display: flex;
+				gap: 10px;
+				align-items: center;
+				flex-wrap: wrap;
+				justify-content: flex-end;
+			}
 			.table-container {
 				padding: 30px;
 				overflow-x: auto;
@@ -237,7 +251,8 @@
 				cursor: pointer;
 				font-size: 14px;
 				font-weight: 600;
-				margin-left: auto;
+				margin-left: 0;
+				white-space: nowrap;
 			}
 			.btn-logout:hover {
 				opacity: 0.9;
@@ -1153,6 +1168,32 @@
 					max-width: 160px;
 					min-width: 160px;
 				}
+				.header {
+					padding: 20px 14px;
+				}
+				.header-top {
+					flex-direction: column;
+					align-items: stretch;
+					gap: 12px;
+				}
+				.header h1 {
+					font-size: 1.6em;
+					margin-bottom: 6px;
+				}
+				.header p {
+					font-size: 0.95em;
+				}
+				.header-actions {
+					width: 100%;
+					justify-content: flex-start;
+					gap: 8px;
+				}
+				.header-actions .btn-logout {
+					flex: 1 1 calc(50% - 8px);
+					min-width: 120px;
+					text-align: center;
+					padding: 9px 12px;
+				}
 			}
 			.auto-sell-control {
 				display: flex;
@@ -1183,12 +1224,12 @@
 	<body>
 		<div class="container">
 			<div class="header">
-				<div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+				<div class="header-top">
 					<div>
 						<h1 id="headline-time">Account -</h1>
 						<p>Stock Holdings and Trading Information</p>
 					</div>
-					<div style="display: flex; gap: 10px; align-items: center;">
+					<div class="header-actions">
 						<a href="/stock/data" class="btn-logout" style="text-decoration: none; display: inline-block;">Data</a>
 						<button type="button" class="btn-logout" onclick="openUploadTestDialog()">Upload test</button>
 						<a href="/stock/images" class="btn-logout" style="text-decoration: none; display: inline-block;">Images</a>
