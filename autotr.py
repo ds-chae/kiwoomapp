@@ -1010,8 +1010,9 @@ day_start_time = time(6, 0)  # 07:00
 nxt_start_time = time(7, 59)  # 07:00
 nxt_end_time = time(8, 49)  # 07:00
 krx_start_time = time(8,52)
-krx_end_time = time(15,31)
-nxt_fin_time = time(20, 0)
+krx_end_time_1531 = time(15,31)
+krx_aft_time_1601 = time(16, 1)
+nxt_fin_time_2000 = time(20, 0)
 
 new_day = False
 nxt_cancelled = False
@@ -1244,7 +1245,8 @@ get_miche_failed = True
 
 def daily_work():
     global new_day, current_status, now
-    global nxt_start_time, nxt_end_time, krx_start_time,nxt_cancelled, krx_after_state,  krx_end_time, nxt_fin_time
+    global nxt_start_time, nxt_end_time, krx_start_time,nxt_cancelled, krx_after_state
+    global krx_end_time_1531, krx_aft_time_1601, nxt_fin_time_2000
     global stored_jango_data, stored_miche_data, get_miche_failed, working_status
     global previous_jango_data_simplified
 
@@ -1291,19 +1293,21 @@ def daily_work():
             nxt_cancelled = True
             log_print('', '000000', '1225 calling cancel_krx_sell between(nxt_end_time, krx_start_time)')
             cancel_krx_sell(now)
-    elif is_between(now, krx_start_time, krx_end_time):
+    elif is_between(now, krx_start_time, krx_end_time_1531):
         current_status = 'KRX'
         log_print('', '000000', '1229 calling sell_jango is_between(now, krx_start_time, krx_end_time)')
         sell_jango(stored_jango_data, 'KRX')
         working_status='calling buy_cl KRX'
         buy_cl(now, 'KRX')
-    elif is_between(now, krx_end_time, nxt_fin_time):  # KRX 거래소 시작시간과 NXT 종료 시간 사이
-        log_print('', '000000', '1234 calling sell_jango is_between(now, krx_end_time, nxt_fin_time)')
-        current_status = 'NXT'
+    elif is_between(now, krx_end_time_1531, krx_aft_time_1601):
         if krx_after_state == 0 :
+            log_print('', '000000', '1304 cancelling all sell orders is_between(now, krx_end_time_1531, krx_aft_time_1601)')
             cancel_krx_sell(now)
             krx_after_state = 1
-        elif krx_after_state == 1: # NXT sell
+    elif is_between(now, krx_aft_time_1601, nxt_fin_time_2000):  # KRX 거래소 시작시간과 NXT 종료 시간 사이
+        current_status = 'NXT'
+        if krx_after_state == 1: # NXT sell
+            log_print('', '000000', '1234 calling sell_jango is_between(now, krx_end_time, nxt_fin_time)')
             sell_jango(stored_jango_data, 'NXT')
             buy_cl(now, 'NXT')
             sell_jango(stored_jango_data, 'AFT') # NXT 에서 안 팔린 거는 여기서 매도
