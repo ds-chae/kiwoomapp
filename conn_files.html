@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Connect Control Screen - {IP_SUFFIX}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .wrap {
+            max-width: 980px;
+            margin: 0 auto;
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            overflow: hidden;
+        }
+        .top {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #fff;
+            padding: 16px 20px;
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+        }
+        .back-btn {
+            display: inline-block;
+            color: #fff;
+            text-decoration: none;
+            border: 1px solid rgba(255,255,255,0.35);
+            border-radius: 6px;
+            padding: 7px 14px;
+            background: rgba(255,255,255,0.18);
+            font-weight: 600;
+        }
+        .content {
+            padding: 20px;
+        }
+        .hint {
+            font-size: 13px;
+            color: #666;
+            margin-bottom: 14px;
+        }
+        .field {
+            margin-bottom: 14px;
+        }
+        .field label {
+            display: block;
+            font-size: 13px;
+            font-weight: 700;
+            margin-bottom: 6px;
+            color: #444;
+        }
+        textarea {
+            width: 100%;
+            min-height: 190px;
+            resize: vertical;
+            border: 1px solid #d0d4e2;
+            border-radius: 8px;
+            padding: 10px;
+            font-family: Consolas, 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.35;
+        }
+        .actions {
+            display: flex;
+            justify-content: flex-end;
+            margin-top: 8px;
+        }
+        .btn-modify {
+            border: none;
+            border-radius: 8px;
+            padding: 10px 18px;
+            font-size: 14px;
+            font-weight: 700;
+            color: #fff;
+            cursor: pointer;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .btn-modify:disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
+        }
+        .msg {
+            display: none;
+            margin-top: 12px;
+            border-radius: 8px;
+            padding: 10px 12px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        .msg.ok { display: block; background: #e8f7ec; color: #176634; border: 1px solid #bde6c8; }
+        .msg.err { display: block; background: #fdeaea; color: #8f1d1d; border: 1px solid #f6c5c5; }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <div class="top">
+            <a class="back-btn" href="/stock/">← Holdings</a>
+            <h1 style="font-size:1.2rem;">Connect Control Screen</h1>
+        </div>
+        <div class="content">
+            <div class="hint">Directory: <span id="base-dir">loading...</span></div>
+            <div class="field">
+                <label for="allowip-text">allowip.txt</label>
+                <textarea id="allowip-text" spellcheck="false"></textarea>
+            </div>
+            <div class="field">
+                <label for="allowcon-text">allowcon.txt</label>
+                <textarea id="allowcon-text" spellcheck="false"></textarea>
+            </div>
+            <div class="field">
+                <label for="logs-text">logs.txt</label>
+                <textarea id="logs-text" spellcheck="false"></textarea>
+            </div>
+            <div class="actions">
+                <button id="modify-btn" class="btn-modify" type="button">MODIFY</button>
+            </div>
+            <div id="msg" class="msg"></div>
+        </div>
+    </div>
+
+    <script>
+        function showMsg(text, ok) {
+            var el = document.getElementById('msg');
+            el.textContent = text;
+            el.className = ok ? 'msg ok' : 'msg err';
+        }
+
+        async function loadConnFiles() {
+            try {
+                var res = await fetch('./api/conn-files', { credentials: 'same-origin' });
+                var data = {};
+                try { data = await res.json(); } catch (e) { data = {}; }
+                if (res.status === 401) {
+                    var loginPath = window.location.pathname.indexOf('/stock') === 0 ? '/stock/login' : '/login';
+                    window.location.href = loginPath;
+                    return;
+                }
+                if (!res.ok || data.status !== 'success') {
+                    showMsg('Failed to load files: ' + (data.message || ('HTTP ' + res.status)), false);
+                    return;
+                }
+                document.getElementById('base-dir').textContent = data.data.base_dir || '';
+                document.getElementById('allowip-text').value = data.data.allowip || '';
+                document.getElementById('allowcon-text').value = data.data.allowcon || '';
+                document.getElementById('logs-text').value = data.data.logs || '';
+            } catch (e) {
+                showMsg('Load error: ' + e.message, false);
+            }
+        }
+
+        async function modifyConnFiles() {
+            var btn = document.getElementById('modify-btn');
+            btn.disabled = true;
+            try {
+                var payload = {
+                    allowip: document.getElementById('allowip-text').value,
+                    allowcon: document.getElementById('allowcon-text').value,
+                    logs: document.getElementById('logs-text').value
+                };
+                var res = await fetch('./api/conn-files', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                var data = {};
+                try { data = await res.json(); } catch (e) { data = {}; }
+                if (res.status === 401) {
+                    var loginPath = window.location.pathname.indexOf('/stock') === 0 ? '/stock/login' : '/login';
+                    window.location.href = loginPath;
+                    return;
+                }
+                if (!res.ok || data.status !== 'success') {
+                    showMsg('Modify failed: ' + (data.message || ('HTTP ' + res.status)), false);
+                    return;
+                }
+                showMsg('Modified successfully.', true);
+            } catch (e) {
+                showMsg('Modify error: ' + e.message, false);
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        document.getElementById('modify-btn').addEventListener('click', modifyConnFiles);
+        loadConnFiles();
+    </script>
+</body>
+</html>
