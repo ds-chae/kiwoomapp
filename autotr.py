@@ -1184,10 +1184,17 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
             oqty = m['ord_qty']
             oqp = m['ord_pric']
             bsum += int(oqty)*int(oqp)
-    if bsum >= bamount * 2 * 0.85:
+    scolor = int_stock['color']
+    if scolor == 'O':
+        bc2 = bamount * 1.5 * 0.85
+        bc1 = bamount * 0.5 * 0.85
+    else:
+        bc2 = bamount * 2 * 0.85
+        bc1 = bamount * 1 * 0.85
+    if bsum >= bc2:
         add_order_count(ACCT, stk_cd, 2)
         hold_count = 2
-    elif bsum >= bamount * 1 * 0.85:
+    elif bsum >= bc1:
         add_order_count(ACCT, stk_cd, 1)
         hold_count = 1
     else:
@@ -1201,16 +1208,19 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
         log_print('', stk_cd, 'getting bun_chart or bun_price failed');
         return
 
-    price_index = get_price_index(int_stock['color'])
+    price_index = get_price_index(scolor)
     trde_tp = '0'
     if get_order_count(ACCT, stk_cd) < 1 and hold_count < 1 : # 보유량이 없고 주문 사실도 없다면
         bp = gap_price['price'][price_index]
         buy_rate = (float(gap_price.get('current_price', 0))-bp) / bp # 현재 가격과 매수 가격의 차이
         if buy_rate >= 0.03 : # 매수 가격이랑 3%이상 차이가 난다면 매수 하지 않는다,
-            log_print(ACCT, stk_cd, ' gap over skip 1 for {} {} {} {}'.format(stk_cd, stk_nm, bp, buy_rate))
+            log_print('', stk_cd, ' gap over skip 1 for {} {} {} {}'.format(stk_cd, stk_nm, bp, buy_rate))
         else:
             ord_price = round_trunc(bp)
-            ord_qty = bamount // ord_price
+            if scolor == 'O':
+                ord_qty = (bamount/2) // ord_price
+            else:
+                ord_qty = bamount // ord_price
             if ord_qty > 0 :
                 #ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trade_tp=trde_tp, cond_uv='')
                 log_print(ACCT, stk_cd, 'buy_order market={}, qty={} price={}'.format(stex, ord_qty, ord_price))
@@ -1227,7 +1237,7 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
         bp = gap_price['price'][price_index+1]
         buy_rate = (float(gap_price.get('current_price', 0))-bp) / bp # 현재 가격과 매수 가격의 차이
         if buy_rate >= 0.03 : # 매수 가격이랑 3%이상 차이가 난다면 매수 하지 않는다,
-            log_print(ACCT, stk_cd, ' gap over skip 2 for {} {} {} {}'.format(stk_cd, stk_nm, bp, buy_rate))
+            log_print('', stk_cd, ' gap over skip 2 for {} {} {} {}'.format(stk_cd, stk_nm, bp, buy_rate))
         else:
             ord_price = round_trunc(bp)
             ord_qty = bamount // ord_price
@@ -3224,6 +3234,7 @@ def set_interested_rate(stock_code, stock_name='', color=None,
     global interested_stocks, interested_stocks_lock
     if is_pctoken:
         bamount = '1000000'
+        color = 'O'
     else:
         log_print('', stock_code, 'pctoken False stime = {}, yyyymmdd = {}'.format(stime, yyyymmdd))
 
