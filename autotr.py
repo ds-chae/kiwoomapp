@@ -2215,6 +2215,26 @@ def load_text_file(fn):
         text = inf.read()
         return text
 
+def get_conn_base_dir() -> str:
+    """Directory for connection config files.
+    Linux: /home/cds
+    Windows: c:/temp
+    """
+    if os.name == "nt":
+        return "c:/temp"
+    return "/home/cds"
+
+def get_conn_file_path(filename: str) -> str:
+    base = get_conn_base_dir()
+    return os.path.join(base, filename)
+
+def read_conn_file_or_empty(filename: str) -> str:
+    path = get_conn_file_path(filename)
+    if not os.path.isfile(path):
+        return ""
+    with open(path, "rt", encoding="utf8") as inf:
+        return inf.read()
+
 
 # Login page
 @app.get("/login", response_class=HTMLResponse)
@@ -2314,6 +2334,92 @@ async def images_gallery_page_stock(token: str = Cookie(None, alias="stoken")):
     html_content = load_text_file("./images_gallery.html")
     html_content = html_content.replace("{IP_SUFFIX}", ip_suffix)
     return HTMLResponse(content=html_content)
+
+@app.get("/conn", response_class=HTMLResponse)
+async def conn_files_page_root(token: str = Cookie(None, alias="stoken")):
+    if not token or not verify_token(token):
+        return RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
+    ip_suffix = get_server_ip_last_digit()
+    html_content = load_text_file("./conn_files.html")
+    html_content = html_content.replace("{IP_SUFFIX}", ip_suffix)
+    return HTMLResponse(content=html_content)
+
+@app.get("/stock/conn", response_class=HTMLResponse)
+async def conn_files_page_stock(token: str = Cookie(None, alias="stoken")):
+    if not token or not verify_token(token):
+        return RedirectResponse(url="/stock/login", status_code=status.HTTP_302_FOUND)
+    ip_suffix = get_server_ip_last_digit()
+    html_content = load_text_file("./conn_files.html")
+    html_content = html_content.replace("{IP_SUFFIX}", ip_suffix)
+    return HTMLResponse(content=html_content)
+
+@app.get("/api/conn-files")
+@app.get("/stock/api/conn-files")
+async def get_conn_files_api(proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
+    """Read allowip.txt, allowcon.txt and logs.txt from configured directory."""
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+    try:
+        allowip_text = read_conn_file_or_empty("allowip.txt")
+        allowcon_text = read_conn_file_or_empty("allowcon.txt")
+        logs_text = read_conn_file_or_empty("logs.txt")
+        return {
+            "status": "success",
+            "data": {
+                "base_dir": get_conn_base_dir(),
+                "allowip": allowip_text,
+                "allowcon": allowcon_text,
+                "logs": logs_text,
+            }
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.post("/api/conn-files")
+@app.post("/stock/api/conn-files")
+async def modify_conn_files_api(request: dict, proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
+    """Modify allowip.txt, allowcon.txt and logs.txt in configured directory."""
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+    try:
+        allowip_text = request.get("allowip")
+        allowcon_text = request.get("allowcon")
+        logs_text = request.get("logs")
+        if allowip_text is None or allowcon_text is None or logs_text is None:
+            return {"status": "error", "message": "allowip, allowcon and logs are required"}
+
+        base_dir = get_conn_base_dir()
+        os.makedirs(base_dir, exist_ok=True)
+
+        allowip_path = get_conn_file_path("allowip.txt")
+        allowcon_path = get_conn_file_path("allowcon.txt")
+        logs_path = get_conn_file_path("logs.txt")
+
+        with open(allowip_path, "wt", encoding="utf8") as outf:
+            outf.write(str(allowip_text))
+        with open(allowcon_path, "wt", encoding="utf8") as outf:
+            outf.write(str(allowcon_text))
+        with open(logs_path, "wt", encoding="utf8") as outf:
+            outf.write(str(logs_text))
+
+        return {
+            "status": "success",
+            "message": "Connection files modified successfully",
+            "data": {
+                "base_dir": base_dir,
+                "allowip_path": allowip_path,
+                "allowcon_path": allowcon_path,
+                "logs_path": logs_path,
+            }
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 @app.get("/api/accounts")
