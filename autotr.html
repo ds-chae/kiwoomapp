@@ -683,6 +683,71 @@
 				display: flex;
 				gap: 10px;
 			}
+			.sell-price-edit-form--with-cut {
+				align-items: flex-start;
+				width: 100%;
+			}
+			.sell-price-edit-fields {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 15px;
+				align-items: flex-end;
+				flex: 1 1 auto;
+			}
+			.sell-price-edit-fields > div:not(.sell-price-edit-gap-with-actions) {
+				display: flex;
+				flex-direction: column;
+				align-items: flex-start;
+				gap: 2px;
+			}
+			.sell-price-edit-field-spacer {
+				visibility: hidden;
+				font-weight: 600;
+				color: #555;
+				margin-right: 5px;
+				line-height: 1.2;
+				min-height: 1.2em;
+				white-space: nowrap;
+			}
+			.sell-price-edit-fields .btn-cut {
+				width: 120px;
+				box-sizing: border-box;
+				text-align: center;
+			}
+			.sell-price-edit-gap-with-actions {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: flex-end;
+				gap: 12px;
+			}
+			.sell-price-edit-gap-with-actions > div:first-child {
+				display: flex;
+				flex-direction: column;
+				align-items: flex-start;
+				gap: 2px;
+			}
+			.sell-price-edit-gap-with-actions .sell-price-edit-buttons {
+				display: flex;
+				gap: 10px;
+				align-items: center;
+			}
+			.btn-cut {
+				background: #c0392b;
+				color: #fff;
+				border: none;
+				padding: 6px 10px;
+				border-radius: 4px;
+				font-size: 14px;
+				font-weight: 700;
+				cursor: pointer;
+			}
+			.btn-cut:hover {
+				background: #a93226;
+			}
+			.btn-cut:disabled {
+				opacity: 0.6;
+				cursor: not-allowed;
+			}
 			.btn-apply-sell-price {
 				background: #667eea;
 				color: white;
@@ -745,6 +810,33 @@
 					padding: 4px 10px;
 					font-size: 12px;
 					white-space: nowrap;
+				}
+				.sell-price-edit-form--with-cut {
+					flex-direction: column;
+					flex-wrap: wrap;
+					align-items: stretch;
+				}
+				/* Override .sell-price-edit-form > div so fields stay one horizontal flow */
+				.sell-price-edit-form--with-cut > .sell-price-edit-fields {
+					display: flex;
+					flex-direction: row;
+					flex-wrap: wrap;
+					align-items: flex-end;
+					gap: 8px;
+				}
+				.sell-price-edit-fields .btn-cut {
+					width: 60px;
+					min-width: 60px;
+					max-width: 60px;
+					padding: 4px 6px;
+					font-size: 12px;
+				}
+				.sell-price-edit-gap-with-actions {
+					flex-direction: row;
+					flex-wrap: wrap;
+					align-items: flex-end;
+					gap: 8px;
+					width: 100%;
 				}
 			}
 
@@ -1427,7 +1519,7 @@
 			const profitClass = getProfitClass(item.profit_rate);
 			const rmndQty = item.rmnd_qty || '0';
 			return `
-				<tr data-row-id="${rowId}" data-stock-code="${item.stock_code}" data-stock-name="${item.stock_name}" data-preset-price="${item.preset_sell_price}" data-avg-buy-price="${item.avg_buy_price}" onclick="selectRow(this)">
+				<tr data-row-id="${rowId}" data-account="${item.account}" data-stock-code="${item.stock_code}" data-stock-name="${item.stock_name}" data-preset-price="${item.preset_sell_price}" data-avg-buy-price="${item.avg_buy_price}" onclick="selectRow(this)">
 					<td>${item.account}</td>
 					<td><strong>${item.stock_code}</strong></td>
 					<td>${item.stock_name}</td>
@@ -1517,6 +1609,7 @@
 				// Toggle: if already showing, hide it
 				existingEditArea.remove();
 			} else {
+				const accountForCut = rowElement.getAttribute('data-account') || (rowElement.querySelector('td') && rowElement.querySelector('td').textContent.trim()) || '';
 				// Create new edit area
 				const editArea = document.createElement('tr');
 				editArea.className = 'sell-price-edit-area show';
@@ -1525,7 +1618,6 @@
 				let sellPriceFromAPI = '';
 				let sellgap = '';
 				let sellrateFromAPI = '';
-				let bamount = '';
 				let yyyymmddFromAPI = '';
 				fetch('./api/interested-stocks?t=' + Date.now())
 					.then(response => response.json())
@@ -1535,7 +1627,6 @@
 							sellPriceFromAPI = result.data[stockCode].sellprice || result.data[stockCode].sell_price || result.data[stockCode].price || '';
 							sellgap = result.data[stockCode].sellgap || '';
 							sellrateFromAPI = result.data[stockCode].sellrate || '';
-							bamount = result.data[stockCode].bamount || '';
 							yyyymmddFromAPI = result.data[stockCode].yyyymmdd || '';
 						}
 						
@@ -1548,7 +1639,8 @@
 						// Create edit form
 						editArea.innerHTML = `
 							<td colspan="7">
-								<div class="sell-price-edit-form">
+								<div class="sell-price-edit-form sell-price-edit-form--with-cut">
+									<div class="sell-price-edit-fields">
 									<input type="hidden" id="edit-yyyymmdd-${stockCode}" value="${ymdVal}">
 									<div>
 										<label>Sell Price:</label>
@@ -1558,17 +1650,24 @@
 										<label>Sell Rate (%):</label>
 										<input type="number" id="edit-sell-rate-${stockCode}" placeholder="Rate" step="0.01" value="${finalSellRate || ''}">
 									</div>
-									<div>
-										<label>Sell Gap:</label>
-										<input type="number" id="edit-sell-gap-${stockCode}" placeholder="Gap" step="0.01" value="${sellgap || ''}">
+									<div class="sell-price-edit-gap-with-actions">
+										<div>
+											<label>Sell Gap:</label>
+											<input type="number" id="edit-sell-gap-${stockCode}" placeholder="Gap" step="0.01" value="${sellgap || ''}">
+										</div>
+										<div class="sell-price-edit-buttons">
+											<button class="btn-apply-sell-price" onclick="applySellPriceEdit('${stockCode}', '${stockName}')">Apply</button>
+											<button class="btn-cancel-sell-price" onclick="cancelSellPriceEdit('${stockCode}')">Cancel</button>
+										</div>
 									</div>
 									<div>
-										<label>BAmount:</label>
-										<input type="number" id="edit-bamount-${stockCode}" placeholder="BAmount" step="1" value="${bamount || ''}">
+										<label class="sell-price-edit-field-spacer" aria-hidden="true">&nbsp;</label>
+										<input type="number" id="edit-cut-amount-${stockCode}" placeholder="금액" step="1" min="1" aria-label="손절 금액 (원)">
 									</div>
-									<div class="sell-price-edit-buttons">
-										<button class="btn-apply-sell-price" onclick="applySellPriceEdit('${stockCode}', '${stockName}')">Apply</button>
-										<button class="btn-cancel-sell-price" onclick="cancelSellPriceEdit('${stockCode}')">Cancel</button>
+									<div>
+										<label class="sell-price-edit-field-spacer" aria-hidden="true">&nbsp;</label>
+										<button type="button" class="btn-cut" id="edit-cut-btn-${stockCode}">CUT</button>
+									</div>
 									</div>
 								</div>
 							</td>
@@ -1581,7 +1680,6 @@
 						const priceInput = document.getElementById(`edit-sell-price-${stockCode}`);
 						const rateInput = document.getElementById(`edit-sell-rate-${stockCode}`);
 						const gapInput = document.getElementById(`edit-sell-gap-${stockCode}`);
-						const bamountInput = document.getElementById(`edit-bamount-${stockCode}`);
 						
 						if (priceInput) {
 							priceInput.addEventListener('click', function() { this.select(); });
@@ -1595,10 +1693,7 @@
 							gapInput.addEventListener('click', function() { this.select(); });
 							gapInput.addEventListener('focus', function() { this.select(); });
 						}
-						if (bamountInput) {
-							bamountInput.addEventListener('click', function() { this.select(); });
-							bamountInput.addEventListener('focus', function() { this.select(); });
-						}
+						bindStopLossCutControls(stockCode, stockName, accountForCut);
 					})
 					.catch(error => {
 						console.error('Error fetching sellgap and sellrate:', error);
@@ -1607,7 +1702,8 @@
 						const fallbackSellPrice = (sellPrice && sellPrice !== '-') ? sellPrice : '';
 						editArea.innerHTML = `
 							<td colspan="7">
-								<div class="sell-price-edit-form">
+								<div class="sell-price-edit-form sell-price-edit-form--with-cut">
+									<div class="sell-price-edit-fields">
 									<input type="hidden" id="edit-yyyymmdd-${stockCode}" value="">
 									<div>
 										<label>Sell Price:</label>
@@ -1617,17 +1713,24 @@
 										<label>Sell Rate (%):</label>
 										<input type="number" id="edit-sell-rate-${stockCode}" placeholder="Rate" step="0.01" value="${sellRate || ''}">
 									</div>
-									<div>
-										<label>Sell Gap:</label>
-										<input type="number" id="edit-sell-gap-${stockCode}" placeholder="Gap" step="0.01" value="">
+									<div class="sell-price-edit-gap-with-actions">
+										<div>
+											<label>Sell Gap:</label>
+											<input type="number" id="edit-sell-gap-${stockCode}" placeholder="Gap" step="0.01" value="">
+										</div>
+										<div class="sell-price-edit-buttons">
+											<button class="btn-apply-sell-price" onclick="applySellPriceEdit('${stockCode}', '${stockName}')">Apply</button>
+											<button class="btn-cancel-sell-price" onclick="cancelSellPriceEdit('${stockCode}')">Cancel</button>
+										</div>
 									</div>
 									<div>
-										<label>BAmount:</label>
-										<input type="number" id="edit-bamount-${stockCode}" placeholder="BAmount" step="1" value="">
+										<label class="sell-price-edit-field-spacer" aria-hidden="true">&nbsp;</label>
+										<input type="number" id="edit-cut-amount-${stockCode}" placeholder="금액" step="1" min="1" aria-label="손절 금액 (원)">
 									</div>
-									<div class="sell-price-edit-buttons">
-										<button class="btn-apply-sell-price" onclick="applySellPriceEdit('${stockCode}', '${stockName}')">Apply</button>
-										<button class="btn-cancel-sell-price" onclick="cancelSellPriceEdit('${stockCode}')">Cancel</button>
+									<div>
+										<label class="sell-price-edit-field-spacer" aria-hidden="true">&nbsp;</label>
+										<button type="button" class="btn-cut" id="edit-cut-btn-${stockCode}">CUT</button>
+									</div>
 									</div>
 								</div>
 							</td>
@@ -1638,7 +1741,6 @@
 						const priceInput = document.getElementById(`edit-sell-price-${stockCode}`);
 						const rateInput = document.getElementById(`edit-sell-rate-${stockCode}`);
 						const gapInput = document.getElementById(`edit-sell-gap-${stockCode}`);
-						const bamountInput = document.getElementById(`edit-bamount-${stockCode}`);
 						
 						if (priceInput) {
 							priceInput.addEventListener('click', function() { this.select(); });
@@ -1652,10 +1754,7 @@
 							gapInput.addEventListener('click', function() { this.select(); });
 							gapInput.addEventListener('focus', function() { this.select(); });
 						}
-						if (bamountInput) {
-							bamountInput.addEventListener('click', function() { this.select(); });
-							bamountInput.addEventListener('focus', function() { this.select(); });
-						}
+						bindStopLossCutControls(stockCode, stockName, accountForCut);
 					});
 			}
 		}
@@ -2971,6 +3070,7 @@
 				// Toggle: if already showing, hide it
 				existingEditArea.remove();
 			} else {
+				const accountForCut = '';
 				// Create new edit area
 				const editArea = document.createElement('tr');
 				editArea.className = 'sell-price-edit-area show';
@@ -2979,7 +3079,6 @@
 				let sellPriceFromAPI = '';
 				let sellgap = '';
 				let sellrateFromAPI = '';
-				let bamount = '';
 				let yyyymmddFromAPI = '';
 				fetch('./api/interested-stocks?t=' + Date.now())
 					.then(response => response.json())
@@ -2989,7 +3088,6 @@
 							sellPriceFromAPI = result.data[stockCode].sellprice || result.data[stockCode].sell_price || result.data[stockCode].price || '';
 							sellgap = result.data[stockCode].sellgap || '';
 							sellrateFromAPI = result.data[stockCode].sellrate || '';
-							bamount = result.data[stockCode].bamount || '';
 							yyyymmddFromAPI = result.data[stockCode].yyyymmdd || '';
 						}
 						
@@ -3002,7 +3100,8 @@
 						// Create edit form
 						editArea.innerHTML = `
 							<td colspan="7">
-								<div class="sell-price-edit-form">
+								<div class="sell-price-edit-form sell-price-edit-form--with-cut">
+									<div class="sell-price-edit-fields">
 									<input type="hidden" id="edit-yyyymmdd-${stockCode}" value="${ymdVal}">
 									<div>
 										<label>Sell Price:</label>
@@ -3012,17 +3111,24 @@
 										<label>Sell Rate (%):</label>
 										<input type="number" id="edit-sell-rate-${stockCode}" placeholder="Rate" step="0.01" value="${finalSellRate || ''}">
 									</div>
-									<div>
-										<label>Sell Gap:</label>
-										<input type="number" id="edit-sell-gap-${stockCode}" placeholder="Gap" step="0.01" value="${sellgap || ''}">
+									<div class="sell-price-edit-gap-with-actions">
+										<div>
+											<label>Sell Gap:</label>
+											<input type="number" id="edit-sell-gap-${stockCode}" placeholder="Gap" step="0.01" value="${sellgap || ''}">
+										</div>
+										<div class="sell-price-edit-buttons">
+											<button class="btn-apply-sell-price" onclick="applySellPriceEdit('${stockCode}', '${stockName}')">Apply</button>
+											<button class="btn-cancel-sell-price" onclick="cancelSellPriceEdit('${stockCode}')">Cancel</button>
+										</div>
 									</div>
 									<div>
-										<label>BAmount:</label>
-										<input type="number" id="edit-bamount-${stockCode}" placeholder="BAmount" step="1" value="${bamount || ''}">
+										<label class="sell-price-edit-field-spacer" aria-hidden="true">&nbsp;</label>
+										<input type="number" id="edit-cut-amount-${stockCode}" placeholder="금액" step="1" min="1" aria-label="손절 금액 (원)">
 									</div>
-									<div class="sell-price-edit-buttons">
-										<button class="btn-apply-sell-price" onclick="applySellPriceEdit('${stockCode}', '${stockName}')">Apply</button>
-										<button class="btn-cancel-sell-price" onclick="cancelSellPriceEdit('${stockCode}')">Cancel</button>
+									<div>
+										<label class="sell-price-edit-field-spacer" aria-hidden="true">&nbsp;</label>
+										<button type="button" class="btn-cut" id="edit-cut-btn-${stockCode}">CUT</button>
+									</div>
 									</div>
 								</div>
 							</td>
@@ -3035,7 +3141,6 @@
 						const priceInput = document.getElementById(`edit-sell-price-${stockCode}`);
 						const rateInput = document.getElementById(`edit-sell-rate-${stockCode}`);
 						const gapInput = document.getElementById(`edit-sell-gap-${stockCode}`);
-						const bamountInput = document.getElementById(`edit-bamount-${stockCode}`);
 						
 						if (priceInput) {
 							priceInput.addEventListener('click', function() { this.select(); });
@@ -3049,10 +3154,7 @@
 							gapInput.addEventListener('click', function() { this.select(); });
 							gapInput.addEventListener('focus', function() { this.select(); });
 						}
-						if (bamountInput) {
-							bamountInput.addEventListener('click', function() { this.select(); });
-							bamountInput.addEventListener('focus', function() { this.select(); });
-						}
+						bindStopLossCutControls(stockCode, stockName, accountForCut);
 					})
 					.catch(error => {
 						console.error('Error fetching sellgap and sellrate:', error);
@@ -3061,7 +3163,8 @@
 						const fallbackSellPrice = (sellPrice && sellPrice !== '-') ? sellPrice : '';
 						editArea.innerHTML = `
 							<td colspan="7">
-								<div class="sell-price-edit-form">
+								<div class="sell-price-edit-form sell-price-edit-form--with-cut">
+									<div class="sell-price-edit-fields">
 									<input type="hidden" id="edit-yyyymmdd-${stockCode}" value="">
 									<div>
 										<label>Sell Price:</label>
@@ -3071,17 +3174,24 @@
 										<label>Sell Rate (%):</label>
 										<input type="number" id="edit-sell-rate-${stockCode}" placeholder="Rate" step="0.01" value="${sellRate || ''}">
 									</div>
-									<div>
-										<label>Sell Gap:</label>
-										<input type="number" id="edit-sell-gap-${stockCode}" placeholder="Gap" step="0.01" value="">
+									<div class="sell-price-edit-gap-with-actions">
+										<div>
+											<label>Sell Gap:</label>
+											<input type="number" id="edit-sell-gap-${stockCode}" placeholder="Gap" step="0.01" value="">
+										</div>
+										<div class="sell-price-edit-buttons">
+											<button class="btn-apply-sell-price" onclick="applySellPriceEdit('${stockCode}', '${stockName}')">Apply</button>
+											<button class="btn-cancel-sell-price" onclick="cancelSellPriceEdit('${stockCode}')">Cancel</button>
+										</div>
 									</div>
 									<div>
-										<label>BAmount:</label>
-										<input type="number" id="edit-bamount-${stockCode}" placeholder="BAmount" step="1" value="">
+										<label class="sell-price-edit-field-spacer" aria-hidden="true">&nbsp;</label>
+										<input type="number" id="edit-cut-amount-${stockCode}" placeholder="금액" step="1" min="1" aria-label="손절 금액 (원)">
 									</div>
-									<div class="sell-price-edit-buttons">
-										<button class="btn-apply-sell-price" onclick="applySellPriceEdit('${stockCode}', '${stockName}')">Apply</button>
-										<button class="btn-cancel-sell-price" onclick="cancelSellPriceEdit('${stockCode}')">Cancel</button>
+									<div>
+										<label class="sell-price-edit-field-spacer" aria-hidden="true">&nbsp;</label>
+										<button type="button" class="btn-cut" id="edit-cut-btn-${stockCode}">CUT</button>
+									</div>
 									</div>
 								</div>
 							</td>
@@ -3092,7 +3202,6 @@
 						const priceInput = document.getElementById(`edit-sell-price-${stockCode}`);
 						const rateInput = document.getElementById(`edit-sell-rate-${stockCode}`);
 						const gapInput = document.getElementById(`edit-sell-gap-${stockCode}`);
-						const bamountInput = document.getElementById(`edit-bamount-${stockCode}`);
 						
 						if (priceInput) {
 							priceInput.addEventListener('click', function() { this.select(); });
@@ -3106,10 +3215,7 @@
 							gapInput.addEventListener('click', function() { this.select(); });
 							gapInput.addEventListener('focus', function() { this.select(); });
 						}
-						if (bamountInput) {
-							bamountInput.addEventListener('click', function() { this.select(); });
-							bamountInput.addEventListener('focus', function() { this.select(); });
-						}
+						bindStopLossCutControls(stockCode, stockName, accountForCut);
 					});
 			}
 		}
@@ -4007,12 +4113,76 @@
 			}
 		}
 
-		
+		function bindStopLossCutControls(stockCode, stockName, account) {
+			const btn = document.getElementById(`edit-cut-btn-${stockCode}`);
+			const amt = document.getElementById(`edit-cut-amount-${stockCode}`);
+			if (!btn || !amt) return;
+			btn.addEventListener('click', function () {
+				executeStopLossCut(stockCode, stockName, account);
+			});
+			amt.addEventListener('focus', function () { this.select(); });
+			amt.addEventListener('click', function () { this.select(); });
+		}
+
+		async function executeStopLossCut(stockCode, stockName, account) {
+			const amtEl = document.getElementById(`edit-cut-amount-${stockCode}`);
+			const btn = document.getElementById(`edit-cut-btn-${stockCode}`);
+			if (!amtEl || !btn) return;
+			const raw = String(amtEl.value || '').trim();
+			const amount = parseFloat(raw.replace(/,/g, ''));
+			if (!account) {
+				showMessage('계좌 정보가 없습니다. 보유 종목 행에서 CUT을 사용하세요.', 'error');
+				return;
+			}
+			if (!amount || amount <= 0 || !isFinite(amount)) {
+				showMessage('손절 금액을 올바르게 입력하세요.', 'error');
+				return;
+			}
+			btn.disabled = true;
+			try {
+				const res = await fetch('./api/stop-loss-cut', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					credentials: 'same-origin',
+					body: JSON.stringify({
+						stock_code: stockCode,
+						stock_name: stockName || null,
+						account: account,
+						stop_loss_amount: amount
+					})
+				});
+				let data = {};
+				try {
+					data = await res.json();
+				} catch (e) {
+					data = {};
+				}
+				if (res.status === 401) {
+					const loginPath = window.location.pathname.includes('/stock') ? '/stock/login' : '/login';
+					window.location.href = loginPath;
+					return;
+				}
+				if (data.status === 'success') {
+					showMessage(data.message || 'CUT 완료', 'success');
+					const editArea = document.querySelector(`#edit-sell-price-${stockCode}`) && document.querySelector(`#edit-sell-price-${stockCode}`).closest('.sell-price-edit-area');
+					if (editArea) editArea.remove();
+					if (typeof updateTable === 'function') updateTable();
+					if (typeof updateInterestedStocks === 'function') updateInterestedStocks();
+				} else {
+					showMessage(data.message || 'CUT 실패', 'error');
+				}
+			} catch (e) {
+				console.error(e);
+				showMessage('CUT 요청 오류: ' + e.message, 'error');
+			} finally {
+				btn.disabled = false;
+			}
+		}
+
 		function applySellPriceEdit(stockCode, stockName) {
 			const sellPrice = document.getElementById(`edit-sell-price-${stockCode}`).value.trim();
 			const sellRate = document.getElementById(`edit-sell-rate-${stockCode}`).value.trim();
 			const sellgap = document.getElementById(`edit-sell-gap-${stockCode}`).value.trim();
-			const bamount = document.getElementById(`edit-bamount-${stockCode}`).value.trim();
 			const yyyymmddEl = document.getElementById(`edit-yyyymmdd-${stockCode}`);
 			const yyyymmdd = yyyymmddEl ? yyyymmddEl.value.trim() : '';
 			
@@ -4022,8 +4192,7 @@
 				stock_name: stockName || null,
 				sellprice: sellPrice || '0',
 				sellrate: sellRate || '0',
-				sellgap: sellgap || '0',
-				bamount: bamount || null
+				sellgap: sellgap || '0'
 			};
 			if (yyyymmdd && yyyymmdd.length === 8) {
 				requestData.yyyymmdd = yyyymmdd;

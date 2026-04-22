@@ -588,11 +588,10 @@ def get_low_after_high(stk_cd, stk_nm, chart):
     return low_price, low_time
 
 last_get_bun_time = {}
-last_cl_price = {}
 
 
 def calculate_sell_price(ACCT, MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk_nm):
-    global bun_prices, last_get_bun_time, last_cl_price
+    global bun_prices, last_get_bun_time
 
     ord_uv = 0
     if 'sellprice' in sell_cond:
@@ -608,23 +607,17 @@ def calculate_sell_price(ACCT, MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk
         s_price = round_trunc(s_price)
         if s_price <= pur_pric:
             return 0
+        log_print(ACCT, stk_cd, f'calculate_sell_price rate return {s_price}')
         return s_price
 
     sellgap = float(sell_cond.get('sellgap', '0.0')) / 100.
     if sellgap != 0.0 :
-        if stk_cd in last_get_bun_time:
-            last_bun_time = last_get_bun_time[stk_cd]
-            seconds = (now - last_bun_time).total_seconds()
-            if seconds < 15 :
-                if stk_cd in last_cl_price:
-                    return last_cl_price.get(stk_cd, 0)
-
         try:
             if not stk_cd in gap_prices:
                 gap_prices[stk_cd] = get_gap_price(MY_ACCESS_TOKEN, stk_cd, stk_nm)
             gap_price = gap_prices[stk_cd]
         except Exception as e1:
-            log_print('', stk_cd, f' get_gap_price gen Error {e1}')
+            log_print('', stk_cd, f'calculate_sell_price get_gap_price gen Error {e1}')
             return 0
         #log_print(ACCT, stk_cd, f' before get_low_after_high')
         last_get_bun_time[stk_cd] = now
@@ -637,7 +630,7 @@ def calculate_sell_price(ACCT, MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk
         except:
             pass
         if bun_chart is None:
-            log_print('', stk_cd, f' before get_low_after_high, bun_chart is None, return 0')
+            log_print('', stk_cd, f'calculate_sell_price before get_low_after_high, bun_chart is None, return 0')
             return 0 # if bun_chart is not queried yet, return pric 0
             # bun_chart = get_bun_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm)
 
@@ -646,16 +639,15 @@ def calculate_sell_price(ACCT, MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk
         if lowest != 0 :
             gap = float(gap_price['gap']) * 2
             cl_price = round_trunc(int(lowest + gap * sellgap))
-            last_cl_price[stk_cd] = cl_price
             log_print('', stk_cd, f' cl_price is {cl_price}, gap={gap}, lowest={lowest}, gaprate={sellgap}')
             pp101 = round_trunc(int(pur_pric * 1.01))
             if cl_price < pp101 :
                 cl_price = pp101
-                log_print('', stk_cd, f' set cl_price is to pp101={pp101}')
-            log_print('', stk_cd, f' return cl_price {cl_price}')
+                log_print('', stk_cd, f'calculate_sell_price set cl_price is to pp101={pp101}')
+            log_print('', stk_cd, f'calculate_sell_price return cl_price {cl_price}')
             return cl_price
 
-    log_print('', stk_cd, f' calculate_sell_price returns 0')
+    log_print('', stk_cd, f'calculate_sell_price at last returns 0')
     return 0
 
 
@@ -671,7 +663,7 @@ def call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_co
 
     try:
         sell_price = calculate_sell_price(ACCT, MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk_nm)
-        log_print(ACCT, stk_cd, f' Got sell_price = {sell_price}')
+        log_print(ACCT, stk_cd, f'674 calculate_sell_price = {sell_price}')
         if sell_price == 0: # price is not calculated
             return
     except Exception as ex:
@@ -1285,7 +1277,7 @@ def daily_work():
     stored_jango_data = new_jango_data
     if is_between(now, nxt_start_time, nxt_end_time):
         current_status = 'NXT'
-        sell_jango(stored_jango_data, 'SOR')
+        sell_jango(stored_jango_data, 'NXT')
         buy_cl(now, 'NXT')
     elif is_between(now, nxt_end_time, krx_start_time): # NXT 끝나고 KRX 시작 전
         current_status = 'NXT->KRX'
@@ -1728,11 +1720,13 @@ bun_charts_thread_stop_event = threading.Event()
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def query_bun_charts(MY_ACCESS_TOKEN, cl_stocks):
+    if not cl_stocks:
+        return
     bun_now = datetime.now()
     for stk_cd, stk_nm in cl_stocks:
         bun_times[stk_cd] = bun_now
     # Query minutes charts in parallel (limit to 4 simultaneous threads)
-    max_workers = min(4, len(cl_stocks))
+    max_workers = 4 # min(4, len(cl_stocks))
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {}
         for stk_cd, stk_nm in cl_stocks:
@@ -1755,6 +1749,8 @@ def query_bun_charts(MY_ACCESS_TOKEN, cl_stocks):
 
 
 def query_day_charts(MY_ACCESS_TOKEN, cl_stocks):
+    if not cl_stocks:
+        return
     max_workers = min(4, len(cl_stocks))
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {}
@@ -2451,6 +2447,286 @@ async def cancel_order_api(request: dict, proxy_path: str = "", token: str = Coo
         return {"status": "error", "message": str(e)}
 
 
+# 손절(CUT): 주당 손실(매수가 대비 현재가 + 매도 수수료 0.23%) 계산에 사용
+CUT_TRADING_FEE_RATE = 0.0023
+
+
+def cancel_all_buy_sell_orders_for_stock(stk_cd: str):
+    """모든 계좌에서 해당 종목의 미체결 +매수 / -매도 주문을 취소한다."""
+    global stored_miche_data, jango_token
+    now = datetime.now()
+    stk_norm = _normalize_stk_cd(stk_cd)
+    results = []
+    stex_resolve = {"1": "KRX", "2": "NXT", "3": "SOR"}
+    if not isinstance(stored_miche_data, dict):
+        return results
+    for ACCT, miche in list(stored_miche_data.items()):
+        if not isinstance(miche, dict) or "oso" not in miche:
+            continue
+        oso = miche.get("oso") or []
+        access_token = jango_token.get(ACCT)
+        if not access_token:
+            continue
+        for m in oso:
+            try:
+                mstk = _normalize_stk_cd(m.get("stk_cd", ""))
+                if mstk != stk_norm:
+                    continue
+                io_nm = (m.get("io_tp_nm") or "").strip()
+                if io_nm not in ("+매수", "-매도"):
+                    continue
+                ord_no = str(m.get("ord_no") or "").strip()
+                if not ord_no or not ord_no.lstrip("0"):
+                    continue
+                stex = (m.get("stex_tp_txt") or "").strip().upper()
+                if stex not in ("KRX", "NXT", "SOR"):
+                    stex_tp = (m.get("stex_tp") or "").strip()
+                    stex = stex_resolve.get(stex_tp, "SOR")
+                log_print(ACCT, stk_norm, "cancel_all_buy_sell_orders_for_stock {} ord_no={}".format(io_nm, ord_no))
+                r = cancel_order_main(ACCT, now, access_token, stex, ord_no, stk_norm)
+                results.append({"account": ACCT, "ord_no": ord_no, "side": io_nm, "result": r})
+            except Exception as ex:
+                log_print(ACCT, stk_norm, "cancel_all_buy_sell_orders_for_stock error: {}".format(ex))
+                results.append({"account": ACCT, "error": str(ex)})
+    return results
+
+
+def _parse_qty_str(qty_raw):
+    """format_account_data 와 동일한 방식으로 잔고 수량 문자열을 정수로 변환."""
+    if qty_raw is None:
+        return 0
+    s = str(qty_raw).strip()
+    try:
+        if s and len(s) > 4:
+            return int(s[4:].lstrip("0") or "0")
+        return int(s.lstrip("0") or "0")
+    except (ValueError, TypeError):
+        return 0
+
+
+def _find_holding_indv_for_cut(acct_no: str, stk_cd_norm: str, jango_snapshot: dict):
+    """잔고 스냅샷에서 계좌·종목에 해당하는 한 줄을 찾는다."""
+    if not isinstance(jango_snapshot, dict):
+        return None
+    acct_jango = jango_snapshot.get(acct_no)
+    if not isinstance(acct_jango, dict):
+        return None
+    # Some responses use int 0, others string "0"/"0000"/"200"
+    if not _is_success_return_code(acct_jango.get("return_code")):
+        return None
+    rows = acct_jango.get("acnt_evlt_remn_indv_tot") or []
+    for indv in rows:
+        if _normalize_stk_cd(indv.get("stk_cd", "")) == stk_cd_norm:
+            return indv
+    return None
+
+
+@app.post("/api/stop-loss-cut")
+@app.post("/{proxy_path:path}/api/stop-loss-cut")
+async def stop_loss_cut_api(request: dict, proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
+    """
+    손절(CUT) 단일 API:
+    1) sell price / sell rate / sell gap 을 0으로 저장
+    2) 해당 종목 미체결 매수·매도 주문 취소
+    3) 손절 금액·매수가·현재가·수수료 0.23% 로 매도 수량 산출 후 지정가 매도
+    """
+    global stored_miche_data, old_sel_price, interested_stocks, interested_stocks_lock
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    try:
+        stock_code_raw = (request.get("stock_code") or "").strip()
+        stock_name = (request.get("stock_name") or "").strip()
+        try:
+            stop_loss_amount = float(request.get("stop_loss_amount"))
+        except (TypeError, ValueError):
+            stop_loss_amount = 0.0
+
+        if not stock_code_raw:
+            return {"status": "error", "message": "stock_code is required"}
+        if stop_loss_amount <= 0:
+            return {"status": "error", "message": "stop_loss_amount must be positive"}
+
+        stk_cd_norm = _normalize_stk_cd(stock_code_raw)
+
+        # 최신 미체결·잔고(토큰 갱신 포함)
+        stored_miche_data = get_miche()
+        jango_snapshot = get_jango("KRX")
+
+        # 1) 매도 규칙만 0으로 (stime·bamount 등 기존 필드는 유지)
+        with interested_stocks_lock:
+            if stk_cd_norm in interested_stocks:
+                st = interested_stocks[stk_cd_norm]
+                nm = stock_name.strip() if stock_name else ""
+                if nm:
+                    st["stock_name"] = nm
+                elif "stock_name" not in st or not st.get("stock_name"):
+                    st["stock_name"] = get_stockinfo(stk_cd_norm).get("name", "")
+                st["sellprice"] = "0"
+                st["sellrate"] = 0.0
+                st["sellgap"] = "0"
+                if not save_interested_stocks_to_json():
+                    return {"status": "error", "message": "Failed to save interested stocks (sell settings)"}
+
+        # 2) 미체결 매수·매도 취소
+        cancel_results = cancel_all_buy_sell_orders_for_stock(stk_cd_norm)
+
+        # 3) 모든 계좌에 동일하게 CUT 적용
+        per_account_results = []
+        any_success = False
+        attempted_accounts = 0
+        target_accounts = list(key_list.keys())
+        for account in target_accounts:
+            indv = _find_holding_indv_for_cut(account, stk_cd_norm, jango_snapshot)
+            if not indv:
+                per_account_results.append({
+                    "account": account,
+                    "status": "skipped",
+                    "message": "No holding row for account/stock",
+                })
+                continue
+
+            pur_pric_str = indv.get("pur_pric", "0")
+            try:
+                pur_pric = float(pur_pric_str) if pur_pric_str else 0.0
+            except (ValueError, TypeError):
+                pur_pric = 0.0
+
+            cur_prc = int(indv.get("cur_prc", "0") or "0")
+            if cur_prc < 0:
+                cur_prc = -cur_prc
+            cur_prc_f = float(cur_prc)
+            trde_able = _parse_qty_str(indv.get("trde_able_qty", "0"))
+            stk_nm = (indv.get("stk_nm") or stock_name or "").strip()
+
+            if pur_pric <= 0 or cur_prc_f <= 0:
+                per_account_results.append({
+                    "account": account,
+                    "status": "error",
+                    "message": "Invalid average buy price or current price in holdings",
+                })
+                continue
+            if trde_able <= 0:
+                per_account_results.append({
+                    "account": account,
+                    "status": "skipped",
+                    "message": "Tradeable quantity is 0",
+                })
+                continue
+
+            # 주당 손절비용(원): (매수가-현재가) + (현재가*수수료)
+            # N = 목표 손절액 / 주당 손절비용
+            loss_per_share = (pur_pric - cur_prc_f) + (cur_prc_f * CUT_TRADING_FEE_RATE)
+            if loss_per_share <= 0:
+                per_account_results.append({
+                    "account": account,
+                    "status": "skipped",
+                    "message": "Computed loss per share is not positive",
+                    "pur_pric": pur_pric,
+                    "cur_prc": cur_prc_f,
+                    "loss_per_share": loss_per_share,
+                })
+                continue
+
+            qty_raw = int(stop_loss_amount // loss_per_share)
+            qty = min(qty_raw, trde_able)
+            if qty <= 0:
+                per_account_results.append({
+                    "account": account,
+                    "status": "skipped",
+                    "message": "Computed sell quantity is 0",
+                    "loss_per_share": loss_per_share,
+                    "tradeable_qty": trde_able,
+                })
+                continue
+
+            access_token = jango_token.get(account)
+            if not access_token:
+                per_account_results.append({
+                    "account": account,
+                    "status": "error",
+                    "message": "Unable to resolve access token for account",
+                })
+                continue
+
+            # 손절 계산 후, 이미 확보한 현재가(cur_prc) 기준 지정가(호가단위 반영)로 매도
+            cut_sell_price = round_trunc(cur_prc)
+            if cut_sell_price <= 0:
+                per_account_results.append({
+                    "account": account,
+                    "status": "error",
+                    "message": "Invalid cut sell price",
+                })
+                continue
+
+            attempted_accounts += 1
+            ret_status = sell_order(
+                access_token,
+                dmst_stex_tp="SOR",
+                stk_cd=stk_cd_norm,
+                ord_qty=str(qty),
+                ord_uv=str(cut_sell_price),
+                trde_tp="0",
+                cond_uv="",
+            )
+            log_print(
+                account,
+                stk_cd_norm,
+                "stop_loss_cut limit sell_order price={} qty={} ret={}".format(cut_sell_price, qty, ret_status),
+            )
+
+            ok_sell = False
+            if isinstance(ret_status, dict):
+                ok_sell = _is_success_return_code(ret_status.get("return_code"))
+            if ok_sell:
+                any_success = True
+
+            per_account_results.append({
+                "account": account,
+                "status": "success" if ok_sell else "error",
+                "message": "CUT order placed" if ok_sell else (ret_status.get("return_msg") if isinstance(ret_status, dict) else "Sell order failed"),
+                "stop_loss_amount": stop_loss_amount,
+                "loss_per_share": loss_per_share,
+                "requested_qty": qty_raw,
+                "sell_qty": qty,
+                "tradeable_qty": trde_able,
+                "pur_pric": pur_pric,
+                "cur_prc": cur_prc_f,
+                "cut_sell_price": cut_sell_price,
+                "sell_order_type": "limit",
+                "sell_result": ret_status,
+                "stock_name": stk_nm,
+            })
+
+        if attempted_accounts == 0:
+            return {
+                "status": "error",
+                "message": "손절 대상을 가진 계정이 없습니다.",
+                "data": {
+                    "settings_cleared": True,
+                    "cancelled_orders": cancel_results,
+                    "per_account": per_account_results,
+                },
+            }
+
+        return {
+            "status": "success" if any_success else "error",
+            "message": "CUT applied to all accounts",
+            "data": {
+                "settings_cleared": True,
+                "cancelled_orders": cancel_results,
+                "target_accounts": target_accounts,
+                "attempted_accounts": attempted_accounts,
+                "per_account": per_account_results,
+            },
+        }
+    except Exception as e:
+        traceback.print_exc()
+        return {"status": "error", "message": str(e)}
+
+
 def cancel_related_buy_order(stk_cd):
     global stored_miche_data, jango_token
     now = datetime.now()
@@ -2578,10 +2854,10 @@ async def buy_order_api(request: dict, proxy_path: str = "", token: str = Cookie
         ord_qty = ord_amount // ord_uv
         accounts = request.get('accounts', [])  # List of accounts
 
-        stex = 'SOR' # 20260409
-        #stex = active_market()
-        #if stex == '':
-        #    return {"status": "error", "message": "Market is not active."}
+        #stex = 'SOR' # 20260409 this make many problems
+        stex = active_market()
+        if stex == '':
+            return {"status": "error", "message": "Market is not active."}
 
         trde_tp = '0'
 
