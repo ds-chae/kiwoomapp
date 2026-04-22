@@ -2797,9 +2797,9 @@ def active_market():
         return 'NXT'
     if is_between(now, nxt_end_time, krx_start_time):  # NXT 끝나고 KRX 시작 전
         return ''
-    if is_between(now, krx_start_time, krx_end_time):
+    if is_between(now, krx_start_time, krx_end_time_1531):
         return 'KRX'
-    if is_between(now, krx_end_time, nxt_fin_time):  # KRX 거래소 시작시간과 NXT 종료 시간 사이
+    if is_between(now, krx_end_time_1531, nxt_fin_time_2000):  # KRX 거래소 시작시간과 NXT 종료 시간 사이
         return 'NXT'
     return ''
 
