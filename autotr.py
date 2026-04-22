@@ -683,7 +683,7 @@ def call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_co
     # 팔 게 없으면 리턴, 이것을 앞으로 옮기면 큰 일 난다. 취소가 발생하지 않는 문제 발생. 따라서 앞으로 이동하지 말것
     trde_able_qty_int = int(trde_able_qty) if trde_able_qty else 0
     if trde_able_qty_int == 0:
-        log_print(ACCT, stk_cd, f' in call_sell_order {stk_cd} market={market}, trde_able_qty_int={trde_able_qty_int} return')
+        log_print(ACCT, stk_cd, f' in call_sell_order market={market}, trde_able_qty_int={trde_able_qty_int} return')
         return
 
     trde_tp = '0'  # 매매구분 0:보통 , 3:시장가 , 5:조건부지정가 , 81:장마감후시간외 , 61:장시작전시간외, 62:시간외단일가 ,
@@ -692,16 +692,16 @@ def call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_co
     nxt_yn = get_stockinfo(stk_cd)['nxtEnable']
     if market == 'NXT':
         if nxt_yn == 'Y':
-            log_print(ACCT, stk_cd, f' in call_sell_order {stk_cd} {stk_nm} market={market}')
+            log_print(ACCT, stk_cd, f' in call_sell_order {stk_nm} market={market}')
         else:
-            log_print(ACCT, stk_cd, f' in call_sell_order skip {stk_cd} {stk_nm}, not a NXT stock market={market}')
+            log_print(ACCT, stk_cd, f' in call_sell_order skip {stk_nm}, not a NXT stock market={market}')
             return
     elif market == 'AFT':
         if get_stockinfo(stk_cd)['nxtEnable'] == 'Y':
             market = 'NXT'
         else:
             if after_exceeded.get(stk_cd, False):
-                log_print(ACCT, stk_cd, f' in call_sell_order {stk_cd} market={market}, exceeded upper limit return')
+                log_print(ACCT, stk_cd, f' in call_sell_order market={market}, exceeded upper limit return')
                 return # 계정마다 가격이 다를 수 있으므로 일괄처리하기가 어렵자
             market = 'KRX'
             trde_tp = '62' # 62:시간외단일가
@@ -819,13 +819,23 @@ def sell_jango(jango, market):
             for indv in acnt_evlt_remn_indv_tot:
                 stk_cd = _normalize_stk_cd(indv.get('stk_cd', ''))
                 stk_nm = indv.get('stk_nm', '')
+                sell_it = True
+                if market == 'NXT':
+                    if get_stockinfo(stk_cd)['nxtEnable'] != 'Y':
+                        sell_it = False
+                        log_print('', stk_cd, f'Cannot sell {stk_nm} in NXT market')
+                elif market == 'AFT':
+                    if get_stockinfo(stk_cd)['nxtEnable'] == 'Y':
+                        sell_it = False
+                        log_print('', stk_cd, f'Cannot sell {stk_nm} in AFT market')
 
-                with interested_stocks_lock:
-                    sell_cond = copy.deepcopy(interested_stocks.get(stk_cd))
-                if not sell_cond:
-                    continue
-                working_status = 'before call_sell_order {} {} {}'.format(market, stk_cd, stk_nm)
-                call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond)
+                if sell_it:
+                    with interested_stocks_lock:
+                        sell_cond = copy.deepcopy(interested_stocks.get(stk_cd))
+                    if not sell_cond:
+                        continue
+                    working_status = 'before call_sell_order {} {} {}'.format(market, stk_cd, stk_nm)
+                    call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond)
         except Exception as ex:
             print('at 314 {}'.format(working_status))
             print(ex)
@@ -1025,7 +1035,7 @@ def cur_date():
     return formatted_date
 
 
-def test_new_log(acct, stk_cd, msg):
+def is_new_log(acct, stk_cd, msg):
     global  last_logs
     acct_logs = last_logs.get(acct, {})
     logs = acct_logs.get(stk_cd, [])
@@ -1039,12 +1049,17 @@ def test_new_log(acct, stk_cd, msg):
         if logs[0] == msg or logs[1] == msg:
             return False
         logs.append(msg)
-    else : #  len(logs) > 2
+    elif len(logs) == 3:
         if logs[0] == msg or logs[1] == msg or logs[2] == msg:
+            return False
+        logs.append(msg)
+    else : #  len(logs) > 2
+        if logs[0] == msg or logs[1] == msg or logs[2] == msg or logs[3] == msg:
             return False
         logs[0] = logs[1]
         logs[1] = logs[2]
-        logs[2] = msg
+        logs[2] = logs[3]
+        logs[3] = msg
 
     acct_logs[stk_cd] = logs
     last_logs[acct] = acct_logs
@@ -1057,7 +1072,7 @@ def log_print(acct, stk_cd, msg):
     if acct == '':
         acct = 'ALLACCT'
 
-    if not test_new_log(acct, stk_cd, msg):
+    if not is_new_log(acct, stk_cd, msg):
         return
 
 
@@ -1298,11 +1313,10 @@ def daily_work():
             krx_after_state = 1
     elif is_between(now, krx_aft_time_1601, nxt_fin_time_2000):  # KRX 거래소 시작시간과 NXT 종료 시간 사이
         current_status = 'NXT'
-        if krx_after_state == 1: # NXT sell
-            log_print('', '000000', '1234 calling sell_jango is_between(now, krx_end_time, nxt_fin_time)')
-            sell_jango(stored_jango_data, 'NXT')
-            buy_cl(now, 'NXT')
-            sell_jango(stored_jango_data, 'AFT') # NXT 에서 안 팔린 거는 여기서 매도
+        log_print('', '000000', '1234 calling sell_jango is_between(now, krx_end_time, nxt_fin_time)')
+        sell_jango(stored_jango_data, 'NXT')
+        buy_cl(now, 'NXT')
+        sell_jango(stored_jango_data, 'AFT') # NXT 에서 안 팔린 거는 여기서 매도
     else:
         log_print('', '000000', '1244 OFF')
         current_status = 'OFF'
