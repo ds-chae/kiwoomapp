@@ -1218,9 +1218,9 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
         else:
             ord_price = round_trunc(bp)
             if scolor == 'O':
-                ord_qty = (bamount/2) // ord_price
+                ord_qty = int((bamount/2) // ord_price)
             else:
-                ord_qty = bamount // ord_price
+                ord_qty = int(bamount // ord_price)
             if ord_qty > 0 :
                 #ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trade_tp=trde_tp, cond_uv='')
                 log_print(ACCT, stk_cd, 'buy_order market={}, qty={} price={}'.format(stex, ord_qty, ord_price))
@@ -1240,7 +1240,7 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
             log_print('', stk_cd, ' gap over skip 2 for {} {} {} {}'.format(stk_cd, stk_nm, bp, buy_rate))
         else:
             ord_price = round_trunc(bp)
-            ord_qty = bamount // ord_price
+            ord_qty = int(bamount // ord_price)
             # ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trade_tp=trde_tp, cond_uv='')
             if ord_qty > 0 :
                 log_print(ACCT, stk_cd, 'buy_order market={}, qty={} price={}'.format(stex, ord_qty, ord_price))
