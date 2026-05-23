@@ -123,7 +123,7 @@ def _allocate_image_store_path(stem: str, ext: str) -> tuple[str, str]:
 LOGIN_USERNAME = os.getenv('LOGIN_USERNAME')
 LOGIN_PASSWORD = os.getenv('LOGIN_PASSWORD')
 SECRET_KEY = os.getenv('SECRET_KEY', secrets.token_urlsafe(32))
-TOKEN_EXPIRY_HOURS = 72
+TOKEN_EXPIRY_HOURS = 100
 env_pctoken = os.getenv('PCTOKEN')
 
 # In-memory token storage (in production, use Redis or database)
@@ -1988,13 +1988,18 @@ def order_queued_buy(bqlen):
     global buy_queue
     for bidx in range(bqlen):
         bq = buy_queue[bidx]
-        if now.hour >= bq[0]:  # trade_begin_hour
+        trde_begin_h = bq[0]
+        if trde_begin_h == 8 :
+            trde_end_h = 20
+        else:
+            trde_end_h = 16
+        if now.hour >= trde_begin_h and now.hour < trde_end_h:  # trade_begin_hour
             stk_cd = bq[1]
             stk_nm = bq[2]
             ord_uv = bq[3]
             ord_qty = bq[4]
             accounts = bq[5]
-            stex = bq[6]
+            stex = active_market() # bq[6]
             trde_tp = bq[7]
             log_print('', stk_cd,
                       f"Buy queued orders {bq[0]} o'clock : {ord_qty} shares of {stk_nm or stk_cd} at {ord_uv}")
@@ -2043,7 +2048,7 @@ def periodic_timer_handler():
         else:
             bqlen = len(buy_queue)
             if bqlen > 0 :
-                order_queued_buy()
+                order_queued_buy(bqlen)
             else:
                 daily_work()
     except Exception as ex:
@@ -2661,39 +2666,33 @@ async def stop_loss_cut_api(request: dict, proxy_path: str = "", token: str = Co
     3) 손절 금액·매수가·현재가·수수료 0.23% 로 매도 수량 산출 후 지정가 매도
     """
     global stored_miche_data, old_sel_price, interested_stocks, interested_stocks_lock
+    global stored_jango_data
     if not token or not verify_token(token):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
     try:
-        stock_code_raw = (request.get("stock_code") or "").strip()
+        stock_code = (request.get("stock_code") or "").strip()
         stock_name = (request.get("stock_name") or "").strip()
         try:
             stop_loss_amount = float(request.get("stop_loss_amount"))
         except (TypeError, ValueError):
             stop_loss_amount = 0.0
 
-        if not stock_code_raw:
+        if not stock_code:
             return {"status": "error", "message": "stock_code is required"}
-        if stop_loss_amount <= 0:
-            return {"status": "error", "message": "stop_loss_amount must be positive"}
-
-        stk_cd_norm = _normalize_stk_cd(stock_code_raw)
-
-        # 최신 미체결·잔고(토큰 갱신 포함)
-        stored_miche_data = get_miche()
-        jango_snapshot = get_jango("KRX")
+        log_print('', stock_code, f"Loss cut trying {stop_loss_amount}")
 
         # 1) 매도 규칙만 0으로 (stime·bamount 등 기존 필드는 유지)
         with interested_stocks_lock:
-            if stk_cd_norm in interested_stocks:
-                st = interested_stocks[stk_cd_norm]
+            if stock_code in interested_stocks:
+                st = interested_stocks[stock_code]
                 nm = stock_name.strip() if stock_name else ""
                 if nm:
                     st["stock_name"] = nm
                 elif "stock_name" not in st or not st.get("stock_name"):
-                    st["stock_name"] = get_stockinfo(stk_cd_norm).get("name", "")
+                    st["stock_name"] = get_stockinfo(stock_code).get("name", "")
                 st["sellprice"] = "0"
                 st["sellrate"] = 0.0
                 st["sellgap"] = "0"
@@ -2701,7 +2700,7 @@ async def stop_loss_cut_api(request: dict, proxy_path: str = "", token: str = Co
                     return {"status": "error", "message": "Failed to save interested stocks (sell settings)"}
 
         # 2) 미체결 매수·매도 취소
-        cancel_results = cancel_all_buy_sell_orders_for_stock(stk_cd_norm)
+        cancel_results = cancel_all_buy_sell_orders_for_stock(stock_code)
 
         # 3) 모든 계좌에 동일하게 CUT 적용
         per_account_results = []
@@ -2709,13 +2708,14 @@ async def stop_loss_cut_api(request: dict, proxy_path: str = "", token: str = Co
         attempted_accounts = 0
         target_accounts = list(key_list.keys())
         for account in target_accounts:
-            indv = _find_holding_indv_for_cut(account, stk_cd_norm, jango_snapshot)
+            indv = _find_holding_indv_for_cut(account, stock_code, stored_jango_data)
             if not indv:
                 per_account_results.append({
                     "account": account,
                     "status": "skipped",
                     "message": "No holding row for account/stock",
                 })
+                log_print(account, stock_code, "No holding row for account/stock")
                 continue
 
             pur_pric_str = indv.get("pur_pric", "0")
@@ -2737,6 +2737,7 @@ async def stop_loss_cut_api(request: dict, proxy_path: str = "", token: str = Co
                     "status": "error",
                     "message": "Invalid average buy price or current price in holdings",
                 })
+                log_print(account, stock_code, "Invalid average buy price or current price in holdings")
                 continue
             if trde_able <= 0:
                 per_account_results.append({
@@ -2744,6 +2745,7 @@ async def stop_loss_cut_api(request: dict, proxy_path: str = "", token: str = Co
                     "status": "skipped",
                     "message": "Tradeable quantity is 0",
                 })
+                log_print(account, stock_code, "Tradeable quantity is 0")
                 continue
 
             # 주당 손절비용(원): (매수가-현재가) + (현재가*수수료)
@@ -2758,6 +2760,7 @@ async def stop_loss_cut_api(request: dict, proxy_path: str = "", token: str = Co
                     "cur_prc": cur_prc_f,
                     "loss_per_share": loss_per_share,
                 })
+                log_print(account, stock_code, "Computed loss per share is not positive")
                 continue
 
             qty_raw = int(stop_loss_amount // loss_per_share)
@@ -2770,6 +2773,7 @@ async def stop_loss_cut_api(request: dict, proxy_path: str = "", token: str = Co
                     "loss_per_share": loss_per_share,
                     "tradeable_qty": trde_able,
                 })
+                log_print(account, stock_code, "Computed sell quantity is 0")
                 continue
 
             access_token = jango_token.get(account)
@@ -2779,6 +2783,7 @@ async def stop_loss_cut_api(request: dict, proxy_path: str = "", token: str = Co
                     "status": "error",
                     "message": "Unable to resolve access token for account",
                 })
+                log_print(account, stock_code, "Unable to resolve access token for account")
                 continue
 
             # 손절 계산 후, 이미 확보한 현재가(cur_prc) 기준 지정가(호가단위 반영)로 매도
@@ -2789,13 +2794,14 @@ async def stop_loss_cut_api(request: dict, proxy_path: str = "", token: str = Co
                     "status": "error",
                     "message": "Invalid cut sell price",
                 })
+                log_print(account, stock_code, "Invalid cut sell price")
                 continue
 
             attempted_accounts += 1
             ret_status = sell_order(
                 access_token,
                 dmst_stex_tp="SOR",
-                stk_cd=stk_cd_norm,
+                stk_cd=stock_code,
                 ord_qty=str(qty),
                 ord_uv=str(cut_sell_price),
                 trde_tp="0",
@@ -2803,7 +2809,7 @@ async def stop_loss_cut_api(request: dict, proxy_path: str = "", token: str = Co
             )
             log_print(
                 account,
-                stk_cd_norm,
+                stock_code,
                 "stop_loss_cut limit sell_order price={} qty={} ret={}".format(cut_sell_price, qty, ret_status),
             )
 
@@ -2986,16 +2992,18 @@ async def buy_order_api(request: dict, proxy_path: str = "", token: str = Cookie
 
         #stex = 'SOR' # 20260409 this make many problems
         stex = active_market()
-        if stex == '':
-            return {"status": "error", "message": "Market is not active."}
+        #if stex == '':
+        #    return {"status": "error", "message": "Market is not active."}
 
         trde_tp = '0'
 
         trade_begin_hour = 9
+        trade_end_hour = 16
         if get_stockinfo(stk_cd)['nxtEnable'] == 'Y':
             trade_begin_hour = 8
+            trade_end_hour = 20
         now = datetime.now()
-        if now.hour < trade_begin_hour:
+        if now.hour < trade_begin_hour or now.hour > trade_end_hour:
             buy_queue.append((trade_begin_hour, stk_cd, stk_nm, ord_uv, ord_qty, accounts, stex, trde_tp))
             msg = f"Buy orders queued for {trade_begin_hour} o'clock : {ord_qty} shares of {stk_nm or stk_cd} at {ord_uv}"
             log_print('', stk_cd, msg)
@@ -3303,7 +3311,7 @@ def set_interested_rate(stock_code, stock_name='', color=None,
                 if float(stock.get('sellrate', 0)) == 0.0:
                     log_print('', stock_code, f'pctoken True sellrate 1.5 stime = {stime}, yyyymmdd = {yyyymmdd}')
                     if sellrate == 0.0:
-                        stock['sellrate'] = 1.5
+                        stock['sellrate'] = 1.2
             else:
                 stock['sellrate'] = sellrate
             if int(sellgap) > 60:
