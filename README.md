@@ -308,3 +308,31 @@ previoud jango should be updated when jango is changed.
 previous_jango_data_simplified is initialized at startup and dail_work iis called after that. why test if previous_jango_data_simplified is none every time?
 
 ui에 uploads/image를 image list로 볼 수 있는 button을 추가한다. 목록은 화면 너비에 따라서 타일 형식으로 보여준다.  이미지 파일 이름으로 오름차순 또는 내림차순으로 정렬 가능하다.
+
+uploads/image를  popup으로 보여주지 않는다. 다른 페이지로 이동해서 보여준다. 이동해서 보여주는 화면에는 이전화면 버튼을 추가한다.
+
+이미지 그리드에서 이미지를 클릭하면 원래 크기로 보여주는 기능 추가
+
+이미지 그리드는 화면 전체 너비를 사용하도록 한다. 각각의 셀의 폭은 현재의 두 배로 한다. 각가의 셀에 파일 이름을 표시한다.
+
+in mobile environment, layout of  buttons "data", "Images", "Logout", etc. should be responsive.
+
+손절 기능을 구현한다. 주식 보유 화면에서 보유 종목의 행을 클릭하면 나타나는 매도 가격(sell price), 수익률(sell rate), 매도 갭(sell gap)을 구현한 화면 우측에 에 손절 금액 입력 칸과 손절 버튼을 표시한다. 손절 버튼의 caption은 CUT이다. 사용자가 CUT 버튼을 클릭하면 1. sell price, sell rate, sell gap을 모두 0으로 설정한다. 2. 현재 선택한 종목의 매수, 매도 주문을 모두 취소한다. 3. 매수 가격과 현재 가격의 차액과 거래수수료 0.23%로 손절 금액에 따른 매도 수량을 계산하고, 계산된 수량만큼 매도 주문을 수행한다. 매도 관련 수칙가 모두 0이 되어 해당 종목은 별도의 설정이 있기 전에는 자동 매도가 되지 않게 된다.
+
+CUT  기능을 하나의 backend api로 구성하라. 여러개의 backend를 호출하도록 구성하지 않는다.
+
+보유 종목을 클릭해서 나오는 필드에서 Bmount를 제거. Apply 버튼, Cancel 버튼을 Sell Gap 우측으로 이동.  "손절 금액" 레이블 제거.
+
+CUT 관련 입력 창과 버튼을 Sell Price, Rate, Gap과 동일한 에이아웃에 배치
+
+손절 가격을 계산한 후에 매도할 때대에 지정가로 매도하도록 수정
+
+손절 수량 계산은 제미나이에게 일임. - 주식을 손절할 때에 손절할 총 금액을 지정하면 매수 가격과 현재 가격, 그리고 매도 수수료 0.23%를 적용하여 현재 가격에 몇 주를 매도하는지를 계산하는 코드를 파이썬으로 작성하라
+
+cut 실행시에 cur_prc를 이미 받아왔으므로 cur_prc_f로부터 매도 가격을 계산하지 않는다.
+
+손절에 대해서 모든 account에 동일하게 적용하라.
+
+when click cut, "No account had a valid CUT sell target"
+
+add a screen to modify some text file in /home/cds directory. in windows that directory is c:/temp. the user enter this screen thru clicking a button "CONN". the button should be placed at the and of holdings ui. the scrren then read files allowip.txt and allowcon.txt and display them in text input boxes. then a "MODIFY" button exits to modify those texts. build backend api and ui to do these functions.
