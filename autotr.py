@@ -2049,8 +2049,7 @@ def periodic_timer_handler():
             bqlen = len(buy_queue)
             if bqlen > 0 :
                 order_queued_buy(bqlen)
-            else:
-                daily_work()
+            daily_work()
     except Exception as ex:
         traceback.print_exc()
         log_print('', '000000', 'currrent status={}'.format(working_status))
