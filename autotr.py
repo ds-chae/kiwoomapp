@@ -2048,11 +2048,12 @@ def periodic_timer_handler():
         else:
             bqlen = len(buy_queue)
             if bqlen > 0 :
+                log_print('', '00000', 'call order_queued_buy')
                 order_queued_buy(bqlen)
             daily_work()
     except Exception as ex:
-        traceback.print_exc()
-        log_print('', '000000', 'currrent status={}'.format(working_status))
+        log_print('', '00000', str(ex))
+        log_print('', '000000', 'Exception currrent status={}'.format(working_status))
 
 def format_account_data():
     """Format account data for display in UI"""
@@ -2183,6 +2184,7 @@ def format_account_data():
         return formatted_data
     except Exception as e:
         print(f"Error formatting account data: {e}")
+        log_print('', '000000', f"Error formatting account data: {e}")
         return []
 
 
@@ -2641,17 +2643,21 @@ def _parse_qty_str(qty_raw):
 def _find_holding_indv_for_cut(acct_no: str, stk_cd_norm: str, jango_snapshot: dict):
     """잔고 스냅샷에서 계좌·종목에 해당하는 한 줄을 찾는다."""
     if not isinstance(jango_snapshot, dict):
+        log_print('', '000000', 'jango_snapshot is not an instance')
         return None
     acct_jango = jango_snapshot.get(acct_no)
     if not isinstance(acct_jango, dict):
+        log_print('', '000000', 'acct_jango is not an instance')
         return None
     # Some responses use int 0, others string "0"/"0000"/"200"
     if not _is_success_return_code(acct_jango.get("return_code")):
+        log_print('', '000000', 'jango return_code is not a success')
         return None
     rows = acct_jango.get("acnt_evlt_remn_indv_tot") or []
     for indv in rows:
         if _normalize_stk_cd(indv.get("stk_cd", "")) == stk_cd_norm:
             return indv
+    log_print('', '000000', f'No stock for {stk_cd_norm} is found in account {acct_no}')
     return None
 
 
