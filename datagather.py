@@ -42,6 +42,22 @@ P3_DEFAULTS = {
     'sellrate': 0,
     'sellgap': '0',
 }
+DATAGATHER_LOG_NAME = 'datagather.log'
+
+
+def datagather_log(message, now=None):
+    """Append a line to logs/yyyymmdd/datagather.log."""
+    try:
+        ts_now = now or datetime.now()
+        date_str = ts_now.strftime('%Y%m%d')
+        log_dir = os.path.join(LOGS_DIR, date_str)
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, DATAGATHER_LOG_NAME)
+        timestamp = ts_now.strftime('%Y-%m-%d %H:%M:%S')
+        with open(log_path, 'a', encoding='utf-8') as f:
+            f.write(f'[{timestamp}] {message}\n')
+    except Exception as e:
+        print(f"Error writing datagather log: {e}")
 
 
 def _safe_join_logs(rel_path: str) -> str | None:
@@ -618,7 +634,7 @@ def get_p3_run_slot(now):
     return now.strftime('%Y%m%d_%H:%M')
 
 
-def post_interested_stock(stock_code, stock_name=''):
+def post_interested_stock(stock_code, stock_name='', now=None):
     """POST one stock to sojucoin interested-stocks API."""
     payload = {
         'stock_code': stock_code,
@@ -635,6 +651,11 @@ def post_interested_stock(stock_code, stock_name=''):
         'Content-Type': 'application/json',
         'Cookie': INTERESTED_STOCKS_COOKIE,
     }
+    datagather_log(
+        f'[P3][POST] url={INTERESTED_STOCKS_API_URL} stock_code={stock_code} '
+        f'stock_name={stock_name or ""} payload={json.dumps(payload, ensure_ascii=False)}',
+        now=now,
+    )
     response = requests.post(
         INTERESTED_STOCKS_API_URL,
         json=payload,
@@ -645,6 +666,12 @@ def post_interested_stock(stock_code, stock_name=''):
         body = response.json()
     except Exception:
         body = {'raw': response.text}
+
+    datagather_log(
+        f'[P3][POST] stock_code={stock_code} http_status={response.status_code} '
+        f'response={json.dumps(body, ensure_ascii=False)}',
+        now=now,
+    )
 
     if response.status_code != 200:
         raise RuntimeError(f"HTTP {response.status_code}: {body}")
@@ -658,14 +685,34 @@ def run_p3_condition_job(now):
     date_str = now.strftime('%Y%m%d')
     slot = get_p3_run_slot(now)
     print(f"[P3] Starting condition search at {now} (slot={slot})")
+    datagather_log(
+        f'[P3][START] slot={slot} condition={P3_CONDITION_NAME} '
+        f'api_url={INTERESTED_STOCKS_API_URL}',
+        now=now,
+    )
 
     posted_codes = load_p3_posted_codes(date_str)
+    datagather_log(
+        f'[P3][LOAD] already_posted_today={sorted(posted_codes)} count={len(posted_codes)}',
+        now=now,
+    )
+
     stocks = search_condition_by_name(P3_CONDITION_NAME)
     print(f"[P3] Condition '{P3_CONDITION_NAME}' returned {len(stocks)} stock(s)")
+    stock_summary = [
+        f"{s.get('stk_cd', '')}:{s.get('stk_nm', '')}" for s in stocks if s.get('stk_cd')
+    ]
+    datagather_log(
+        f'[P3][SEARCH] condition={P3_CONDITION_NAME} total={len(stocks)} '
+        f'stocks={stock_summary}',
+        now=now,
+    )
 
     added = 0
     skipped = 0
     errors = []
+    added_codes = []
+    skipped_codes = []
 
     for stock in stocks:
         stk_cd = stock.get('stk_cd', '')
@@ -673,23 +720,43 @@ def run_p3_condition_job(now):
             continue
         if stk_cd in posted_codes:
             skipped += 1
+            skipped_codes.append(stk_cd)
+            datagather_log(
+                f'[P3][SKIP] stock_code={stk_cd} stock_name={stock.get("stk_nm", "")} '
+                f'reason=already_posted_today',
+                now=now,
+            )
             continue
 
         stk_nm = stock.get('stk_nm', '')
         try:
-            post_interested_stock(stk_cd, stk_nm)
+            post_interested_stock(stk_cd, stk_nm, now=now)
             posted_codes.add(stk_cd)
             added += 1
+            added_codes.append(stk_cd)
             print(f"[P3] Posted interested stock {stk_cd} {stk_nm}")
+            datagather_log(
+                f'[P3][OK] stock_code={stk_cd} stock_name={stk_nm} posted_to_interested_stocks',
+                now=now,
+            )
             time.sleep(0.2)
         except Exception as e:
             msg = f"{stk_cd}: {e}"
             errors.append(msg)
             print(f"[P3] Error posting {msg}")
+            datagather_log(
+                f'[P3][ERROR] stock_code={stk_cd} stock_name={stk_nm} error={e}',
+                now=now,
+            )
             traceback.print_exc()
 
     save_p3_posted_codes(date_str, posted_codes)
     print(f"[P3] Finished slot={slot}: added={added}, skipped={skipped}, errors={len(errors)}")
+    datagather_log(
+        f'[P3][DONE] slot={slot} added={added} skipped={skipped} errors={len(errors)} '
+        f'added_codes={added_codes} skipped_codes={skipped_codes} error_details={errors}',
+        now=now,
+    )
     return {
         'added': added,
         'skipped': skipped,
@@ -719,6 +786,7 @@ def maybe_run_p3_condition_job(now):
     except Exception as e:
         print(f"[P3] Job failed: {e}")
         traceback.print_exc()
+        datagather_log(f'[P3][FAIL] slot={slot} error={e}', now=now)
         with status_lock:
             status_info['last_p3_run'] = now.isoformat()
             status_info['last_p3_error'] = str(e)
