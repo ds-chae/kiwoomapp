@@ -3,7 +3,8 @@ import time
 import os
 import traceback
 import threading
-from datetime import datetime, timedelta
+import requests
+from datetime import datetime, timedelta, time as dt_time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
@@ -14,6 +15,7 @@ from ka10081 import get_day_chart
 from ka10080 import get_bun_chart
 from au1001 import get_one_token
 from ka10100 import get_stockinfo
+from ka_condition import search_condition_by_name
 
 # Configuration
 # Determine the directory where this script is located
@@ -22,7 +24,24 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CHART_DIR = os.path.join(BASE_DIR, 'chart_data', 'day')
 INTERESTED_STOCKS_FILE = os.path.join(BASE_DIR, 'interested_stocks.json')
 LAST_RUN_FILE = os.path.join(BASE_DIR, 'last_gathering_time.json')
+P3_POSTED_FILE = os.path.join(BASE_DIR, 'p3_interested_posted.json')
 LOGS_DIR = os.path.join(BASE_DIR, 'logs')
+
+P3_CONDITION_NAME = 'P3'
+P3_START_TIME = dt_time(11, 30)
+P3_END_TIME = dt_time(15, 0)
+P3_INTERVAL_MINUTES = 5
+INTERESTED_STOCKS_API_URL = 'https://sojucoin.com/stock/api/interested-stocks'
+INTERESTED_STOCKS_COOKIE = 'pctoken=allow_interest_pc'
+P3_DEFAULTS = {
+    'color': '노',
+    'btype': 'CL',
+    'bamount': 500000,
+    'clrate': 70,
+    'sellprice': '0',
+    'sellrate': 0,
+    'sellgap': '0',
+}
 
 
 def _safe_join_logs(rel_path: str) -> str | None:
@@ -96,6 +115,8 @@ status_lock = threading.Lock()
 # Background thread control
 thread_stop_event = threading.Event()
 background_thread = None
+last_p3_run_slot = None
+p3_lock = threading.Lock()
 
 def ensure_chart_dir():
     """Ensure the chart data directory exists."""
@@ -554,6 +575,155 @@ def gather_minute_charts_with_count(token, stocks):
     print(f"=== Minute chart gathering finished at {datetime.now()} ===\n")
     return minute_count
 
+
+def load_p3_posted_codes(date_str):
+    """Load stock codes already posted to interested-stocks for the given date."""
+    if not os.path.exists(P3_POSTED_FILE):
+        return set()
+    try:
+        with open(P3_POSTED_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        codes = data.get(date_str, [])
+        return set(str(code) for code in codes)
+    except Exception as e:
+        print(f"Error loading {P3_POSTED_FILE}: {e}")
+        return set()
+
+
+def save_p3_posted_codes(date_str, codes):
+    """Persist stock codes posted to interested-stocks for the given date."""
+    try:
+        data = {}
+        if os.path.exists(P3_POSTED_FILE):
+            with open(P3_POSTED_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        data[date_str] = sorted(codes)
+        with open(P3_POSTED_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"Error saving {P3_POSTED_FILE}: {e}")
+
+
+def get_p3_run_slot(now):
+    """Return slot key (YYYYMMDD_HH:MM) if now is a 5-minute P3 run time, else None."""
+    start_minutes = P3_START_TIME.hour * 60 + P3_START_TIME.minute
+    end_minutes = P3_END_TIME.hour * 60 + P3_END_TIME.minute
+    current_minutes = now.hour * 60 + now.minute
+
+    if current_minutes < start_minutes or current_minutes > end_minutes:
+        return None
+    if (current_minutes - start_minutes) % P3_INTERVAL_MINUTES != 0:
+        return None
+
+    return now.strftime('%Y%m%d_%H:%M')
+
+
+def post_interested_stock(stock_code, stock_name=''):
+    """POST one stock to sojucoin interested-stocks API."""
+    payload = {
+        'stock_code': stock_code,
+        'stock_name': stock_name or None,
+        'color': P3_DEFAULTS['color'],
+        'btype': P3_DEFAULTS['btype'],
+        'bamount': P3_DEFAULTS['bamount'],
+        'clrate': P3_DEFAULTS['clrate'],
+        'sellprice': P3_DEFAULTS['sellprice'],
+        'sellrate': P3_DEFAULTS['sellrate'],
+        'sellgap': P3_DEFAULTS['sellgap'],
+    }
+    headers = {
+        'Content-Type': 'application/json',
+        'Cookie': INTERESTED_STOCKS_COOKIE,
+    }
+    response = requests.post(
+        INTERESTED_STOCKS_API_URL,
+        json=payload,
+        headers=headers,
+        timeout=30,
+    )
+    try:
+        body = response.json()
+    except Exception:
+        body = {'raw': response.text}
+
+    if response.status_code != 200:
+        raise RuntimeError(f"HTTP {response.status_code}: {body}")
+    if body.get('status') != 'success':
+        raise RuntimeError(body.get('message', body))
+    return body
+
+
+def run_p3_condition_job(now):
+    """Run P3 condition search and register new stocks to interested-stocks."""
+    date_str = now.strftime('%Y%m%d')
+    slot = get_p3_run_slot(now)
+    print(f"[P3] Starting condition search at {now} (slot={slot})")
+
+    posted_codes = load_p3_posted_codes(date_str)
+    stocks = search_condition_by_name(P3_CONDITION_NAME)
+    print(f"[P3] Condition '{P3_CONDITION_NAME}' returned {len(stocks)} stock(s)")
+
+    added = 0
+    skipped = 0
+    errors = []
+
+    for stock in stocks:
+        stk_cd = stock.get('stk_cd', '')
+        if not stk_cd:
+            continue
+        if stk_cd in posted_codes:
+            skipped += 1
+            continue
+
+        stk_nm = stock.get('stk_nm', '')
+        try:
+            post_interested_stock(stk_cd, stk_nm)
+            posted_codes.add(stk_cd)
+            added += 1
+            print(f"[P3] Posted interested stock {stk_cd} {stk_nm}")
+            time.sleep(0.2)
+        except Exception as e:
+            msg = f"{stk_cd}: {e}"
+            errors.append(msg)
+            print(f"[P3] Error posting {msg}")
+            traceback.print_exc()
+
+    save_p3_posted_codes(date_str, posted_codes)
+    print(f"[P3] Finished slot={slot}: added={added}, skipped={skipped}, errors={len(errors)}")
+    return {
+        'added': added,
+        'skipped': skipped,
+        'errors': errors,
+        'total_found': len(stocks),
+    }
+
+
+def maybe_run_p3_condition_job(now):
+    """Run P3 job once per 5-minute slot between 11:30 and 15:00."""
+    global last_p3_run_slot
+
+    slot = get_p3_run_slot(now)
+    if not slot:
+        return
+
+    with p3_lock:
+        if slot == last_p3_run_slot:
+            return
+        last_p3_run_slot = slot
+
+    try:
+        result = run_p3_condition_job(now)
+        with status_lock:
+            status_info['last_p3_run'] = now.isoformat()
+            status_info['last_p3_result'] = result
+    except Exception as e:
+        print(f"[P3] Job failed: {e}")
+        traceback.print_exc()
+        with status_lock:
+            status_info['last_p3_run'] = now.isoformat()
+            status_info['last_p3_error'] = str(e)
+
+
 def background_data_gathering():
     """Background thread that runs the data gathering loop."""
     global status_info, thread_stop_event
@@ -582,6 +752,8 @@ def background_data_gathering():
     
     while not thread_stop_event.is_set():
         now = datetime.now()
+
+        maybe_run_p3_condition_job(now)
         
         # Calculate next run time
         next_run = datetime(now.year, now.month, now.day, 21, 0, 0)

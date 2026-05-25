@@ -3243,11 +3243,14 @@ def clear_ordered_count(stk_cd):
 def set_interested_rate(stock_code, stock_name='', color=None,
                     btype='', bamount='0',
                     stime='', yyyymmdd='', sellprice='0',
-                    sellrate=0.0, sellgap='0', is_pctoken=False):
+                    sellrate=0.0, sellgap='0', clrate=None,
+                    is_pctoken=False):
     global interested_stocks, interested_stocks_lock
     if is_pctoken:
-        bamount = '1000000'
-        color = 'O'
+        if not color:
+            color = 'O'
+        if bamount is None or bamount == '' or bamount == '0':
+            bamount = '1000000'
     else:
         log_print('', stock_code, 'pctoken False stime = {}, yyyymmdd = {}'.format(stime, yyyymmdd))
 
@@ -3325,6 +3328,13 @@ def set_interested_rate(stock_code, stock_name='', color=None,
                 stock['sellgap'] = sellgap
             if not 'clprice' in stock:
                 stock['clprice'] = '0'
+            if clrate is not None and str(clrate).strip() != '':
+                try:
+                    stock['clrate'] = int(clrate)
+                except (ValueError, TypeError):
+                    pass
+            elif 'clrate' not in stock:
+                stock['clrate'] = 0
 
             with interested_stocks_lock:
                 is_new = stock_code not in interested_stocks
@@ -3387,6 +3397,7 @@ async def add_interested_stock_api(request: dict, proxy_path: str = "",
         sellprice = request.get('sellprice', '0')
         sellrate = float(request.get('sellrate', '0'))
         sellgap = request.get('sellgap', '0')
+        clrate = request.get('clrate')
 
         if not stock_code:
             return {"status": "error", "message": "stock_code is required"}
@@ -3394,7 +3405,8 @@ async def add_interested_stock_api(request: dict, proxy_path: str = "",
         return set_interested_rate(stock_code, stock_name, color=color,
                             btype = btype, bamount = bamount,
                             stime = stime, yyyymmdd = yyyymmdd, sellprice = sellprice,
-                            sellrate = sellrate, sellgap = sellgap, is_pctoken=is_pctoken)
+                            sellrate = sellrate, sellgap = sellgap, clrate=clrate,
+                            is_pctoken=is_pctoken)
     except Exception as e:
         print('Exception-> {}'.format(e))
         return {"status": "error", "message": str(e)}
