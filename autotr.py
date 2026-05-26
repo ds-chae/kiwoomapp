@@ -2002,9 +2002,11 @@ def order_queued_buy(bqlen):
             stex = active_market() # bq[6]
             trde_tp = bq[7]
             log_print('', stk_cd,
-                      f"Buy queued orders {bq[0]} o'clock : {ord_qty} shares of {stk_nm or stk_cd} at {ord_uv}")
-            call_issue_buy_order(stk_cd, stk_nm, ord_uv, ord_qty, accounts, stex, trde_tp)
-            del buy_queue[bidx]
+                      f"Try buy queued orders {bq[0]} o'clock : {ord_qty} shares of {stk_nm or stk_cd} at {ord_uv}")
+            results = call_issue_buy_order(stk_cd, stk_nm, ord_uv, ord_qty, accounts, stex, trde_tp)
+            all_success = all(r.get('status') == 'success' for r in results)
+            if all_success:
+                del buy_queue[bidx]
             break
 
 
@@ -2953,6 +2955,7 @@ def call_issue_buy_order(stk_cd, stk_nm, ord_uv, ord_qty, accounts, stex, trde_t
     for account in accounts:
         try:
             ret_status = issue_buy_order(stk_nm, stk_cd, ord_uv, ord_qty, stex, trde_tp, account=account)
+            log_print(account, stk_cd, ret_status)
             rc = ret_status.get('return_code') if isinstance(ret_status, dict) else None
             ok = _is_success_return_code(rc)
             results.append({
@@ -2960,6 +2963,8 @@ def call_issue_buy_order(stk_cd, stk_nm, ord_uv, ord_qty, accounts, stex, trde_t
                 'status': 'success' if ok else 'error',
                 'data': ret_status
             })
+            if not ok:
+                return results
         except Exception as e:
             msg = 'buy_order_api exception for account {}: {}'.format(account, e)
             log_print('', msg)
@@ -2969,6 +2974,7 @@ def call_issue_buy_order(stk_cd, stk_nm, ord_uv, ord_qty, accounts, stex, trde_t
                 'status': 'error',
                 'message': str(e)
             })
+            return results
     return results
 
 @app.post("/api/buy-order")
