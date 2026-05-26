@@ -164,7 +164,9 @@ async def _request_condition_search(ws, seq):
 
 
 async def main_async():
+    print('getting token')
     token = get_one_token()
+    print(f'token={token}')
     async with websockets.connect(
         SOCKET_URL,
         open_timeout=WS_TIMEOUT_SEC,
