@@ -1,129 +1,186 @@
 import asyncio
 import json
+import sys
 
 import websockets
 
 from au1001 import get_one_token
 
-WS_URL = 'wss://api.kiwoom.com:10000/api/dostk/websocket'
+SOCKET_URL = 'wss://api.kiwoom.com:10000/api/dostk/websocket'
 WS_TIMEOUT_SEC = 30
 
-import asyncio
-import websockets
-import json
 
-# socket 정보
-# SOCKET_URL = 'wss://mockapi.kiwoom.com:10000/api/dostk/websocket'  # 모의투자 접속 URL
-SOCKET_URL = 'wss://api.kiwoom.com:10000/api/dostk/websocket'  # 접속 URL
+def run_async(coro):
+    if sys.platform == 'win32':
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    return asyncio.run(coro)
 
-class WebSocketClient:
-	def __init__(self, uri):
-		self.uri = uri
-		self.websocket = None
-		self.connected = False
-		self.keep_running = True
-		self.ACCESS_TOKEN = get_one_token()
 
-# WebSocket 서버에 연결합니다.
-	async def connect(self):
-		try:
-			self.websocket = await websockets.connect(self.uri)
-			self.connected = True
-			print("서버와 연결을 시도 중입니다.")
+def _normalize_return_code(value):
+    if value is None:
+        return None
+    return str(value)
 
-			# 로그인 패킷
-			param = {
-				'trnm': 'LOGIN',
-				'token': self.ACCESS_TOKEN
-			}
 
-			print('실시간 시세 서버로 로그인 패킷을 전송합니다.')
-			# 웹소켓 연결 시 로그인 정보 전달
-			await self.send_message(message=param)
+async def _ws_recv_json(ws):
+    while True:
+        raw = await asyncio.wait_for(ws.recv(), timeout=WS_TIMEOUT_SEC)
+        data = json.loads(raw)
+        if data.get('trnm') == 'PING':
+            await ws.send(json.dumps(data))
+            continue
+        return data
 
-		except Exception as e:
-			print(f'Connection error: {e}')
-			self.connected = False
 
-	# 서버에 메시지를 보냅니다. 연결이 없다면 자동으로 연결합니다.
-	async def send_message(self, message):
-		if not self.connected:
-			await self.connect()  # 연결이 끊어졌다면 재연결
-		if self.connected:
-			# message가 문자열이 아니면 JSON으로 직렬화
-			if not isinstance(message, str):
-				message = json.dumps(message)
+async def _ws_send_json(ws, message):
+    await ws.send(json.dumps(message))
 
-		await self.websocket.send(message)
-		print(f'Message sent: {message}')
 
-	# 서버에서 오는 메시지를 수신하여 출력합니다.
-	async def receive_messages(self):
-		while self.keep_running:
-			try:
-				# 서버로부터 수신한 메시지를 JSON 형식으로 파싱
-				response = json.loads(await self.websocket.recv())
+async def _ws_login(ws, token):
+    await _ws_send_json(ws, {'trnm': 'LOGIN', 'token': token})
+    while True:
+        data = await _ws_recv_json(ws)
+        if data.get('trnm') != 'LOGIN':
+            continue
+        if _normalize_return_code(data.get('return_code')) != '0':
+            raise RuntimeError(f"LOGIN failed: {data.get('return_msg', data)}")
+        print('로그인 성공하였습니다.')
+        return
 
-				# 메시지 유형이 LOGIN일 경우 로그인 시도 결과 체크
-				if response.get('trnm') == 'LOGIN':
-					if response.get('return_code') != 0:
-						print('로그인 실패하였습니다. : ', response.get('return_msg'))
-						await self.disconnect()
-					else:
-						print('로그인 성공하였습니다.')
-						print('조건검색 목록조회 패킷을 전송합니다.')
-						# 로그인 패킷
-						param = {
-							'trnm': 'CNSRLST'
-						}
-						await self.send_message(message=param)
 
-				# 메시지 유형이 PING일 경우 수신값 그대로 송신
-				elif response.get('trnm') == 'PING':
-					await self.send_message(response)
+async def _request_condition_list(ws):
+    await _ws_send_json(ws, {'trnm': 'CNSRLST'})
+    data = await _ws_recv_json(ws)
+    if data.get('trnm') != 'CNSRLST':
+        raise RuntimeError(f"Unexpected CNSRLST response: {data}")
+    if _normalize_return_code(data.get('return_code')) not in (None, '0'):
+        raise RuntimeError(f"CNSRLST failed: {data.get('return_msg', data)}")
+    print(f'조건 검색 목록 응답 수신: {data}')
+    return data
 
-				if response.get('trnm') != 'PING':
-					print(f'실시간 시세 서버 응답 수신: {response}')
 
-			except websockets.ConnectionClosed:
-				print('Connection closed by the server')
-				self.connected = False
-				await self.websocket.close()
+def _find_condition_seq(search_list, condition_name):
+    data = search_list.get('data') or []
+    for item in data:
+        if isinstance(item, dict):
+            seq = str(item.get('seq', '')).strip()
+            name = str(item.get('name', '')).strip()
+        elif isinstance(item, (list, tuple)) and len(item) >= 2:
+            seq = str(item[0]).strip()
+            name = str(item[1]).strip()
+        else:
+            continue
+        if name == condition_name:
+            return seq
+    return ''
 
-	# WebSocket 실행
-	async def run(self):
-		await self.connect()
-		await self.receive_messages()
 
-	# WebSocket 연결 종료
-	async def disconnect(self):
-		self.keep_running = False
-		if self.connected and self.websocket:
-			await self.websocket.close()
-			self.connected = False
-			print('Disconnected from WebSocket server')
+def _find_p3_seq(search_list):
+    return _find_condition_seq(search_list, 'P3')
 
-async def main():
-	# WebSocketClient 전역 변수 선언
-	websocket_client = WebSocketClient(SOCKET_URL)
 
-	# WebSocket 클라이언트를 백그라운드에서 실행합니다.
-	receive_task = asyncio.create_task(websocket_client.run())
+def _extract_stock_from_item(item):
+    if not isinstance(item, dict):
+        return None
 
-	# 실시간 항목 등록
-	await asyncio.sleep(1)
-	await websocket_client.send_message({
-		'trnm': 'CNSRREQ', # 서비스명
-		'seq': '4', # 조건검색식 일련번호
-		'search_type': '0', # 조회타입
-		'stex_tp': 'K', # 거래소구분
-		'cont_yn': 'N', # 연속조회여부
-		'next_key': '', # 연속조회키
-	})
+    stk_cd = (
+        item.get('9001')
+        or item.get('stk_cd')
+        or item.get('code')
+        or item.get('jongmok_cd')
+        or ''
+    )
+    stk_cd = str(stk_cd).strip()
+    if not stk_cd:
+        return None
+    if stk_cd[0] == 'A':
+        stk_cd = stk_cd[1:]
 
-	# 수신 작업이 종료될 때까지 대기
-	await receive_task
+    stk_nm = (
+        item.get('302')
+        or item.get('stk_nm')
+        or item.get('name')
+        or item.get('jongmok_nm')
+        or ''
+    )
+    return {'stk_cd': stk_cd, 'stk_nm': str(stk_nm).strip()}
 
-# asyncio로 프로그램을 실행합니다.
+
+def _extract_stocks_from_message(data):
+    stocks = []
+    payload = data.get('data')
+    if isinstance(payload, list):
+        for item in payload:
+            stock = _extract_stock_from_item(item)
+            if stock:
+                stocks.append(stock)
+    elif isinstance(payload, dict):
+        stock = _extract_stock_from_item(payload)
+        if stock:
+            stocks.append(stock)
+    return stocks
+
+
+async def _request_condition_search(ws, seq):
+    await _ws_send_json(ws, {
+        'trnm': 'CNSRREQ',
+        'seq': str(seq),
+        'search_type': '0',
+        'stex_tp': 'K',
+        'cont_yn': 'N',
+        'next_key': '',
+    })
+    data = await _ws_recv_json(ws)
+    if data.get('trnm') != 'CNSRREQ':
+        raise RuntimeError(f"Unexpected CNSRREQ response: {data}")
+    if _normalize_return_code(data.get('return_code')) not in (None, '0'):
+        raise RuntimeError(f"CNSRREQ failed: {data.get('return_msg', data)}")
+    print(f'조건 검색 결과 응답 수신: {data}')
+    return data
+
+
+async def main_async():
+    token = get_one_token()
+    async with websockets.connect(
+        SOCKET_URL,
+        open_timeout=WS_TIMEOUT_SEC,
+        close_timeout=WS_TIMEOUT_SEC,
+    ) as ws:
+        print('서버와 연결을 시도 중입니다.')
+        await _ws_login(ws, token)
+
+        search_list = await _request_condition_list(ws)
+        p3_seq = _find_p3_seq(search_list)
+        if not p3_seq:
+            print('Cannot find P3')
+            return search_list, None
+
+        print(f'Index for P3 = {p3_seq}')
+        search_result = await _request_condition_search(ws, p3_seq)
+        return search_list, search_result
+
+
+async def search_condition_by_name_async(condition_name):
+    token = get_one_token()
+    async with websockets.connect(
+        SOCKET_URL,
+        open_timeout=WS_TIMEOUT_SEC,
+        close_timeout=WS_TIMEOUT_SEC,
+    ) as ws:
+        await _ws_login(ws, token)
+        search_list = await _request_condition_list(ws)
+        seq = _find_condition_seq(search_list, condition_name)
+        if not seq:
+            raise RuntimeError(f"Condition '{condition_name}' not found")
+        search_result = await _request_condition_search(ws, seq)
+        return _extract_stocks_from_message(search_result)
+
+
+def search_condition_by_name(condition_name):
+    return run_async(search_condition_by_name_async(condition_name))
+
+
 if __name__ == '__main__':
-	asyncio.run(main())
+    search_list, search_result = run_async(main_async())
+    if search_result is not None:
+        print(f'result={search_result}')
