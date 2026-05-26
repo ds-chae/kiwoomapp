@@ -2047,7 +2047,7 @@ def periodic_timer_handler():
     try:
         if is_between(now, day_start_time, nxt_start_time):
             set_new_day(True)
-        else:
+        elif is_between(now, nxt_start_time, nxt_fin_time_2000):
             bqlen = len(buy_queue)
             if bqlen > 0 :
                 log_print('', '00000', 'call order_queued_buy')
