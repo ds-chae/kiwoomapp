@@ -10,10 +10,34 @@ SOCKET_URL = 'wss://api.kiwoom.com:10000/api/dostk/websocket'
 WS_TIMEOUT_SEC = 30
 
 
+def _close_event_loop(loop):
+    try:
+        pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
+        for task in pending:
+            task.cancel()
+        if pending:
+            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        loop.run_until_complete(loop.shutdown_asyncgens())
+        if hasattr(loop, 'shutdown_default_executor'):
+            loop.run_until_complete(loop.shutdown_default_executor())
+    except Exception:
+        pass
+
+
 def run_async(coro):
+    """Run coroutine from sync code (works on Windows and Linux worker threads)."""
     if sys.platform == 'win32':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    return asyncio.run(coro)
+
+    # asyncio.run() can fail when called from background threads on Linux.
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        _close_event_loop(loop)
+        asyncio.set_event_loop(None)
+        loop.close()
 
 
 def _normalize_return_code(value):
