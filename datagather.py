@@ -592,28 +592,80 @@ def gather_minute_charts_with_count(token, stocks):
     return minute_count
 
 
-def load_p3_posted_codes(date_str):
-    """Load stock codes already posted to interested-stocks for the given date."""
+def _normalize_p3_posted_data(raw_data):
+    """Normalize persisted P3 posted tracking to {date_str: {stock_code: posted_at}}."""
+    normalized = {}
+    if not isinstance(raw_data, dict):
+        return normalized
+
+    for date_key, value in raw_data.items():
+        date_key = str(date_key).strip()
+        if len(date_key) != 8 or not date_key.isdigit():
+            continue
+
+        day_bucket = {}
+        if isinstance(value, dict):
+            for stock_code, posted_at in value.items():
+                code = str(stock_code).strip()
+                if code:
+                    day_bucket[code] = str(posted_at or '')
+        elif isinstance(value, list):
+            # Backward compatibility with older list format.
+            for stock_code in value:
+                code = str(stock_code).strip()
+                if code:
+                    day_bucket[code] = ''
+
+        if day_bucket:
+            normalized[date_key] = day_bucket
+
+    return normalized
+
+
+def load_p3_posted_data():
+    """Load all date buckets from p3_interested_posted.json."""
     if not os.path.exists(P3_POSTED_FILE):
-        return set()
+        return {}
     try:
         with open(P3_POSTED_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        codes = data.get(date_str, [])
-        return set(str(code) for code in codes)
+            return _normalize_p3_posted_data(json.load(f))
     except Exception as e:
         print(f"Error loading {P3_POSTED_FILE}: {e}")
-        return set()
+        return {}
 
 
-def save_p3_posted_codes(date_str, codes):
-    """Persist stock codes posted to interested-stocks for the given date."""
+def load_p3_posted_codes(date_str):
+    """Load stock codes already posted for one calendar day."""
+    data = load_p3_posted_data()
+    day_bucket = data.get(date_str, {})
+    return set(day_bucket.keys())
+
+
+def was_p3_posted_today(stock_code, date_str):
+    """Return True if stock_code was already posted on date_str."""
+    return str(stock_code).strip() in load_p3_posted_codes(date_str)
+
+
+def save_p3_posted_codes(date_str, codes, now=None):
+    """Persist stock codes posted on date_str; prune old date buckets."""
     try:
-        data = {}
-        if os.path.exists(P3_POSTED_FILE):
-            with open(P3_POSTED_FILE, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-        data[date_str] = sorted(codes)
+        data = load_p3_posted_data()
+        timestamp = (now or datetime.now()).strftime('%Y%m%d%H%M%S')
+        day_bucket = data.get(date_str, {})
+
+        for stock_code in codes:
+            code = str(stock_code).strip()
+            if not code:
+                continue
+            if code not in day_bucket:
+                day_bucket[code] = timestamp
+
+        data[date_str] = day_bucket
+
+        # Keep only recent daily buckets so old dates do not look like permanent blocks.
+        keep_dates = sorted(data.keys())[-14:]
+        data = {day: data[day] for day in keep_dates if day in data}
+
         with open(P3_POSTED_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
     except Exception as e:
@@ -686,14 +738,15 @@ def run_p3_condition_job(now):
     slot = get_p3_run_slot(now)
     print(f"[P3] Starting condition search at {now} (slot={slot})")
     datagather_log(
-        f'[P3][START] slot={slot} condition={P3_CONDITION_NAME} '
+        f'[P3][START] slot={slot} date={date_str} condition={P3_CONDITION_NAME} '
         f'api_url={INTERESTED_STOCKS_API_URL}',
         now=now,
     )
 
     posted_codes = load_p3_posted_codes(date_str)
     datagather_log(
-        f'[P3][LOAD] already_posted_today={sorted(posted_codes)} count={len(posted_codes)}',
+        f'[P3][LOAD] date={date_str} already_posted_today={sorted(posted_codes)} '
+        f'count={len(posted_codes)} note=only_this_date_is_checked',
         now=now,
     )
 
@@ -718,12 +771,12 @@ def run_p3_condition_job(now):
         stk_cd = stock.get('stk_cd', '')
         if not stk_cd:
             continue
-        if stk_cd in posted_codes:
+        if was_p3_posted_today(stk_cd, date_str):
             skipped += 1
             skipped_codes.append(stk_cd)
             datagather_log(
-                f'[P3][SKIP] stock_code={stk_cd} stock_name={stock.get("stk_nm", "")} '
-                f'reason=already_posted_today',
+                f'[P3][SKIP] date={date_str} stock_code={stk_cd} '
+                f'stock_name={stock.get("stk_nm", "")} reason=already_posted_today',
                 now=now,
             )
             continue
@@ -750,11 +803,12 @@ def run_p3_condition_job(now):
             )
             traceback.print_exc()
 
-    save_p3_posted_codes(date_str, posted_codes)
+    save_p3_posted_codes(date_str, posted_codes, now=now)
     print(f"[P3] Finished slot={slot}: added={added}, skipped={skipped}, errors={len(errors)}")
     datagather_log(
-        f'[P3][DONE] slot={slot} added={added} skipped={skipped} errors={len(errors)} '
-        f'added_codes={added_codes} skipped_codes={skipped_codes} error_details={errors}',
+        f'[P3][DONE] date={date_str} slot={slot} added={added} skipped={skipped} '
+        f'errors={len(errors)} added_codes={added_codes} skipped_codes={skipped_codes} '
+        f'error_details={errors}',
         now=now,
     )
     return {
