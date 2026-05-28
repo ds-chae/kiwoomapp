@@ -2496,9 +2496,14 @@ async def get_miche_data_api(proxy_path: str = "", token: str = Cookie(None, ali
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated"
         )
-    global stored_miche_data
+    global stored_miche_data, buy_queue
     current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    return {"status": "success", "data": stored_miche_data, "timestamp": current_time}
+    return {
+        "status": "success",
+        "data": stored_miche_data,
+        "timestamp": current_time,
+        "queued_buy": format_queued_buy(),
+    }
 
 
 stex_map = {"1": "KRX", "2": "NXT", "3": "SOR"}
@@ -2964,6 +2969,43 @@ def active_market():
 
 
 buy_queue = []
+
+
+def format_queued_buy():
+    """Format buy_queue entries for API/UI display."""
+    global buy_queue
+    formatted = []
+    for idx, bq in enumerate(buy_queue):
+        try:
+            trade_begin_hour, stk_cd, stk_nm, ord_uv, ord_qty, accounts, stex, trde_tp = bq
+        except (TypeError, ValueError):
+            continue
+        if stk_cd and str(stk_cd)[0] == 'A':
+            stk_cd = str(stk_cd)[1:]
+        if not isinstance(accounts, list):
+            if isinstance(accounts, str):
+                accounts = [acc.strip() for acc in accounts.split(',') if acc.strip()]
+            else:
+                accounts = list(accounts) if accounts else []
+        try:
+            price = int(ord_uv)
+            qty = int(ord_qty)
+        except (TypeError, ValueError):
+            price = ord_uv
+            qty = ord_qty
+        formatted.append({
+            'queue_index': idx,
+            'trade_begin_hour': trade_begin_hour,
+            'stock_code': stk_cd or '',
+            'stock_name': stk_nm or '',
+            'price': price,
+            'qty': qty,
+            'amount': (price * qty) if isinstance(price, int) and isinstance(qty, int) else 0,
+            'accounts': accounts,
+            'market': stex or '',
+            'trade_type': trde_tp or '',
+        })
+    return formatted
 
 
 def call_issue_buy_order(stk_cd, stk_nm, ord_uv, ord_qty, accounts, stex, trde_tp):

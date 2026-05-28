@@ -1059,6 +1059,17 @@
 			#miche-container .miche-orders-table td:nth-child(8) {
 				width: 60px;
 			}
+			#queued-buy-section {
+				margin-top: 16px;
+			}
+			#queued-buy-section .account-group-header h2 {
+				font-size: 1.05em;
+				color: #555;
+			}
+			.queued-buy-table td.accounts-cell {
+				font-size: 12px;
+				word-break: break-all;
+			}
 			@media screen and (max-width: 1600px) {
 				#miche-container {
 					overflow-x: auto;
@@ -2644,6 +2655,62 @@
 			});
 		}
 		
+		function buildQueuedBuySectionHtml(queuedBuy) {
+			const items = Array.isArray(queuedBuy) ? queuedBuy : [];
+			const rows = items.map(item => {
+				const code = item.stock_code || '';
+				const name = item.stock_name || '-';
+				const hour = item.trade_begin_hour != null ? String(item.trade_begin_hour) : '-';
+				const price = Number(item.price) || 0;
+				const qty = Number(item.qty) || 0;
+				const amount = Number(item.amount) || (price * qty);
+				const accounts = Array.isArray(item.accounts) ? item.accounts.join(', ') : (item.accounts || '-');
+				const market = item.market || '-';
+				return `
+					<tr>
+						<td>${hour}:00</td>
+						<td><strong>${code}</strong></td>
+						<td>${name}</td>
+						<td>${price > 0 ? price.toLocaleString() : '-'}</td>
+						<td>${qty > 0 ? qty.toLocaleString() : '0'}</td>
+						<td>${amount > 0 ? amount.toLocaleString() : '-'}</td>
+						<td class="accounts-cell">${accounts || '-'}</td>
+						<td>${market}</td>
+					</tr>`;
+			}).join('');
+			const body = rows || `
+				<tr>
+					<td colspan="8" style="text-align: center; padding: 16px; color: #7f8c8d;">
+						No queued buy orders
+					</td>
+				</tr>`;
+			return `
+				<div id="queued-buy-section">
+					<div class="account-group">
+						<div class="account-group-header">
+							<h2>Queued Buy</h2>
+						</div>
+						<table class="miche-orders-table queued-buy-table">
+							<thead>
+								<tr>
+									<th>Begin</th>
+									<th>Code</th>
+									<th>Name</th>
+									<th>Price</th>
+									<th>Qty</th>
+									<th>Amount</th>
+									<th>Accounts</th>
+									<th>Market</th>
+								</tr>
+							</thead>
+							<tbody>
+								${body}
+							</tbody>
+						</table>
+					</div>
+				</div>`;
+		}
+
 		function updateMiche() {
 			fetch('./api/miche-data')
 				.then(response => response.json())
@@ -2739,6 +2806,8 @@
 									</div>`;
 							}
 						}
+						
+						htmlContent += buildQueuedBuySectionHtml(result.queued_buy);
 						
 						micheContainer.innerHTML = htmlContent;
 						updateMobileDisplay();
