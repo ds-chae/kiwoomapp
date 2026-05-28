@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, time, date
 from au1001 import get_token, get_key_list, get_one_token
 import time as time_module
 import threading
+import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from fastapi import FastAPI, HTTPException, status, Cookie, Request, File, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, FileResponse
@@ -2074,7 +2075,9 @@ def format_account_data():
             
         formatted_data = []
         seen_keys = set()  # Track unique combinations of account and stock_code
-        
+        with interested_stocks_lock:
+            interested_snapshot = copy.deepcopy(interested_stocks)
+
         for account in iterator:
             if account.get("return_code") != 0:
                 continue
@@ -2133,8 +2136,7 @@ def format_account_data():
                 price_part = '-'
                 rate_part = '-'
                 
-                with interested_stocks_lock:
-                    sell_cond = copy.deepcopy(interested_stocks.get(stk_cd_clean))
+                sell_cond = interested_snapshot.get(stk_cd_clean)
                 if sell_cond:
                     
                     if 'sellprice' in sell_cond:
@@ -2480,7 +2482,7 @@ async def get_account_data_api(proxy_path: str = "", token: str = Cookie(None, a
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated"
         )
-    account_data = format_account_data()
+    account_data = await asyncio.to_thread(format_account_data)
     current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     return {"status": "success", "data": account_data, "timestamp": current_time, "current_status": current_status}
 
@@ -2663,22 +2665,15 @@ def _find_holding_indv_for_cut(acct_no: str, stk_cd_norm: str, jango_snapshot: d
     return None
 
 
-@app.post("/api/stop-loss-cut")
-@app.post("/{proxy_path:path}/api/stop-loss-cut")
-async def stop_loss_cut_api(request: dict, proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
+def _stop_loss_cut_sync(request: dict):
     """
-    손절(CUT) 단일 API:
+    손절(CUT) 단일 API (sync):
     1) sell price / sell rate / sell gap 을 0으로 저장
     2) 해당 종목 미체결 매수·매도 주문 취소
     3) 손절 금액·매수가·현재가·수수료 0.23% 로 매도 수량 산출 후 지정가 매도
     """
     global stored_miche_data, old_sel_price, interested_stocks, interested_stocks_lock
     global stored_jango_data
-    if not token or not verify_token(token):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-        )
     try:
         stock_code = (request.get("stock_code") or "").strip()
         stock_name = (request.get("stock_name") or "").strip()
@@ -2692,19 +2687,29 @@ async def stop_loss_cut_api(request: dict, proxy_path: str = "", token: str = Co
         log_print('', stock_code, f"Loss cut trying {stop_loss_amount}")
 
         # 1) 매도 규칙만 0으로 (stime·bamount 등 기존 필드는 유지)
+        updated_interested = False
+        stock_name_resolved = stock_name.strip() if stock_name else ""
         with interested_stocks_lock:
             if stock_code in interested_stocks:
                 st = interested_stocks[stock_code]
-                nm = stock_name.strip() if stock_name else ""
-                if nm:
-                    st["stock_name"] = nm
-                elif "stock_name" not in st or not st.get("stock_name"):
-                    st["stock_name"] = get_stockinfo(stock_code).get("name", "")
+                if not stock_name_resolved:
+                    stock_name_resolved = (st.get("stock_name") or "").strip()
                 st["sellprice"] = "0"
                 st["sellrate"] = 0.0
                 st["sellgap"] = "0"
-                if not save_interested_stocks_to_json():
-                    return {"status": "error", "message": "Failed to save interested stocks (sell settings)"}
+                updated_interested = True
+        if updated_interested:
+            if not stock_name_resolved:
+                stock_name_resolved = get_stockinfo(stock_code).get("name", "")
+                with interested_stocks_lock:
+                    if stock_code in interested_stocks:
+                        interested_stocks[stock_code]["stock_name"] = stock_name_resolved
+            elif stock_name:
+                with interested_stocks_lock:
+                    if stock_code in interested_stocks:
+                        interested_stocks[stock_code]["stock_name"] = stock_name_resolved
+            if not save_interested_stocks_to_json():
+                return {"status": "error", "message": "Failed to save interested stocks (sell settings)"}
 
         # 2) 미체결 매수·매도 취소
         cancel_results = cancel_all_buy_sell_orders_for_stock(stock_code)
@@ -2868,6 +2873,17 @@ async def stop_loss_cut_api(request: dict, proxy_path: str = "", token: str = Co
     except Exception as e:
         traceback.print_exc()
         return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/stop-loss-cut")
+@app.post("/{proxy_path:path}/api/stop-loss-cut")
+async def stop_loss_cut_api(request: dict, proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    return await asyncio.to_thread(_stop_loss_cut_sync, request)
 
 
 def cancel_related_buy_order(stk_cd):
@@ -3408,11 +3424,14 @@ async def add_interested_stock_api(request: dict, proxy_path: str = "",
         if not stock_code:
             return {"status": "error", "message": "stock_code is required"}
 
-        return set_interested_rate(stock_code, stock_name, color=color,
-                            btype = btype, bamount = bamount,
-                            stime = stime, yyyymmdd = yyyymmdd, sellprice = sellprice,
-                            sellrate = sellrate, sellgap = sellgap, clrate=clrate,
-                            is_pctoken=is_pctoken)
+        return await asyncio.to_thread(
+            set_interested_rate,
+            stock_code, stock_name, color=color,
+            btype=btype, bamount=bamount,
+            stime=stime, yyyymmdd=yyyymmdd, sellprice=sellprice,
+            sellrate=sellrate, sellgap=sellgap, clrate=clrate,
+            is_pctoken=is_pctoken,
+        )
     except Exception as e:
         print('Exception-> {}'.format(e))
         return {"status": "error", "message": str(e)}
@@ -3421,12 +3440,15 @@ async def add_interested_stock_api(request: dict, proxy_path: str = "",
 @app.delete("/{proxy_path:path}/api/interested-stocks/{stock_code}")
 async def delete_interested_stock_api(stock_code: str, proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
     """API endpoint to remove a stock from interested stocks list"""
-    # Check authentication
     if not token or not verify_token(token):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated"
         )
+    return await asyncio.to_thread(_delete_interested_stock_sync, stock_code)
+
+
+def _delete_interested_stock_sync(stock_code: str):
     global interested_stocks, interested_stocks_lock
     try:
         if not stock_code:
@@ -3434,7 +3456,6 @@ async def delete_interested_stock_api(stock_code: str, proxy_path: str = "", tok
 
         cancel_related_buy_order(stock_code)
 
-        # Remove the stock from interested list
         with interested_stocks_lock:
             exists = stock_code in interested_stocks
             if exists:
@@ -3443,11 +3464,9 @@ async def delete_interested_stock_api(stock_code: str, proxy_path: str = "", tok
         if not exists:
             return {"status": "error", "message": f"Stock code {stock_code} not found in interested list"}
 
-        # Save to file
         if save_interested_stocks_to_json():
             return {"status": "success", "message": f"Stock {stock_code} removed from interested list"}
-        else:
-            return {"status": "error", "message": "Failed to save to file"}
+        return {"status": "error", "message": "Failed to save to file"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 

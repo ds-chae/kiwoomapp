@@ -1520,7 +1520,7 @@
 			const profitClass = getProfitClass(item.profit_rate);
 			const rmndQty = item.rmnd_qty || '0';
 			return `
-				<tr data-row-id="${rowId}" data-account="${item.account}" data-stock-code="${item.stock_code}" data-stock-name="${item.stock_name}" data-preset-price="${item.preset_sell_price}" data-avg-buy-price="${item.avg_buy_price}" onclick="selectRow(this)">
+				<tr data-row-id="${rowId}" data-account="${item.account}" data-stock-code="${item.stock_code}" data-stock-name="${item.stock_name}" data-preset-price="${item.preset_sell_price}" data-avg-buy-price="${item.avg_buy_price}">
 					<td>${item.account}</td>
 					<td><strong>${item.stock_code}</strong></td>
 					<td>${item.stock_name}</td>
@@ -1532,17 +1532,43 @@
 			`;
 		}
 		
+		let selectRowFetchGen = 0;
+
+		function setupHoldingsTableClickHandler() {
+			const container = document.getElementById('table-container');
+			if (!container || container.__holdingsClickBound) return;
+			container.__holdingsClickBound = true;
+			container.addEventListener('click', (e) => {
+				if (e.target.closest('button, select, input, textarea, a, label')) return;
+				const row = e.target.closest('tr[data-stock-code][data-row-id]');
+				if (!row || row.classList.contains('sell-price-edit-area')) return;
+				if (!row.closest('#table-container .account-group table tbody')) return;
+				selectRow(row);
+			});
+		}
+
 		function selectRow(rowElement) {
-			// Remove selected class from all rows
-			document.querySelectorAll('tbody tr').forEach(tr => {
+			if (!rowElement) return;
+			const stockCode = rowElement.getAttribute('data-stock-code');
+			if (!stockCode) return;
+
+			// Toggle off when clicking the same row again
+			const existingEditArea = rowElement.nextElementSibling;
+			if (existingEditArea && existingEditArea.classList.contains('sell-price-edit-area')) {
+				existingEditArea.remove();
+				selectRowFetchGen++;
+				return;
+			}
+
+			document.querySelectorAll('#table-container .sell-price-edit-area').forEach(area => {
+				area.remove();
+			});
+
+			document.querySelectorAll('#table-container .account-group tbody tr[data-row-id]').forEach(tr => {
 				tr.classList.remove('selected');
 			});
-			
-			// Add selected class to clicked row
 			rowElement.classList.add('selected');
-			
-			// Get stock code, stock name, sell price, and sell rate from row
-			const stockCode = rowElement.getAttribute('data-stock-code');
+
 			const stockName = rowElement.getAttribute('data-stock-name') || '';
 			const sellPrice = rowElement.getAttribute('data-sell-price') || '';
 			const sellRate = rowElement.getAttribute('data-sell-rate') || '';
@@ -1595,34 +1621,29 @@
 				document.getElementById('interested-stock-rate-input').value = '';
 			}
 			document.getElementById('interested-stock-gaprate-input').value = '';
-			
-			// Scroll to update section
-			
-			// Show/hide input area for editing sell price/rate/sellgap
-			// Remove any existing edit areas
-			document.querySelectorAll('.sell-price-edit-area').forEach(area => {
-				area.remove();
-			});
-			
-			// Check if edit area already exists for this row
-			const existingEditArea = rowElement.nextElementSibling;
-			if (existingEditArea && existingEditArea.classList.contains('sell-price-edit-area')) {
-				// Toggle: if already showing, hide it
-				existingEditArea.remove();
-			} else {
-				const accountForCut = rowElement.getAttribute('data-account') || (rowElement.querySelector('td') && rowElement.querySelector('td').textContent.trim()) || '';
-				// Create new edit area
-				const editArea = document.createElement('tr');
-				editArea.className = 'sell-price-edit-area show';
-				
-				// Get sellprice, sellgap, sellrate, and bamount from interested_stocks if available
-				let sellPriceFromAPI = '';
-				let sellgap = '';
-				let sellrateFromAPI = '';
-				let yyyymmddFromAPI = '';
-				fetch('./api/interested-stocks?t=' + Date.now())
+
+			const updateSection = document.querySelector('.update-section');
+			if (updateSection) {
+				updateSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+			}
+
+			const accountForCut = rowElement.getAttribute('data-account') || '';
+			const fetchGen = ++selectRowFetchGen;
+			const editArea = document.createElement('tr');
+			editArea.className = 'sell-price-edit-area show';
+			editArea.setAttribute('data-edit-for', stockCode);
+			editArea.innerHTML = '<td colspan="6"><div class="sell-price-edit-form" style="padding:8px;color:#666;">Loading sell settings...</div></td>';
+			rowElement.parentNode.insertBefore(editArea, rowElement.nextSibling);
+
+			let sellPriceFromAPI = '';
+			let sellgap = '';
+			let sellrateFromAPI = '';
+			let yyyymmddFromAPI = '';
+			fetch('./api/interested-stocks?t=' + Date.now())
 					.then(response => response.json())
 					.then(result => {
+						if (fetchGen !== selectRowFetchGen) return;
+						if (!rowElement.isConnected) return;
 						if (result.status === 'success' && result.data && result.data[stockCode]) {
 							// Only prefill sell price when an existing value is saved
 							sellPriceFromAPI = result.data[stockCode].sellprice || result.data[stockCode].sell_price || result.data[stockCode].price || '';
@@ -1639,7 +1660,7 @@
 						
 						// Create edit form
 						editArea.innerHTML = `
-							<td colspan="7">
+							<td colspan="6">
 								<div class="sell-price-edit-form sell-price-edit-form--with-cut">
 									<div class="sell-price-edit-fields">
 									<input type="hidden" id="edit-yyyymmdd-${stockCode}" value="${ymdVal}">
@@ -1673,15 +1694,11 @@
 								</div>
 							</td>
 						`;
-						
-						// Insert after the clicked row
-						rowElement.parentNode.insertBefore(editArea, rowElement.nextSibling);
-						
-						// Add select-all on click for input fields
+
 						const priceInput = document.getElementById(`edit-sell-price-${stockCode}`);
 						const rateInput = document.getElementById(`edit-sell-rate-${stockCode}`);
 						const gapInput = document.getElementById(`edit-sell-gap-${stockCode}`);
-						
+
 						if (priceInput) {
 							priceInput.addEventListener('click', function() { this.select(); });
 							priceInput.addEventListener('focus', function() { this.select(); });
@@ -1697,12 +1714,12 @@
 						bindStopLossCutControls(stockCode, stockName, accountForCut);
 					})
 					.catch(error => {
+						if (fetchGen !== selectRowFetchGen) return;
+						if (!rowElement.isConnected) return;
 						console.error('Error fetching sellgap and sellrate:', error);
-						// Still create edit area without sellgap and sellrate from API
-						// Use row attributes as fallback (only fill sell price if it exists)
 						const fallbackSellPrice = (sellPrice && sellPrice !== '-') ? sellPrice : '';
 						editArea.innerHTML = `
-							<td colspan="7">
+							<td colspan="6">
 								<div class="sell-price-edit-form sell-price-edit-form--with-cut">
 									<div class="sell-price-edit-fields">
 									<input type="hidden" id="edit-yyyymmdd-${stockCode}" value="">
@@ -1736,13 +1753,11 @@
 								</div>
 							</td>
 						`;
-						rowElement.parentNode.insertBefore(editArea, rowElement.nextSibling);
-						
-						// Add select-all on click for input fields
+
 						const priceInput = document.getElementById(`edit-sell-price-${stockCode}`);
 						const rateInput = document.getElementById(`edit-sell-rate-${stockCode}`);
 						const gapInput = document.getElementById(`edit-sell-gap-${stockCode}`);
-						
+
 						if (priceInput) {
 							priceInput.addEventListener('click', function() { this.select(); });
 							priceInput.addEventListener('focus', function() { this.select(); });
@@ -1757,7 +1772,6 @@
 						}
 						bindStopLossCutControls(stockCode, stockName, accountForCut);
 					});
-			}
 		}
 		
 		function deleteRowSellPrice(stockCode, stockName) {
@@ -1846,46 +1860,98 @@
 			document.getElementById('interested-stock-gaprate-input').value = '';
 		}
 		
+		let accountTableFailureCount = 0;
+		let accountTableUpdateInFlight = false;
+		const ACCOUNT_TABLE_FAILURE_THRESHOLD = 3;
+
+		function setBackendConnectionWarning(show) {
+			let el = document.getElementById('backend-connection-warning');
+			if (show) {
+				if (!el) {
+					el = document.createElement('span');
+					el.id = 'backend-connection-warning';
+					el.style.cssText = 'color:#c0392b;margin-left:12px;font-size:0.9em;';
+					el.textContent = 'Connection unstable — retrying...';
+					const headlineTime = document.getElementById('headline-time');
+					if (headlineTime && headlineTime.parentNode) {
+						headlineTime.parentNode.appendChild(el);
+					}
+				}
+			} else if (el) {
+				el.remove();
+			}
+		}
+
+		function fetchJsonOrReject(url, label) {
+			return fetch(url).then(r => {
+				if (r.status === 401) {
+					window.location.reload();
+					return Promise.reject('Unauthorized');
+				}
+				if (!r.ok) {
+					return Promise.reject(new Error(label + ' HTTP ' + r.status));
+				}
+				return r.json();
+			});
+		}
+
 		function updateTable() {
-			// Fetch both account data and auto sell status in parallel
-			Promise.all([
-				fetch('./api/account-data').then(r => {
-					if (r.status === 401) {
-						window.location.reload();
-						return Promise.reject('Unauthorized');
-					}
-					return r.json();
-				}),
-				fetch('./api/auto-sell').then(r => {
-					if (r.status === 401) {
-						window.location.reload();
-						return Promise.reject('Unauthorized');
-					}
-					return r.json();
-				})
+			if (accountTableUpdateInFlight) {
+				return;
+			}
+			accountTableUpdateInFlight = true;
+
+			Promise.allSettled([
+				fetchJsonOrReject('./api/account-data', 'account-data'),
+				fetchJsonOrReject('./api/auto-sell', 'auto-sell')
 			])
-				.then(([accountResult, autoSellResult]) => {
-					if (accountResult.status === 'success') {
-						// Update headline with timestamp and status
-						if (accountResult.timestamp) {
-							const headlineTime = document.getElementById('headline-time');
-							if (headlineTime) {
-								let headlineText = 'Account ' + accountResult.timestamp;
-								if (accountResult.current_status) {
-									headlineText += ' (' + accountResult.current_status + ')';
-								}
-								headlineTime.textContent = headlineText;
-							}
+				.then((results) => {
+					const accountResult = results[0];
+					const autoSellResult = results[1];
+
+					if (accountResult.status === 'rejected') {
+						if (accountResult.reason === 'Unauthorized') {
+							return;
 						}
-						const data = accountResult.data || [];
-						const tableContainer = document.getElementById('table-container');
-						
-						// Get auto sell status data
-						const autoSellData = (autoSellResult.status === 'success' && autoSellResult.data) ? autoSellResult.data : {};
-						
-						// Group data by account on the frontend
-						const accountGroups = {};
-						for (const item of data) {
+						accountTableFailureCount++;
+						console.error('Error updating table (account-data):', accountResult.reason);
+						if (accountTableFailureCount >= ACCOUNT_TABLE_FAILURE_THRESHOLD) {
+							setBackendConnectionWarning(true);
+						}
+						return;
+					}
+
+					accountTableFailureCount = 0;
+					setBackendConnectionWarning(false);
+
+					const accountData = accountResult.value;
+					if (accountData.status !== 'success') {
+						console.error('account-data returned error:', accountData.message || accountData);
+						return;
+					}
+
+					const autoSellData = (autoSellResult.status === 'fulfilled'
+						&& autoSellResult.value.status === 'success'
+						&& autoSellResult.value.data)
+						? autoSellResult.value.data
+						: {};
+
+					if (accountData.timestamp) {
+						const headlineTime = document.getElementById('headline-time');
+						if (headlineTime) {
+							let headlineText = 'Account ' + accountData.timestamp;
+							if (accountData.current_status) {
+								headlineText += ' (' + accountData.current_status + ')';
+							}
+							headlineTime.textContent = headlineText;
+						}
+					}
+					const data = accountData.data || [];
+					const tableContainer = document.getElementById('table-container');
+
+					// Group data by account on the frontend
+					const accountGroups = {};
+					for (const item of data) {
 							const acctNo = item.account || '';
 							if (!accountGroups[acctNo]) {
 								accountGroups[acctNo] = [];
@@ -2038,6 +2104,8 @@
 								
 								let row = rowMap.get(rowId);
 								if (row) {
+									row.removeAttribute('onclick');
+									row.setAttribute('data-account', acctNo);
 									// Check if there's an edit area after this row - preserve it
 									const editArea = editAreaMap.get(rowId);
 									
@@ -2080,12 +2148,12 @@
 									// Create new row
 									row = document.createElement('tr');
 									row.setAttribute('data-row-id', rowId);
+									row.setAttribute('data-account', acctNo);
 									row.setAttribute('data-stock-code', item.stock_code);
 									row.setAttribute('data-stock-name', item.stock_name);
 									row.setAttribute('data-sell-price', sellPrice);
 									row.setAttribute('data-sell-rate', sellRate);
 									row.setAttribute('data-avg-buy-price', item.avg_buy_price || '');
-									row.setAttribute('onclick', 'selectRow(this)');
 									row.innerHTML = cellContent;
 									tbody.appendChild(row);
 								}
@@ -2104,19 +2172,9 @@
 							}
 						}
 						rebuildAccountTabs();
-					}
 				})
-				.catch(error => {
-					console.error('Error updating table:', error);
-					const tableContainer = document.getElementById('table-container');
-					if (tableContainer) {
-						tableContainer.innerHTML = `
-							<div class="empty-state error-state" style="border: 2px solid #e74c3c; background-color: #fadbd8; padding: 20px; border-radius: 8px; text-align: center;">
-								<h2 style="color: #c0392b; margin-bottom: 10px;">Backend is down. Retrying...</h2>
-								<p style="color: #7f8c8d;">Connection to the server failed. Will try again automatically.</p>
-							</div>
-						`;
-					}
+				.finally(() => {
+					accountTableUpdateInFlight = false;
 				});
 		}
 		
@@ -3999,6 +4057,7 @@
 		}, 1000);
 		
 		// Initial update after page load
+		setupHoldingsTableClickHandler();
 		updateTable();
 		updateMiche();
 		updateSellPrices();
