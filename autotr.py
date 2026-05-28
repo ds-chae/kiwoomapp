@@ -2506,6 +2506,18 @@ async def get_miche_data_api(proxy_path: str = "", token: str = Cookie(None, ali
     }
 
 
+@app.delete("/api/queued-buy/{queue_index}")
+@app.delete("/{proxy_path:path}/api/queued-buy/{queue_index}")
+async def delete_queued_buy_api(queue_index: int, proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
+    """API endpoint to remove a queued buy order"""
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    return delete_queued_buy(queue_index)
+
+
 stex_map = {"1": "KRX", "2": "NXT", "3": "SOR"}
 
 @app.post("/api/cancel-order")
@@ -3006,6 +3018,28 @@ def format_queued_buy():
             'trade_type': trde_tp or '',
         })
     return formatted
+
+
+def delete_queued_buy(queue_index: int):
+    """Remove one entry from buy_queue by index."""
+    global buy_queue
+    try:
+        idx = int(queue_index)
+    except (TypeError, ValueError):
+        return {"status": "error", "message": "Invalid queue index"}
+    if idx < 0 or idx >= len(buy_queue):
+        return {"status": "error", "message": f"Queue index {idx} not found"}
+    removed = buy_queue.pop(idx)
+    try:
+        trade_begin_hour, stk_cd, stk_nm, ord_uv, ord_qty, accounts, stex, trde_tp = removed
+        log_print('', stk_cd or '', f"Deleted queued buy #{idx}: {ord_qty} shares of {stk_nm or stk_cd} at {ord_uv}")
+    except (TypeError, ValueError):
+        log_print('', '000000', f"Deleted queued buy #{idx}")
+    return {
+        "status": "success",
+        "message": "Queued buy removed",
+        "queued_buy": format_queued_buy(),
+    }
 
 
 def call_issue_buy_order(stk_cd, stk_nm, ord_uv, ord_qty, accounts, stex, trde_tp):
