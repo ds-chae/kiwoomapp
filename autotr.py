@@ -406,6 +406,42 @@ def get_jango(market = 'KRX'):
     return jango
 
 
+def is_jango_data_valid(jango_data):
+    """Return True only when every configured account has a successful jango response."""
+    if not jango_data or not isinstance(jango_data, dict):
+        return False
+    expected_accounts = {(key.get('ACCT') or '').strip() for key in key_list.values()}
+    expected_accounts.discard('')
+    if not expected_accounts:
+        return False
+    for acct in expected_accounts:
+        account = jango_data.get(acct)
+        if not isinstance(account, dict):
+            return False
+        if account.get('return_code') != 0:
+            return False
+    return True
+
+
+def apply_jango_data_update(new_jango_data):
+    """Update stored jango snapshots only when new data is fully valid."""
+    global stored_jango_data, previous_jango_data_simplified
+    if not is_jango_data_valid(new_jango_data):
+        log_print('', '000000', 'get_jango returned invalid/partial data; keeping previous holdings')
+        return False
+
+    current_stocks = extract_stock_codes_and_amounts(new_jango_data)
+    jango_data_changed = (previous_jango_data_simplified != current_stocks)
+    if jango_data_changed:
+        save_jango_data_to_json(current_stocks)
+        if previous_jango_data_simplified:
+            check_and_handle_sold_stocks(previous_jango_data_simplified, new_jango_data)
+        previous_jango_data_simplified = current_stocks.copy()
+
+    stored_jango_data = new_jango_data
+    return True
+
+
 def call_fn_kt00018(log_jango, market, ACCT, MY_ACCESS_TOKEN):
     params = {
         'qry_tp': '2', # 1:Hapsan, 2:Gaebyul
@@ -1273,7 +1309,10 @@ def daily_work():
         new_jango_data = get_jango()
     except Exception as e:
         log_print('', '000000', f"Error updating jango data: {e}")
-        return
+        new_jango_data = None
+
+    if new_jango_data is not None:
+        apply_jango_data_update(new_jango_data)
 
     try:
         stored_miche_data = get_miche()
@@ -1283,24 +1322,6 @@ def daily_work():
         log_print('', '000000', f"Error updating miche data: {e}")
         return
 
-    # Extract stock codes and amounts from current jango data
-    current_stocks = extract_stock_codes_and_amounts(new_jango_data)
-    
-    # Check if jango data has changed by comparing stock codes and amounts
-    jango_data_changed = (previous_jango_data_simplified != current_stocks)
-    
-    if jango_data_changed:
-        # Save new jango data only when differences are found
-        save_jango_data_to_json(current_stocks)
-        
-        # Check for sold stocks before updating previous data
-        if previous_jango_data_simplified:
-            check_and_handle_sold_stocks(previous_jango_data_simplified, new_jango_data)
-        
-        # Update previous jango data to current for next comparison
-        previous_jango_data_simplified = current_stocks.copy()
-    
-    stored_jango_data = new_jango_data
     if is_between(now, nxt_start_time, nxt_end_time):
         current_status = 'NXT'
         sell_jango(stored_jango_data, 'NXT')
@@ -1856,31 +1877,15 @@ async def lifespan(app: FastAPI):
     previous_jango_data_simplified = load_jango_data_from_json()
     
     try:
-        stored_jango_data = get_jango('KRX')
+        init_jango_data = get_jango('KRX')
         print("KRX jango data initialized")
-        print(stored_jango_data)
-        # Extract stock codes and amounts from current jango data
-        current_stocks = extract_stock_codes_and_amounts(stored_jango_data)
-        
-        # Check if jango data has changed by comparing stock codes and amounts
-        jango_data_changed = (previous_jango_data_simplified != current_stocks)
-        
-        if jango_data_changed:
-            print('{} jango changed.'.format(now))
-            # Save jango data to file only when differences are found
-            save_jango_data_to_json(current_stocks)
-            
-            # Check for sold stocks if we had previous data
-            if previous_jango_data_simplified:
-                check_and_handle_sold_stocks(previous_jango_data_simplified, stored_jango_data)
-            
-            # Update previous jango data to current for next comparison
-            previous_jango_data_simplified = current_stocks.copy()
+        print(init_jango_data)
+        if apply_jango_data_update(init_jango_data):
+            print('{} jango initialized.'.format(now))
         else:
-            print("Jango data unchanged, skipping save")
+            print('Jango initialization skipped due to invalid/partial response')
     except Exception as e:
         print(f"Error initializing KRX jango data: {e}")
-        stored_jango_data = {}
     
     # Initialize stored miche data by calling once immediately (non-blocking, allow failure)
     print("Initializing miche data...")
