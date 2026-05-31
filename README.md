@@ -336,3 +336,17 @@ cut 실행시에 cur_prc를 이미 받아왔으므로 cur_prc_f로부터 매도 
 when click cut, "No account had a valid CUT sell target"
 
 add a screen to modify some text file in /home/cds directory. in windows that directory is c:/temp. the user enter this screen thru clicking a button "CONN". the button should be placed at the and of holdings ui. the scrren then read files allowip.txt and allowcon.txt and display them in text input boxes. then a "MODIFY" button exits to modify those texts. build backend api and ui to do these functions.
+
+datagather.py를 수정한다. 오전 11:30부터  오후 15:00까지 5분 간격으로 kiwoom restapi 중에 조건 검색을 조건명 P3에 대해서 실행하고, 그 결과를 https://sojucoin.com/stock//api/interested-stocks를 통하여 interested_stocks에 반영되도록 하라. 한 stock code에 대하여 하루에는 한 번만 호출하도록 한다. 호출 시 변수는 bcolor = "노", btype="CL", bamount=500000, clrate=70, cookie="pctoken=allow_interest_pc" 로 설정한다.  https://sojucoin.com/stock//api/interested-stocks를 분석하여, 부족한 변수는 디폴트 값으로 설정하라. api backend는 autotr.py에 존재한다.
+
+datagather.py를 수정하라. P3 조건 검색 결과를 전송할 때에 logs/yyyymmdd/datagather.log 파일에 상세 내용을 로그로 기록하도록 하라.
+
+실제로 서버는 정상 동작 중이었는데 front end에서 간헐적으로 "Backend is down..." 메시지가 나오면서 자료가 보이지 않는 경우가 있음. 이런 문제가 발생하는 원인을 찾아서 수정하기 바람. 서버가 특정 작업을 하는 동안에 rest api request를 처리하지 못하는 문제가 발생할 수 있는지 점검할 것
+
+frontend에서 보유 종목을 클릭했을 때 아무런 반응이 없을 떄가 있음. 원인을 파악해서 수정하라
+
+orders section 테이블 하단에 queued_buy 내용을 표시할 것. orders request 의 응답 뒷부분에 queued_buy 내용을 추가해서 ui 에서 표시하도록 수정하라
+
+"Queued Buy"라는 타이틀과 타이틀 섹션은 제거하라. 테이블의 컬럼 헤더와 내용만 표시하고, 각각의 행에 DELETE 버튼을 추가하라. 백엔드에 Queued_buy에 대한 delete 기능도 구현하라.
+
+get_jango 호출에서 오류가 발생하면 보유 종목이 없어진 것으로 판단해서 btype이 CL에서 SCL로 변경이 되는 오류가 있음. get_jango 호출시에 오류가 발생하면 보유종목 목록에 반영하지 않도록 수정하라.
