@@ -1664,6 +1664,9 @@
 			}
 			document.getElementById('interested-stock-gaprate-input').value = '';
 
+			// Fill 매도 제외 section
+			fillSellExcludeInputs(stockCode, stockName);
+
 			const updateSection = document.querySelector('.update-section');
 			if (updateSection) {
 				updateSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -1900,6 +1903,9 @@
 			document.getElementById('interested-stock-name-input').value = stockName;
 			document.getElementById('interested-stock-rate-input').value = '';
 			document.getElementById('interested-stock-gaprate-input').value = '';
+
+			// Fill 매도 제외 section
+			fillSellExcludeInputs(stockCode, stockName);
 		}
 		
 		let accountTableFailureCount = 0;
@@ -3878,6 +3884,13 @@
 				});
 		}
 
+		function fillSellExcludeInputs(stockCode, stockName) {
+			const codeInput = document.getElementById('sell-exclude-code-input');
+			const nameInput = document.getElementById('sell-exclude-name-input');
+			if (codeInput) codeInput.value = stockCode || '';
+			if (nameInput) nameInput.value = stockName || '';
+		}
+
 		function addSellExclude() {
 			const codeInput = document.getElementById('sell-exclude-code-input');
 			const nameInput = document.getElementById('sell-exclude-name-input');
@@ -3987,6 +4000,9 @@
 			document.getElementById('buy-stock-name-input').value = stockName;
 			document.getElementById('buy-price-input').value = '';
 			document.getElementById('buy-amount-input').value = '';
+
+			// Fill 매도 제외 section
+			fillSellExcludeInputs(stockCode, stockName);
 			
 			// Scroll to interested stocks section
 			document.getElementById('interested-stocks-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
