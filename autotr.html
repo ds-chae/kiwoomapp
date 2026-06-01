@@ -1486,6 +1486,41 @@
 					</div>
 				</div>
 			</div>
+			<div class="interested-stocks-section" id="sell-exclude-section">
+				<h2>매도 제외</h2>
+				<div class="add-interested-form">
+					<div class="add-interested-form-content">
+						<div class="form-group">
+							<label for="sell-exclude-code-input">Code</label>
+							<input type="text" id="sell-exclude-code-input" placeholder="e.g., 005930" />
+						</div>
+						<div class="form-group">
+							<input type="text" id="sell-exclude-name-input" placeholder="e.g., Samsung Electronics" />
+						</div>
+						<button class="btn-add-interested" onclick="addSellExclude()">추가</button>
+					</div>
+				</div>
+				<div id="sell-exclude-container">
+					<div class="account-group">
+						<table>
+							<thead>
+								<tr>
+									<th>Code</th>
+									<th>Name</th>
+									<th>Action</th>
+								</tr>
+							</thead>
+							<tbody>
+								<tr>
+									<td colspan="3" style="text-align: center; padding: 20px; color: #7f8c8d;">
+										Loading...
+									</td>
+								</tr>
+							</tbody>
+						</table>
+					</div>
+				</div>
+			</div>
 		</div>
 		<script>
 		function checkAllBuyAccounts() {
@@ -3766,6 +3801,157 @@
 			});
 		}
 		
+		function escapeHtml(text) {
+			return String(text == null ? '' : text)
+				.replace(/&/g, '&amp;')
+				.replace(/</g, '&lt;')
+				.replace(/>/g, '&gt;')
+				.replace(/"/g, '&quot;')
+				.replace(/'/g, '&#39;');
+		}
+
+		function updateSellExclude() {
+			const timestamp = new Date().getTime();
+			fetch('./api/sell-exclude?t=' + timestamp)
+				.then(response => response.json())
+				.then(result => {
+					if (result.status !== 'success') return;
+					const data = result.data || {};
+					const container = document.getElementById('sell-exclude-container');
+					if (!container) return;
+					const section = document.getElementById('sell-exclude-section');
+					if (section) section.style.display = 'block';
+
+					const codes = Object.keys(data).sort();
+					const header = `
+						<thead>
+							<tr>
+								<th>Code</th>
+								<th>Name</th>
+								<th>Action</th>
+							</tr>
+						</thead>`;
+
+					if (codes.length === 0) {
+						container.innerHTML = `
+							<div class="account-group">
+								<table>
+									${header}
+									<tbody>
+										<tr>
+											<td colspan="3" style="text-align: center; padding: 20px; color: #7f8c8d;">
+												매도 제외 종목이 없습니다
+											</td>
+										</tr>
+									</tbody>
+								</table>
+							</div>`;
+						return;
+					}
+
+					const rows = codes.map(code => {
+						const name = data[code] || '';
+						const safeCode = escapeHtml(code);
+						const safeName = escapeHtml(name);
+						return `
+							<tr data-stock-code="${safeCode}" data-stock-name="${safeName}">
+								<td><strong>${safeCode}</strong></td>
+								<td>${safeName || '-'}</td>
+								<td>
+									<button class="btn-remove-interested" onclick="event.stopPropagation(); removeSellExclude('${safeCode}', '${safeName}')" title="매도 제외 해제">삭제</button>
+								</td>
+							</tr>`;
+					}).join('');
+
+					container.innerHTML = `
+						<div class="account-group">
+							<table>
+								${header}
+								<tbody>
+									${rows}
+								</tbody>
+							</table>
+						</div>`;
+				})
+				.catch(error => {
+					console.error('Error updating sell-exclude:', error);
+				});
+		}
+
+		function addSellExclude() {
+			const codeInput = document.getElementById('sell-exclude-code-input');
+			const nameInput = document.getElementById('sell-exclude-name-input');
+			const stockCode = codeInput.value.trim();
+			const stockName = nameInput.value.trim();
+			if (!stockCode) {
+				showMessage('종목 코드를 입력하세요', 'error');
+				return;
+			}
+			fetch('./api/sell-exclude', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ stock_code: stockCode, stock_name: stockName || null })
+			})
+			.then(async (response) => {
+				let data = {};
+				try { data = await response.json(); } catch (e) { data = {}; }
+				if (response.status === 401) {
+					const loginPath = window.location.pathname.includes('/stock') ? '/stock/login' : '/login';
+					window.location.href = loginPath;
+					return { status: 'error', message: 'Not authenticated' };
+				}
+				return data;
+			})
+			.then(result => {
+				if (result.status === 'success') {
+					showMessage('매도 제외 종목이 추가되었습니다', 'success');
+					codeInput.value = '';
+					nameInput.value = '';
+					updateSellExclude();
+				} else {
+					showMessage('Error: ' + result.message, 'error');
+				}
+			})
+			.catch(error => {
+				showMessage('매도 제외 추가 오류: ' + error, 'error');
+			});
+		}
+
+		function removeSellExclude(stockCode, stockName) {
+			if (!stockCode) {
+				showMessage('Stock code is missing', 'error');
+				return;
+			}
+			if (!confirm(`${stockName || stockCode} 매도 제외를 해제할까요?`)) {
+				return;
+			}
+			fetch('./api/sell-exclude/' + encodeURIComponent(stockCode), {
+				method: 'DELETE',
+				headers: { 'Content-Type': 'application/json' }
+			})
+			.then(async (response) => {
+				let data = {};
+				try { data = await response.json(); } catch (e) { data = {}; }
+				if (response.status === 401) {
+					const loginPath = window.location.pathname.includes('/stock') ? '/stock/login' : '/login';
+					window.location.href = loginPath;
+					return { status: 'error', message: 'Not authenticated' };
+				}
+				return data;
+			})
+			.then(result => {
+				if (result.status === 'success') {
+					showMessage('매도 제외가 해제되었습니다', 'success');
+					updateSellExclude();
+				} else {
+					showMessage('Error: ' + result.message, 'error');
+				}
+			})
+			.catch(error => {
+				showMessage('매도 제외 해제 오류: ' + error, 'error');
+			});
+		}
+
 		function selectInterestedStockRow(rowElement) {
 			// Remove selected class from all rows
 			document.querySelectorAll('#interested-stocks-container tbody tr').forEach(tr => {
@@ -4153,6 +4339,7 @@
 			updateMiche();
 			updateSellPrices();
 			updateInterestedStocks();
+			updateSellExclude();
 			// Note: updateMobileDisplay() is called inside updateMiche() after table is rendered
 		}, 1000);
 		
@@ -4162,6 +4349,7 @@
 		updateMiche();
 		updateSellPrices();
 		updateInterestedStocks();
+		updateSellExclude();
 		loadAccountCheckboxes();
 		// Update mobile display after initial load
 		setTimeout(updateMobileDisplay, 500);

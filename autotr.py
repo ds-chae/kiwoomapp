@@ -53,6 +53,11 @@ INTERESTED_STOCKS_FILE = 'interested_stocks.json'
 interested_stocks = {}
 interested_stocks_lock = threading.RLock()
 
+# Sell-exclude list: stocks that must NOT be auto-sold ({stock_code: stock_name})
+SELL_EXCLUDE_FILE = 'sell_exclude.json'
+sell_exclude = {}
+sell_exclude_lock = threading.RLock()
+
 # Jango data file
 JANGO_DATA_FILE = 'jango_data.json'
 
@@ -856,6 +861,10 @@ def sell_jango(jango, market):
             for indv in acnt_evlt_remn_indv_tot:
                 stk_cd = _normalize_stk_cd(indv.get('stk_cd', ''))
                 stk_nm = indv.get('stk_nm', '')
+                # Skip stocks that are in the sell-exclude list
+                if is_sell_excluded(stk_cd):
+                    log_print('', stk_cd, f'Skip auto-sell (sell-excluded): {stk_nm}')
+                    continue
                 sell_it = True
                 if market == 'NXT':
                     if get_stockinfo(stk_cd)['nxtEnable'] != 'Y':
@@ -1417,6 +1426,24 @@ auto_sell_enabled = {}
 def load_dictionaries_from_json():
     """Load auto_sell_enabled, and interested_stocks from JSON files"""
     global auto_sell_enabled, interested_stocks, interested_stocks_lock
+    global sell_exclude, sell_exclude_lock
+
+    # Load sell_exclude
+    if os.path.exists(SELL_EXCLUDE_FILE):
+        try:
+            with open(SELL_EXCLUDE_FILE, 'r', encoding='utf-8') as f:
+                loaded_exclude = json.load(f)
+            with sell_exclude_lock:
+                sell_exclude = loaded_exclude if isinstance(loaded_exclude, dict) else {}
+            print(f"Loaded sell_exclude from {SELL_EXCLUDE_FILE}: {sell_exclude}")
+        except Exception as e:
+            print(f"Error loading sell_exclude: {e}")
+            with sell_exclude_lock:
+                sell_exclude = {}
+    else:
+        with sell_exclude_lock:
+            sell_exclude = {}
+        print(f"Created new sell_exclude dictionary")
 
     # Load auto_sell_enabled
     if os.path.exists(AUTO_SELL_FILE):
@@ -1533,6 +1560,29 @@ def save_auto_sell_to_json():
     except Exception as e:
         print(f"Error saving auto_sell_enabled: {e}")
         return False
+
+def save_sell_exclude_to_json():
+    """Save sell_exclude to JSON file"""
+    global sell_exclude, sell_exclude_lock
+    try:
+        with sell_exclude_lock:
+            data = copy.deepcopy(sell_exclude)
+        with open(SELL_EXCLUDE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        print(f"Saved sell_exclude to {SELL_EXCLUDE_FILE}")
+        return True
+    except Exception as e:
+        print(f"Error saving sell_exclude: {e}")
+        return False
+
+
+def is_sell_excluded(stk_cd):
+    """Return True if the stock code is in the sell-exclude list."""
+    global sell_exclude, sell_exclude_lock
+    code = _normalize_stk_cd(stk_cd)
+    with sell_exclude_lock:
+        return code in sell_exclude
+
 
 def save_interested_stocks_to_json():
     """Save interested_stocks to JSON file"""
@@ -3283,6 +3333,89 @@ async def get_interested_stocks_api(proxy_path: str = "", token: str = Cookie(No
     with interested_stocks_lock:
         data = copy.deepcopy(interested_stocks)
     return {"status": "success", "data": data, "timestamp": current_time}
+
+
+@app.get("/api/sell-exclude")
+@app.get("/{proxy_path:path}/api/sell-exclude")
+async def get_sell_exclude_api(proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
+    """API endpoint to get the sell-exclude list ({stock_code: stock_name})"""
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+    global sell_exclude, sell_exclude_lock
+    current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    with sell_exclude_lock:
+        data = copy.deepcopy(sell_exclude)
+    return {"status": "success", "data": data, "timestamp": current_time}
+
+
+@app.post("/api/sell-exclude")
+@app.post("/{proxy_path:path}/api/sell-exclude")
+async def add_sell_exclude_api(request: dict, proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
+    """API endpoint to add a stock to the sell-exclude list"""
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+    return await asyncio.to_thread(_add_sell_exclude_sync, request)
+
+
+def _add_sell_exclude_sync(request: dict):
+    global sell_exclude, sell_exclude_lock
+    try:
+        stock_code = _normalize_stk_cd((request.get('stock_code') or '').strip())
+        stock_name = (request.get('stock_name') or '').strip()
+        if not stock_code:
+            return {"status": "error", "message": "stock_code is required"}
+        if not stock_name:
+            try:
+                stock_name = get_stockinfo(stock_code).get('name', '')
+            except Exception:
+                stock_name = ''
+        with sell_exclude_lock:
+            sell_exclude[stock_code] = stock_name
+        if save_sell_exclude_to_json():
+            log_print('', stock_code, f"Added to sell-exclude list: {stock_name}")
+            with sell_exclude_lock:
+                data = copy.deepcopy(sell_exclude)
+            return {"status": "success", "message": f"Stock {stock_code} added to sell-exclude list", "data": data}
+        return {"status": "error", "message": "Failed to save sell-exclude list"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.delete("/api/sell-exclude/{stock_code}")
+@app.delete("/{proxy_path:path}/api/sell-exclude/{stock_code}")
+async def delete_sell_exclude_api(stock_code: str, proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
+    """API endpoint to remove a stock from the sell-exclude list"""
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+    return await asyncio.to_thread(_delete_sell_exclude_sync, stock_code)
+
+
+def _delete_sell_exclude_sync(stock_code: str):
+    global sell_exclude, sell_exclude_lock
+    try:
+        code = _normalize_stk_cd((stock_code or '').strip())
+        if not code:
+            return {"status": "error", "message": "stock_code is required"}
+        with sell_exclude_lock:
+            exists = code in sell_exclude
+            if exists:
+                del sell_exclude[code]
+        if not exists:
+            return {"status": "error", "message": f"Stock code {code} not found in sell-exclude list"}
+        if save_sell_exclude_to_json():
+            return {"status": "success", "message": f"Stock {code} removed from sell-exclude list"}
+        return {"status": "error", "message": "Failed to save sell-exclude list"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 '''
