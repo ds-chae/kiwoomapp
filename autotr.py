@@ -3098,6 +3098,7 @@ def delete_queued_buy(queue_index: int):
 
 
 def call_issue_buy_order(stk_cd, stk_nm, ord_uv, ord_qty, accounts, stex, trde_tp):
+    stex = 'SOR' # 20260602 매수 주문은 그냥 SOR가 낫지 않은가 생각, 시간외 매수 주문은 안 하니까.
     results = []
     for account in accounts:
         try:
