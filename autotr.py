@@ -1055,7 +1055,7 @@ def cancel_order_main(acct, now, access_token, stex, ord_no, stk_cd):
 # fn_kt10003(token=MY_ACCESS_TOKEN, data=params, cont_yn='Y', next_key='nextkey..')
 
 day_start_time = time(6, 0)  # 07:00
-nxt_start_time = time(7, 59)  # 07:00
+nxt_start_time = time(8, 0)  # 07:00
 nxt_end_time = time(8, 49)  # 07:00
 krx_start_time = time(8,52)
 krx_end_time_1531 = time(15,31)
