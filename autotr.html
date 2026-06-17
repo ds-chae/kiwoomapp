@@ -465,6 +465,20 @@
 			.btn-remove-interested:hover {
 				background: #c0392b;
 			}
+			.btn-analyze-interested {
+				background: #3498db;
+				color: white;
+				border: none;
+				padding: 4px 8px;
+				border-radius: 4px;
+				cursor: pointer;
+				font-size: 12px;
+				font-weight: 600;
+				margin-right: 4px;
+			}
+			.btn-analyze-interested:hover {
+				background: #2980b9;
+			}
 			.color-select {
 				padding: 4px 8px;
 				border: 1px solid #ddd;
@@ -3541,6 +3555,9 @@
 									<td>${rateDisplay}</td>
 									<td>${gaprateDisplay}</td>
 									<td>
+										<button class="btn-analyze-interested" onclick="event.stopPropagation(); openStockAnalysis('${stockCode}', '${stockName}')" title="종목 분석">
+											분석
+										</button>
 										<button class="btn-remove-interested" onclick="event.stopPropagation(); removeInterestedStock('${stockCode}', '${stockName}')" title="Remove from interested list">
 											Remove
 										</button>
@@ -3763,6 +3780,16 @@
 			});
 		}
 		
+		function openStockAnalysis(stockCode, stockName) {
+			if (!stockCode) {
+				showMessage('Stock code is missing', 'error');
+				return;
+			}
+			const url = '/stock/data/stock-analysis?code=' + encodeURIComponent(stockCode) +
+				'&name=' + encodeURIComponent(stockName || '');
+			window.open(url, '_blank');
+		}
+
 		function removeInterestedStock(stockCode, stockName) {
 			if (!stockCode) {
 				showMessage('Stock code is missing', 'error');

@@ -1,6 +1,8 @@
 import json
 import time
 import os
+import base64
+import asyncio
 import traceback
 import threading
 import requests
@@ -10,9 +12,11 @@ from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 import uvicorn
 import csv
+import numpy as np
+import cv2
 
 from ka10081 import get_day_chart
-from ka10080 import get_bun_chart
+from ka10080 import get_bun_chart, fn_ka10080
 from au1001 import get_one_token
 from ka10100 import get_stockinfo
 from ka_condition import search_condition_by_name
@@ -26,6 +30,8 @@ INTERESTED_STOCKS_FILE = os.path.join(BASE_DIR, 'interested_stocks.json')
 LAST_RUN_FILE = os.path.join(BASE_DIR, 'last_gathering_time.json')
 P3_POSTED_FILE = os.path.join(BASE_DIR, 'p3_interested_posted.json')
 LOGS_DIR = os.path.join(BASE_DIR, 'logs')
+# Directory where server-rendered (OpenCV) chart PNGs are saved
+CHART_IMG_DIR = os.path.join(BASE_DIR, 'chart_images')
 
 P3_CONDITION_NAME = 'P3'
 P3_START_TIME = dt_time(11, 30)
@@ -3101,6 +3107,1185 @@ async def get_minute_chart_data(stock_code: str, date: str = Query(...)):
         return JSONResponse(content={"status": "success", "data": all_data})
     except Exception as e:
         return JSONResponse(content={"status": "error", "message": str(e)})
+
+# ---------------------------------------------------------------------------
+# Server-side chart rendering (OpenCV -> PNG)
+# ---------------------------------------------------------------------------
+# Render heights (px). Width is derived from the number of candles.
+DAILY_CHART_H = 440
+COMPARE_CHART_H = 260
+MINUTE_CHART_H = 380
+
+MA_HEX = ['#e6194b', '#2ca02c', '#4363d8', '#f58231']
+_FONT = cv2.FONT_HERSHEY_SIMPLEX
+
+# BGR colors
+_COL_BG = (255, 255, 255)
+_COL_AXIS = (221, 221, 221)
+_COL_GRID = (242, 242, 242)
+_COL_GRAY = (119, 119, 119)
+_COL_DIV = (0, 168, 224)        # date divider line
+_COL_DATE_TXT = (0, 0, 0)       # date label (black)
+_COL_RISE = (53, 57, 229)       # #e53935
+_COL_FALL = (229, 136, 30)      # #1e88e5
+_COL_REF = (187, 187, 187)      # comparison reference line
+
+# Short-lived cache of fetched chart data to avoid refetching across the
+# separate image endpoints (daily/compare share the same daily data).
+CHART_CACHE_TTL = 60
+_chart_cache = {}
+_chart_cache_lock = threading.RLock()
+
+
+def _hex_bgr(h):
+    h = h.lstrip('#')
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return (b, g, r)
+
+
+def _parse_price(v):
+    if v is None:
+        return 0.0
+    try:
+        return abs(float(str(v).replace(',', '')))
+    except Exception:
+        return 0.0
+
+
+def _normalize_candles(raw, label_key):
+    """Python port of the former client-side normalizeCandles()."""
+    if not isinstance(raw, list):
+        return []
+    seen = {}
+    for it in raw:
+        if not isinstance(it, dict):
+            continue
+        label = str(it.get(label_key, '') or '')
+        o = _parse_price(it.get('open_pric'))
+        h = _parse_price(it.get('high_pric'))
+        l = _parse_price(it.get('low_pric'))
+        c = _parse_price(it.get('cur_prc'))
+        if not label or (o <= 0 and c <= 0 and h <= 0 and l <= 0):
+            continue
+        seen[label] = {'label': label, 'open': o, 'high': h, 'low': l, 'close': c}
+    return sorted(seen.values(), key=lambda p: p['label'])
+
+
+def _compute_ma(closes, period):
+    n = len(closes)
+    out = [None] * n
+    if not period or period <= 0:
+        return out
+    s = 0.0
+    for i in range(n):
+        s += closes[i]
+        if i >= period:
+            s -= closes[i - period]
+        if i >= period - 1:
+            out[i] = s / period
+    return out
+
+
+def _put_text_right(img, s, rx, cy, color, scale=0.34):
+    (w, h), _ = cv2.getTextSize(s, _FONT, scale, 1)
+    cv2.putText(img, s, (int(rx - w), int(cy + h / 2)), _FONT, scale, color, 1, cv2.LINE_8)
+
+
+def _put_text_cx(img, s, cx, ty, color, scale=0.3):
+    (w, h), _ = cv2.getTextSize(s, _FONT, scale, 1)
+    cv2.putText(img, s, (int(cx - w / 2), int(ty + h)), _FONT, scale, color, 1, cv2.LINE_8)
+
+
+def _put_text_center(img, s, color=(136, 136, 136), scale=0.5):
+    height, width = img.shape[:2]
+    (w, h), _ = cv2.getTextSize(s, _FONT, scale, 1)
+    cv2.putText(img, s, (int((width - w) / 2), int((height + h) / 2)), _FONT, scale, color, 1, cv2.LINE_8)
+
+
+def _draw_x_labels(img, labels, x_at, base_y, n):
+    step = max(1, n // 12)
+    for i in range(0, n, step):
+        raw = str(labels[i])
+        if len(raw) == 8:
+            txt = raw[4:6] + '/' + raw[6:8]
+        elif len(raw) >= 12:
+            txt = raw[4:6] + '/' + raw[6:8] + ' ' + raw[8:10] + ':' + raw[10:12]
+        else:
+            txt = raw
+        _put_text_cx(img, txt, x_at(i), base_y + 6, _COL_GRAY)
+
+
+def _render_candle_png(candles, ma_lines, height, pole_width, pole_spacing, date_dividers):
+    """Render a candlestick chart (with optional MA overlays) to a BGR numpy image.
+    ma_lines = [{ 'values':[...|None], 'color':(b,g,r), 'visible':bool }]
+    """
+    left, right, top, bottom = 64, 24, 16, 42
+    n = len(candles)
+    chart_w = n * pole_spacing
+    width = max(left + chart_w + right, 400)
+    chart_h = height - top - bottom
+    img = np.full((height, width, 3), 255, dtype=np.uint8)
+    if n == 0:
+        _put_text_center(img, 'No data')
+        return img
+
+    lo, hi = float('inf'), float('-inf')
+    for c in candles:
+        if c['high'] > 0:
+            hi = max(hi, c['high'])
+        if c['low'] > 0:
+            lo = min(lo, c['low'])
+    for line in ma_lines:
+        if not line['visible']:
+            continue
+        for v in line['values']:
+            if v is not None:
+                hi = max(hi, v)
+                lo = min(lo, v)
+    if lo == float('inf') or hi == float('-inf'):
+        lo, hi = 0.0, 100.0
+    if lo == hi:
+        lo *= 0.95
+        hi *= 1.05
+    pad = max((hi - lo) * 0.05, 1)
+    lo -= pad
+    hi += pad
+    rng = hi - lo
+    scale = chart_h / rng if rng > 0 else 1
+
+    def price_to_y(p):
+        return int(round(top + chart_h - (p - lo) * scale))
+
+    def x_at(i):
+        return int(round(left + i * pole_spacing + pole_width / 2))
+
+    # Y gridlines + labels
+    ticks = 8
+    for i in range(ticks + 1):
+        price = hi - rng * (i / ticks)
+        y = price_to_y(price)
+        cv2.line(img, (left, y), (left + chart_w, y), _COL_GRID, 1, cv2.LINE_8)
+        _put_text_right(img, format(int(round(price)), ','), left - 6, y, _COL_GRAY)
+
+    # Axes
+    cv2.line(img, (left, top), (left, top + chart_h), _COL_AXIS, 1, cv2.LINE_8)
+    cv2.line(img, (left, top + chart_h), (left + chart_w, top + chart_h), _COL_AXIS, 1, cv2.LINE_8)
+
+    # Date-change vertical dividers (minute charts)
+    if date_dividers:
+        prev = None
+        for i, c in enumerate(candles):
+            d = str(c['label'])[:8]
+            if prev is not None and d != prev:
+                x = int(round(left + i * pole_spacing))
+                cv2.line(img, (x, top), (x, top + chart_h), _COL_DIV, 1, cv2.LINE_8)
+                txt = (d[4:6] + '/' + d[6:8]) if len(d) == 8 else d
+                _put_text_cx(img, txt, x, top + 2, _COL_DATE_TXT)
+            prev = d
+
+    # Candles
+    for i, c in enumerate(candles):
+        x = x_at(i)
+        color = _COL_RISE if c['close'] >= c['open'] else _COL_FALL
+        cv2.line(img, (x, price_to_y(c['high'])), (x, price_to_y(c['low'])), color, 1, cv2.LINE_8)
+        oy, cy = price_to_y(c['open']), price_to_y(c['close'])
+        ytop = min(oy, cy)
+        bh = max(1, abs(cy - oy))
+        x0 = int(round(x - pole_width / 2))
+        cv2.rectangle(img, (x0, ytop), (x0 + pole_width, ytop + bh), color, -1, cv2.LINE_8)
+
+    # MA overlay lines
+    for line in ma_lines:
+        if not line['visible']:
+            continue
+        color = line['color']
+        prev_pt = None
+        for i, v in enumerate(line['values']):
+            if v is None:
+                prev_pt = None
+                continue
+            pt = (x_at(i), price_to_y(v))
+            if prev_pt is not None:
+                cv2.line(img, prev_pt, pt, color, 1, cv2.LINE_8)
+            prev_pt = pt
+
+    _draw_x_labels(img, [c['label'] for c in candles], x_at, top + chart_h, n)
+    return img
+
+
+def _render_line_png(labels, series, ref_value, height):
+    """Render a multi-series line chart (MA comparison) to a BGR numpy image.
+    series = [{ 'values':[...|None], 'color':(b,g,r) }]
+    """
+    left, right, top, bottom = 64, 24, 16, 42
+    pole_spacing = 7
+    n = len(labels)
+    chart_w = n * pole_spacing
+    width = max(left + chart_w + right, 400)
+    chart_h = height - top - bottom
+    img = np.full((height, width, 3), 255, dtype=np.uint8)
+    if n == 0:
+        _put_text_center(img, 'No data')
+        return img
+
+    lo, hi = float('inf'), float('-inf')
+    for s in series:
+        for v in s['values']:
+            if v is not None:
+                hi = max(hi, v)
+                lo = min(lo, v)
+    if ref_value is not None:
+        hi = max(hi, ref_value)
+        lo = min(lo, ref_value)
+    if lo == float('inf') or hi == float('-inf'):
+        lo, hi = 0.9, 1.1
+    if lo == hi:
+        lo *= 0.99
+        hi *= 1.01
+    pad = max((hi - lo) * 0.08, 0.001)
+    lo -= pad
+    hi += pad
+    rng = hi - lo
+    scale = chart_h / rng if rng > 0 else 1
+
+    def val_to_y(v):
+        return int(round(top + chart_h - (v - lo) * scale))
+
+    def x_at(i):
+        return int(round(left + i * pole_spacing))
+
+    ticks = 6
+    for i in range(ticks + 1):
+        val = hi - rng * (i / ticks)
+        y = val_to_y(val)
+        cv2.line(img, (left, y), (left + chart_w, y), _COL_GRID, 1, cv2.LINE_8)
+        _put_text_right(img, '{:.3f}'.format(val), left - 6, y, _COL_GRAY)
+
+    cv2.line(img, (left, top), (left, top + chart_h), _COL_AXIS, 1, cv2.LINE_8)
+    cv2.line(img, (left, top + chart_h), (left + chart_w, top + chart_h), _COL_AXIS, 1, cv2.LINE_8)
+
+    # Reference line (dashed)
+    if ref_value is not None and lo <= ref_value <= hi:
+        y = val_to_y(ref_value)
+        x = left
+        while x < left + chart_w:
+            cv2.line(img, (x, y), (min(x + 5, left + chart_w), y), _COL_REF, 1, cv2.LINE_8)
+            x += 9
+
+    for s in series:
+        color = s['color']
+        prev_pt = None
+        for i, v in enumerate(s['values']):
+            if v is None:
+                prev_pt = None
+                continue
+            pt = (x_at(i), val_to_y(v))
+            if prev_pt is not None:
+                cv2.line(img, prev_pt, pt, color, 1, cv2.LINE_8)
+            prev_pt = pt
+
+    _draw_x_labels(img, labels, x_at, top + chart_h, n)
+    return img
+
+
+def _save_png(img, filename):
+    """Encode image to PNG, save it to CHART_IMG_DIR, and return the PNG bytes."""
+    os.makedirs(CHART_IMG_DIR, exist_ok=True)
+    ok, buf = cv2.imencode('.png', img)
+    if not ok:
+        raise RuntimeError('PNG encode failed')
+    data = buf.tobytes()
+    try:
+        with open(os.path.join(CHART_IMG_DIR, filename), 'wb') as f:
+            f.write(data)
+    except Exception as e:
+        print(f"_save_png: failed to save {filename}: {e}")
+    return data
+
+
+def _image_json(img, filename):
+    """Save the rendered image as a PNG file and return it as a JSON response
+    carrying a base64 data URI. JSON is used (instead of raw image/png bytes)
+    so the response passes intact through the gateway that wraps non-JSON
+    upstream responses, and so it works whether accessed directly or proxied.
+    """
+    data = _save_png(img, filename)
+    b64 = base64.b64encode(data).decode('ascii')
+    return JSONResponse(
+        content={"status": "success", "image": "data:image/png;base64," + b64},
+        headers={'Cache-Control': 'no-store'},
+    )
+
+
+def _clean_stock_code(stock_code):
+    stock_code = (stock_code or '').strip()
+    if stock_code.upper().startswith('A') and stock_code[1:].isdigit():
+        stock_code = stock_code[1:]
+    return stock_code
+
+
+def _cache_get(key):
+    with _chart_cache_lock:
+        e = _chart_cache.get(key)
+        if e and (time.time() - e['ts'] < CHART_CACHE_TTL):
+            return e['value']
+    return None
+
+
+def _cache_put(key, value):
+    with _chart_cache_lock:
+        _chart_cache[key] = {'ts': time.time(), 'value': value}
+
+
+def _get_daily_candles(stock_code):
+    """Return (stock_name, [normalized daily candles]) with short-lived caching."""
+    key = 'daily:' + stock_code
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
+    token = get_one_token()
+    if not token:
+        return ('', [])
+    name = ''
+    try:
+        info = get_stockinfo(stock_code)
+        if isinstance(info, dict):
+            name = info.get('name', '') or ''
+    except Exception as e:
+        print(f"_get_daily_candles: get_stockinfo failed: {e}")
+    daily = []
+    try:
+        resp = get_day_chart(token, stock_code, name)
+        if isinstance(resp, dict):
+            daily = _normalize_candles(resp.get('stk_dt_pole_chart_qry', []) or [], 'dt')
+    except Exception as e:
+        print(f"_get_daily_candles: get_day_chart failed: {e}")
+    result = (name, daily)
+    _cache_put(key, result)
+    return result
+
+
+def _get_minute_candles(stock_code, tic):
+    key = 'minute:' + stock_code + ':' + tic
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
+    token = get_one_token()
+    if not token:
+        return []
+    minute = []
+    try:
+        if tic == '15':
+            resp = get_bun_chart(token, stock_code, '')
+        else:
+            resp = fn_ka10080(token=token, data={
+                'stk_cd': stock_code + '_AL',
+                'tic_scope': tic,
+                'upd_stkpc_tp': '1',
+            })
+        if isinstance(resp, list):
+            minute = _normalize_candles(resp or [], 'cntr_tm')
+    except Exception as e:
+        print(f"_get_minute_candles: fetch failed (tic={tic}): {e}")
+    _cache_put(key, minute)
+    return minute
+
+
+def _parse_ma_params(ma, vis):
+    periods = []
+    for x in (ma or '').split(','):
+        x = x.strip()
+        if x.isdigit() and int(x) > 0:
+            periods.append(int(x))
+    if not periods:
+        periods = [5, 20, 60, 120]
+    vis_flags = [v.strip() == '1' for v in (vis or '').split(',')]
+    while len(vis_flags) < len(periods):
+        vis_flags.append(True)
+    return periods, vis_flags
+
+
+def _build_daily_img(stock_code, ma, vis):
+    stock_code = _clean_stock_code(stock_code)
+    periods, vis_flags = _parse_ma_params(ma, vis)
+    _name, daily = _get_daily_candles(stock_code)
+    closes = [c['close'] for c in daily]
+    ma_lines = []
+    for i, p in enumerate(periods):
+        ma_lines.append({
+            'values': _compute_ma(closes, p),
+            'color': _hex_bgr(MA_HEX[i % len(MA_HEX)]),
+            'visible': vis_flags[i] if i < len(vis_flags) else True,
+        })
+    img = _render_candle_png(daily, ma_lines, DAILY_CHART_H, 4, 7, False)
+    return _image_json(img, stock_code + '_daily.png')
+
+
+def _build_compare_img(stock_code, ma, vis):
+    stock_code = _clean_stock_code(stock_code)
+    periods, vis_flags = _parse_ma_params(ma, vis)
+    _name, daily = _get_daily_candles(stock_code)
+    closes = [c['close'] for c in daily]
+    ma_arrays = [_compute_ma(closes, p) for p in periods]
+    base_idx = 3 if len(ma_arrays) > 3 else (len(ma_arrays) - 1)
+    base = ma_arrays[base_idx] if ma_arrays else []
+    series = []
+    for i, p in enumerate(periods):
+        if not (vis_flags[i] if i < len(vis_flags) else True):
+            continue
+        vals = []
+        for k in range(len(ma_arrays[i])):
+            v = ma_arrays[i][k]
+            b = base[k] if k < len(base) else None
+            vals.append(v / b if (v is not None and b not in (None, 0)) else None)
+        series.append({'values': vals, 'color': _hex_bgr(MA_HEX[i % len(MA_HEX)])})
+    labels = [c['label'] for c in daily]
+    img = _render_line_png(labels, series, 1.0, COMPARE_CHART_H)
+    return _image_json(img, stock_code + '_compare.png')
+
+
+def _build_minute_img(stock_code, tic):
+    stock_code = _clean_stock_code(stock_code)
+    valid_tics = {'15', '30', '60'}
+    if tic not in valid_tics:
+        tic = '15'
+    minute = _get_minute_candles(stock_code, tic)
+    img = _render_candle_png(minute, [], MINUTE_CHART_H, 3, 5, True)
+    return _image_json(img, stock_code + '_minute_' + tic + '.png')
+
+
+@app.get("/api/chart-img/daily/{stock_code}")
+@app.get("/stock/data/api/chart-img/daily/{stock_code}")
+async def chart_img_daily(stock_code: str, ma: str = Query('5,20,60,120'), vis: str = Query('1,1,1,1')):
+    try:
+        return await asyncio.to_thread(_build_daily_img, stock_code, ma, vis)
+    except Exception as e:
+        traceback.print_exc()
+        img = np.full((DAILY_CHART_H, 600, 3), 255, dtype=np.uint8)
+        _put_text_center(img, 'Error: ' + str(e), (40, 40, 220))
+        return _image_json(img, 'error_daily.png')
+
+
+@app.get("/api/chart-img/compare/{stock_code}")
+@app.get("/stock/data/api/chart-img/compare/{stock_code}")
+async def chart_img_compare(stock_code: str, ma: str = Query('5,20,60,120'), vis: str = Query('1,1,1,1')):
+    try:
+        return await asyncio.to_thread(_build_compare_img, stock_code, ma, vis)
+    except Exception as e:
+        traceback.print_exc()
+        img = np.full((COMPARE_CHART_H, 600, 3), 255, dtype=np.uint8)
+        _put_text_center(img, 'Error: ' + str(e), (40, 40, 220))
+        return _image_json(img, 'error_compare.png')
+
+
+@app.get("/api/chart-img/minute/{stock_code}")
+@app.get("/stock/data/api/chart-img/minute/{stock_code}")
+async def chart_img_minute(stock_code: str, tic: str = Query('15')):
+    try:
+        return await asyncio.to_thread(_build_minute_img, stock_code, tic)
+    except Exception as e:
+        traceback.print_exc()
+        img = np.full((MINUTE_CHART_H, 600, 3), 255, dtype=np.uint8)
+        _put_text_center(img, 'Error: ' + str(e), (40, 40, 220))
+        return _image_json(img, 'error_minute.png')
+
+
+@app.get("/api/analysis-info/{stock_code}")
+@app.get("/stock/data/api/analysis-info/{stock_code}")
+async def get_analysis_info(stock_code: str):
+    """Lightweight: stock name + daily/minute counts for the analysis header."""
+    def _work():
+        code = _clean_stock_code(stock_code)
+        name, daily = _get_daily_candles(code)
+        minute = _get_minute_candles(code, '15')
+        return {'status': 'success', 'stock_code': code, 'stock_name': name,
+                'daily_count': len(daily), 'minute_count': len(minute)}
+    try:
+        return JSONResponse(content=await asyncio.to_thread(_work))
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse(content={'status': 'error', 'message': str(e)})
+
+
+@app.get("/stock-analysis", response_class=HTMLResponse)
+@app.get("/stock/data/stock-analysis", response_class=HTMLResponse)
+@app.get("/stock/data/stock-analysis/", response_class=HTMLResponse)
+async def stock_analysis_page():
+    """Per-stock analysis screen: daily candle chart with MAs, MA comparison chart, and minute chart (server-rendered PNG)."""
+    html_content = """
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>종목 분석</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f0f2f5;
+            color: #222;
+            padding: 12px;
+        }
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #fff;
+            padding: 14px 20px;
+            border-radius: 10px;
+            margin-bottom: 14px;
+        }
+        .header h1 { font-size: 20px; }
+        .header .sub { font-size: 13px; opacity: 0.9; margin-top: 4px; }
+        .header a {
+            color: #fff; text-decoration: none; background: rgba(255,255,255,0.2);
+            padding: 8px 14px; border-radius: 6px; font-size: 13px;
+        }
+        .header a:hover { background: rgba(255,255,255,0.35); }
+        .panel {
+            background: #fff; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            margin-bottom: 16px; overflow: hidden;
+        }
+        .panel-title {
+            font-size: 15px; font-weight: 600; color: #333;
+            padding: 12px 16px; border-bottom: 1px solid #eee; background: #fafbfc;
+        }
+        .daily-layout { display: flex; align-items: stretch; }
+        .ma-controls {
+            width: 220px; min-width: 220px; padding: 14px; border-right: 1px solid #eee;
+            background: #fafbfc;
+        }
+        .ma-controls h3 { font-size: 13px; color: #555; margin-bottom: 10px; }
+        .ma-row {
+            display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+            font-size: 13px;
+        }
+        .ma-row input[type=number] {
+            width: 64px; padding: 5px 6px; border: 1px solid #ccc; border-radius: 4px;
+            font-size: 13px;
+        }
+        .ma-swatch { width: 16px; height: 16px; border-radius: 3px; display: inline-block; }
+        .ma-controls .hint { font-size: 11px; color: #999; margin-top: 6px; line-height: 1.5; }
+        .ma-controls button {
+            margin-top: 12px; width: 100%; padding: 8px; border: none; border-radius: 6px;
+            background: #4363d8; color: #fff; font-size: 13px; cursor: pointer; font-weight: 600;
+        }
+        .ma-controls button:hover { background: #2f49a8; }
+        .chart-wrap { flex: 1; min-width: 0; overflow-x: auto; overflow-y: hidden; }
+        .chart-stack { position: relative; height: 100%; }
+        .chart-stack canvas { position: absolute; top: 0; left: 0; display: block; }
+        .daily-chart-wrap { height: 440px; }
+        .compare-chart-wrap { height: 260px; }
+        .minute-chart-wrap { height: 380px; }
+        .legend { display: flex; flex-wrap: wrap; gap: 14px; padding: 8px 16px; font-size: 12px; color: #555; }
+        .legend span { display: inline-flex; align-items: center; gap: 5px; }
+        .status-msg { padding: 30px; text-align: center; color: #888; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div>
+            <h1 id="title">종목 분석</h1>
+            <div class="sub" id="subtitle">데이터를 불러오는 중...</div>
+        </div>
+        <a href="javascript:location.reload()">새로고침</a>
+    </div>
+
+    <div id="status" class="status-msg">차트 데이터를 불러오는 중입니다...</div>
+
+    <div id="charts" style="display:none;">
+        <div class="panel">
+            <div class="panel-title">일봉 차트 (캔들 + 이동평균선)</div>
+            <div class="daily-layout">
+                <div class="ma-controls" id="ma-controls">
+                    <h3>이동평균선 설정</h3>
+                    <div id="ma-rows"></div>
+                    <div class="hint">기간을 수정하거나 체크박스로 표시 여부를 변경하세요.</div>
+                    <button onclick="refreshDaily()">적용</button>
+                </div>
+                <div class="chart-wrap daily-chart-wrap">
+                    <div class="chart-stack" id="daily-stack">
+                        <canvas id="daily-gl"></canvas>
+                        <canvas id="daily-ov"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-title">이동평균선 비교 (각 MA / 120일 MA)</div>
+            <div class="chart-wrap compare-chart-wrap">
+                <div class="chart-stack" id="compare-stack">
+                    <canvas id="compare-gl"></canvas>
+                    <canvas id="compare-ov"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-title">분봉 차트</div>
+            <div class="daily-layout">
+                <div class="ma-controls" id="minute-controls">
+                    <h3>분봉 주기</h3>
+                    <div class="ma-row">
+                        <input type="checkbox" id="tic-15" checked onchange="onTicChange('15')">
+                        <span>15분</span>
+                    </div>
+                    <div class="ma-row">
+                        <input type="checkbox" id="tic-30" onchange="onTicChange('30')">
+                        <span>30분</span>
+                    </div>
+                    <div class="ma-row">
+                        <input type="checkbox" id="tic-60" onchange="onTicChange('60')">
+                        <span>60분</span>
+                    </div>
+                    <div class="hint">하나의 주기를 선택하면 해당 분봉 차트를 표시합니다.</div>
+                </div>
+                <div class="chart-wrap minute-chart-wrap">
+                    <div class="chart-stack" id="minute-stack">
+                        <canvas id="minute-gl"></canvas>
+                        <canvas id="minute-ov"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const MA_COLORS = ['#e6194b', '#2ca02c', '#4363d8', '#f58231'];
+        let maConfig = [
+            { period: 5, visible: true },
+            { period: 20, visible: true },
+            { period: 60, visible: true },
+            { period: 120, visible: true }
+        ];
+        const BASE_MA_INDEX = 3;
+        const RISE = [0.898, 0.224, 0.208, 1.0];   // #e53935
+        const FALL = [0.118, 0.533, 0.898, 1.0];   // #1e88e5
+
+        let chartData = { daily: [], minute: [] };
+        let minuteTic = '15';
+        let minuteCache = { '15': null, '30': null, '60': null };
+
+        const params = new URLSearchParams(location.search);
+        const stockCode = (params.get('code') || '').trim();
+        const stockNameParam = (params.get('name') || '').trim();
+        const DATA_BASE = '/stock/data/api/';
+
+        function parsePrice(v) {
+            if (v === null || v === undefined) return 0;
+            const n = parseFloat(String(v).replace(/,/g, ''));
+            return isNaN(n) ? 0 : Math.abs(n);
+        }
+
+        function normalizeCandles(raw, labelKey) {
+            if (!Array.isArray(raw)) return [];
+            const arr = raw.map(it => ({
+                label: (it[labelKey] || '').toString(),
+                open: parsePrice(it.open_pric),
+                high: parsePrice(it.high_pric),
+                low: parsePrice(it.low_pric),
+                close: parsePrice(it.cur_prc)
+            })).filter(p => p.label && (p.open > 0 || p.close > 0 || p.high > 0 || p.low > 0));
+            arr.sort((a, b) => (a.label < b.label ? -1 : (a.label > b.label ? 1 : 0)));
+            const seen = new Map();
+            arr.forEach(p => seen.set(p.label, p));
+            return [...seen.values()];
+        }
+
+        function computeMA(closes, period) {
+            const out = new Array(closes.length).fill(null);
+            if (!period || period <= 0) return out;
+            let sum = 0;
+            for (let i = 0; i < closes.length; i++) {
+                sum += closes[i];
+                if (i >= period) sum -= closes[i - period];
+                if (i >= period - 1) out[i] = sum / period;
+            }
+            return out;
+        }
+
+        function hexToRGBA(h) {
+            h = h.replace('#', '');
+            return [parseInt(h.slice(0, 2), 16) / 255, parseInt(h.slice(2, 4), 16) / 255,
+                    parseInt(h.slice(4, 6), 16) / 255, 1.0];
+        }
+
+        // ---------------- WebGL core ----------------
+        const VS = 'attribute vec2 a_pos; attribute vec4 a_color; uniform vec2 u_res;' +
+            'varying vec4 v_color; void main(){ vec2 c = vec2(a_pos.x / u_res.x * 2.0 - 1.0,' +
+            ' 1.0 - a_pos.y / u_res.y * 2.0); gl_Position = vec4(c, 0.0, 1.0); v_color = a_color; }';
+        const FS = 'precision mediump float; varying vec4 v_color; void main(){ gl_FragColor = v_color; }';
+
+        function getGL(canvas) {
+            if (canvas._gl) return canvas._gl;
+            const gl = canvas.getContext('webgl', { antialias: false, premultipliedAlpha: false })
+                || canvas.getContext('experimental-webgl');
+            if (!gl) return null;
+            function sh(type, src) {
+                const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+                return s;
+            }
+            const prog = gl.createProgram();
+            gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS));
+            gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));
+            gl.linkProgram(prog);
+            const ctx = {
+                gl: gl, prog: prog, buf: gl.createBuffer(),
+                aPos: gl.getAttribLocation(prog, 'a_pos'),
+                aColor: gl.getAttribLocation(prog, 'a_color'),
+                uRes: gl.getUniformLocation(prog, 'u_res')
+            };
+            canvas._gl = ctx;
+            return ctx;
+        }
+
+        function drawGL(canvas, cssW, cssH, tris, lines) {
+            const c = getGL(canvas);
+            if (!c) return;
+            const gl = c.gl;
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = Math.round(cssW * dpr);
+            canvas.height = Math.round(cssH * dpr);
+            canvas.style.width = cssW + 'px';
+            canvas.style.height = cssH + 'px';
+            gl.viewport(0, 0, canvas.width, canvas.height);
+            gl.clearColor(1, 1, 1, 1);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+            gl.useProgram(c.prog);
+            gl.uniform2f(c.uRes, cssW, cssH);
+            gl.enable(gl.BLEND);
+            gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+            const stride = 6 * 4;
+            function draw(arr, mode) {
+                if (!arr.length) return;
+                gl.bindBuffer(gl.ARRAY_BUFFER, c.buf);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(arr), gl.STREAM_DRAW);
+                gl.enableVertexAttribArray(c.aPos);
+                gl.vertexAttribPointer(c.aPos, 2, gl.FLOAT, false, stride, 0);
+                gl.enableVertexAttribArray(c.aColor);
+                gl.vertexAttribPointer(c.aColor, 4, gl.FLOAT, false, stride, 8);
+                gl.drawArrays(mode, 0, arr.length / 6);
+            }
+            draw(tris, gl.TRIANGLES);
+            draw(lines, gl.LINES);
+        }
+
+        function pushRect(a, x0, y0, x1, y1, c) {
+            a.push(x0, y0, c[0], c[1], c[2], c[3], x1, y0, c[0], c[1], c[2], c[3], x1, y1, c[0], c[1], c[2], c[3]);
+            a.push(x0, y0, c[0], c[1], c[2], c[3], x1, y1, c[0], c[1], c[2], c[3], x0, y1, c[0], c[1], c[2], c[3]);
+        }
+        function pushSeg(a, x0, y0, x1, y1, c) {
+            a.push(x0, y0, c[0], c[1], c[2], c[3], x1, y1, c[0], c[1], c[2], c[3]);
+        }
+
+        // ---------------- 2D overlay ----------------
+        function ctx2d(canvas, cssW, cssH) {
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = Math.round(cssW * dpr);
+            canvas.height = Math.round(cssH * dpr);
+            canvas.style.width = cssW + 'px';
+            canvas.style.height = cssH + 'px';
+            const ctx = canvas.getContext('2d');
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            ctx.clearRect(0, 0, cssW, cssH);
+            return ctx;
+        }
+
+        const M = { left: 64, right: 24, top: 16, bottom: 42 };
+
+        function sizeStack(prefix, cssW, cssH) {
+            const stack = document.getElementById(prefix + '-stack');
+            stack.style.width = cssW + 'px';
+            stack.style.height = cssH + 'px';
+        }
+
+        function renderCandle(prefix, candles, maLines, opts) {
+            opts = opts || {};
+            const poleWidth = opts.poleWidth || 4, poleSpacing = opts.poleSpacing || 7;
+            const dateDividers = !!opts.dateDividers;
+            const decadeDividers = !!opts.decadeDividers;
+            const glC = document.getElementById(prefix + '-gl');
+            const ovC = document.getElementById(prefix + '-ov');
+            const wrap = document.getElementById(prefix + '-stack').parentElement;
+            const n = candles.length;
+            const chartW = n * poleSpacing;
+            const cssW = Math.max(M.left + chartW + M.right, wrap.clientWidth);
+            const cssH = wrap.clientHeight;
+            sizeStack(prefix, cssW, cssH);
+            const chartHeight = cssH - M.top - M.bottom;
+            if (n === 0) { drawGL(glC, cssW, cssH, [], []); ctx2d(ovC, cssW, cssH); return; }
+
+            let lo = Infinity, hi = -Infinity;
+            candles.forEach(c => { if (c.high > 0) hi = Math.max(hi, c.high); if (c.low > 0) lo = Math.min(lo, c.low); });
+            (maLines || []).forEach(line => { if (!line.visible) return; line.values.forEach(v => { if (v != null) { hi = Math.max(hi, v); lo = Math.min(lo, v); } }); });
+            if (lo === Infinity || hi === -Infinity) { lo = 0; hi = 100; }
+            if (lo === hi) { lo *= 0.95; hi *= 1.05; }
+            const pad = Math.max((hi - lo) * 0.05, 1); lo -= pad; hi += pad;
+            const range = hi - lo;
+            const scale = range > 0 ? chartHeight / range : 1;
+            const yAt = p => M.top + chartHeight - (p - lo) * scale;
+            const xAt = i => M.left + i * poleSpacing + poleWidth / 2;
+
+            const tris = [], lines = [];
+            candles.forEach((c, i) => {
+                const x = xAt(i);
+                const col = c.close >= c.open ? RISE : FALL;
+                pushSeg(lines, x, yAt(c.high), x, yAt(c.low), col);
+                const oY = yAt(c.open), cY = yAt(c.close);
+                let t = Math.min(oY, cY), b = Math.max(oY, cY);
+                if (b - t < 1) b = t + 1;
+                pushRect(tris, x - poleWidth / 2, t, x + poleWidth / 2, b, col);
+            });
+            (maLines || []).forEach(line => {
+                if (!line.visible) return;
+                const col = line.rgba;
+                for (let i = 1; i < line.values.length; i++) {
+                    const a = line.values[i - 1], bb = line.values[i];
+                    if (a == null || bb == null) continue;
+                    pushSeg(lines, xAt(i - 1), yAt(a), xAt(i), yAt(bb), col);
+                }
+            });
+            drawGL(glC, cssW, cssH, tris, lines);
+
+            const ctx = ctx2d(ovC, cssW, cssH);
+            drawAxes(ctx, chartW, chartHeight, lo, hi, range, yAt, p => Math.round(p).toLocaleString());
+            if (dateDividers) {
+                ctx.strokeStyle = '#e0a800'; ctx.lineWidth = 1;
+                ctx.fillStyle = '#000000'; ctx.font = '9px Arial';
+                ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+                let prev = null;
+                candles.forEach((c, i) => {
+                    const d = (c.label || '').toString().slice(0, 8);
+                    if (prev !== null && d !== prev) {
+                        const x = Math.round(M.left + i * poleSpacing) + 0.5;
+                        ctx.beginPath(); ctx.moveTo(x, M.top); ctx.lineTo(x, M.top + chartHeight); ctx.stroke();
+                        const txt = d.length === 8 ? d.slice(4, 6) + '/' + d.slice(6, 8) : d;
+                        ctx.fillText(txt, x, M.top + 2);
+                    }
+                    prev = d;
+                });
+            }
+            // Calendar-based vertical dividers: at the first trading day of each
+            // month and the first day on/after the 10th and 20th (no end-of-month
+            // line). Drawn by detecting changes of "YYYYMM + decade-bucket".
+            if (decadeDividers) {
+                ctx.strokeStyle = '#b0bec5'; ctx.lineWidth = 1;
+                ctx.fillStyle = '#000000'; ctx.font = '9px Arial';
+                ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+                let prevKey = null;
+                candles.forEach((c, i) => {
+                    const lbl = (c.label || '').toString();
+                    if (lbl.length < 8) return;
+                    const dom = parseInt(lbl.slice(6, 8), 10);
+                    const bucket = dom < 10 ? 0 : (dom < 20 ? 1 : 2);
+                    const key = lbl.slice(0, 6) + '_' + bucket;
+                    if (key !== prevKey) {
+                        const x = Math.round(xAt(i)) + 0.5;
+                        ctx.beginPath(); ctx.moveTo(x, M.top); ctx.lineTo(x, M.top + chartHeight); ctx.stroke();
+                        ctx.fillText(lbl.slice(4, 6) + '/' + lbl.slice(6, 8), x, M.top + 2);
+                        prevKey = key;
+                    }
+                });
+            }
+            drawXLabels(ctx, candles.map(c => c.label), xAt, M.top + chartHeight, n);
+        }
+
+        function renderLine(prefix, labels, series, refValue) {
+            const glC = document.getElementById(prefix + '-gl');
+            const ovC = document.getElementById(prefix + '-ov');
+            const wrap = document.getElementById(prefix + '-stack').parentElement;
+            const poleSpacing = 7;
+            const n = labels.length;
+            const chartW = n * poleSpacing;
+            const cssW = Math.max(M.left + chartW + M.right, wrap.clientWidth);
+            const cssH = wrap.clientHeight;
+            sizeStack(prefix, cssW, cssH);
+            const chartHeight = cssH - M.top - M.bottom;
+            if (n === 0) { drawGL(glC, cssW, cssH, [], []); ctx2d(ovC, cssW, cssH); return; }
+
+            let lo = Infinity, hi = -Infinity;
+            series.forEach(s => s.values.forEach(v => { if (v != null) { hi = Math.max(hi, v); lo = Math.min(lo, v); } }));
+            if (refValue != null) { hi = Math.max(hi, refValue); lo = Math.min(lo, refValue); }
+            if (lo === Infinity || hi === -Infinity) { lo = 0.9; hi = 1.1; }
+            if (lo === hi) { lo *= 0.99; hi *= 1.01; }
+            const pad = Math.max((hi - lo) * 0.08, 0.001); lo -= pad; hi += pad;
+            const range = hi - lo;
+            const scale = range > 0 ? chartHeight / range : 1;
+            const yAt = v => M.top + chartHeight - (v - lo) * scale;
+            const xAt = i => M.left + i * poleSpacing;
+
+            const lines = [];
+            series.forEach(s => {
+                const col = s.rgba;
+                for (let i = 1; i < s.values.length; i++) {
+                    const a = s.values[i - 1], bb = s.values[i];
+                    if (a == null || bb == null) continue;
+                    pushSeg(lines, xAt(i - 1), yAt(a), xAt(i), yAt(bb), col);
+                }
+            });
+            if (refValue != null && refValue >= lo && refValue <= hi) {
+                const grey = [0.73, 0.73, 0.73, 1.0];
+                let x = M.left;
+                const y = yAt(refValue);
+                while (x < M.left + chartW) { pushSeg(lines, x, y, Math.min(x + 5, M.left + chartW), y, grey); x += 9; }
+            }
+            drawGL(glC, cssW, cssH, [], lines);
+
+            const ctx = ctx2d(ovC, cssW, cssH);
+            drawAxes(ctx, chartW, chartHeight, lo, hi, range, yAt, v => v.toFixed(3), 6);
+            drawXLabels(ctx, labels, xAt, M.top + chartHeight, n);
+        }
+
+        function drawAxes(ctx, chartW, chartHeight, lo, hi, range, yAt, fmt, ticks) {
+            ticks = ticks || 8;
+            ctx.fillStyle = '#777'; ctx.font = '10px Arial'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+            for (let i = 0; i <= ticks; i++) {
+                const val = hi - range * (i / ticks);
+                const y = Math.round(yAt(val)) + 0.5;
+                ctx.strokeStyle = '#f2f2f2'; ctx.beginPath();
+                ctx.moveTo(M.left, y); ctx.lineTo(M.left + chartW, y); ctx.stroke();
+                ctx.fillText(fmt(val), M.left - 6, y);
+            }
+            ctx.strokeStyle = '#ddd'; ctx.lineWidth = 1; ctx.beginPath();
+            ctx.moveTo(M.left + 0.5, M.top); ctx.lineTo(M.left + 0.5, M.top + chartHeight);
+            ctx.lineTo(M.left + chartW, M.top + chartHeight + 0.5); ctx.stroke();
+        }
+
+        function drawXLabels(ctx, labels, xAt, baseY, n) {
+            ctx.fillStyle = '#888'; ctx.font = '9px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+            const step = Math.max(1, Math.floor(n / 12));
+            for (let i = 0; i < n; i += step) {
+                const raw = (labels[i] || '').toString();
+                let txt = raw;
+                if (raw.length === 8) txt = raw.slice(4, 6) + '/' + raw.slice(6, 8);
+                else if (raw.length >= 12) txt = raw.slice(4, 6) + '/' + raw.slice(6, 8) + ' ' + raw.slice(8, 10) + ':' + raw.slice(10, 12);
+                ctx.fillText(txt, xAt(i), baseY + 6);
+            }
+        }
+
+        function scrollRight(prefix) {
+            const wrap = document.getElementById(prefix + '-stack').parentElement;
+            wrap.scrollLeft = wrap.scrollWidth;
+        }
+
+        function buildMaRows() {
+            const host = document.getElementById('ma-rows');
+            host.innerHTML = '';
+            maConfig.forEach((cfg, idx) => {
+                const row = document.createElement('div');
+                row.className = 'ma-row';
+                row.innerHTML =
+                    '<input type="checkbox" ' + (cfg.visible ? 'checked' : '') + ' onchange="onMaVisible(' + idx + ', this.checked)">' +
+                    '<span class="ma-swatch" style="background:' + MA_COLORS[idx % MA_COLORS.length] + '"></span>' +
+                    '<input type="number" min="1" step="1" value="' + cfg.period + '" onchange="onMaPeriod(' + idx + ', this.value)">' +
+                    '<span>일</span>';
+                host.appendChild(row);
+            });
+        }
+
+        function onMaVisible(idx, checked) { maConfig[idx].visible = !!checked; renderAll(); }
+        function onMaPeriod(idx, value) {
+            const p = parseInt(value, 10);
+            if (!isNaN(p) && p > 0) maConfig[idx].period = p;
+            renderAll();
+        }
+
+        function renderAll() {
+            const daily = chartData.daily;
+            const closes = daily.map(c => c.close);
+            const maArrays = maConfig.map(cfg => computeMA(closes, cfg.period));
+            const maLines = maConfig.map((cfg, idx) => ({
+                visible: cfg.visible, rgba: hexToRGBA(MA_COLORS[idx % MA_COLORS.length]), values: maArrays[idx]
+            }));
+            renderCandle('daily', daily, maLines, { poleWidth: 4, poleSpacing: 7, decadeDividers: true });
+            scrollRight('daily');
+
+            const base = maArrays[BASE_MA_INDEX] || [];
+            const series = [];
+            maConfig.forEach((cfg, idx) => {
+                if (!cfg.visible) return;
+                const vals = maArrays[idx].map((v, i) => {
+                    const b = base[i];
+                    return (v == null || b == null || b === 0) ? null : v / b;
+                });
+                series.push({ rgba: hexToRGBA(MA_COLORS[idx % MA_COLORS.length]), values: vals });
+            });
+            renderLine('compare', daily.map(c => c.label), series, 1.0);
+            scrollRight('compare');
+
+            renderMinute();
+        }
+
+        function renderMinute() {
+            const minute = minuteCache[minuteTic] || [];
+            renderCandle('minute', minute, [], { poleWidth: 3, poleSpacing: 5, dateDividers: true });
+            scrollRight('minute');
+        }
+
+        function onTicChange(tic) {
+            ['15', '30', '60'].forEach(t => {
+                const el = document.getElementById('tic-' + t);
+                if (el) el.checked = (t === tic);
+            });
+            minuteTic = tic;
+            loadMinute(tic);
+        }
+
+        async function loadMinute(tic) {
+            if (minuteCache[tic]) { renderMinute(); return; }
+            try {
+                const resp = await fetch(DATA_BASE + 'minute-chart/' + encodeURIComponent(stockCode) + '?tic=' + tic);
+                const result = await resp.json();
+                minuteCache[tic] = (result.status === 'success') ? normalizeCandles(result.minute, 'cntr_tm') : [];
+            } catch (e) { minuteCache[tic] = []; }
+            renderMinute();
+        }
+
+        async function loadData() {
+            if (!stockCode) {
+                document.getElementById('status').textContent = '종목 코드가 없습니다.';
+                return;
+            }
+            document.getElementById('title').textContent =
+                (stockNameParam ? stockNameParam : '종목') + ' (' + stockCode + ') 분석';
+            try {
+                const resp = await fetch(DATA_BASE + 'analysis-chart/' + encodeURIComponent(stockCode));
+                const result = await resp.json();
+                if (result.status !== 'success') {
+                    document.getElementById('status').textContent = '오류: ' + (result.message || '데이터를 불러오지 못했습니다.');
+                    return;
+                }
+                const name = result.stock_name || stockNameParam || '';
+                document.getElementById('title').textContent = (name || '종목') + ' (' + stockCode + ') 분석';
+                chartData.daily = normalizeCandles(result.daily, 'dt');
+                chartData.minute = normalizeCandles(result.minute, 'cntr_tm');
+                minuteCache = { '15': chartData.minute, '30': null, '60': null };
+                minuteTic = '15';
+                document.getElementById('subtitle').textContent =
+                    '일봉 ' + chartData.daily.length + '개 · 15분봉 ' + chartData.minute.length + '개';
+
+                document.getElementById('status').style.display = 'none';
+                document.getElementById('charts').style.display = 'block';
+                buildMaRows();
+                renderAll();
+            } catch (e) {
+                document.getElementById('status').textContent = '오류: ' + e.message;
+            }
+        }
+
+        let resizeTimer = null;
+        window.addEventListener('resize', () => {
+            clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(() => { if (chartData.daily.length) renderAll(); }, 200);
+        });
+
+        loadData();
+    </script>
+</body>
+</html>
+"""
+    return HTMLResponse(content=html_content)
+
+
+@app.get("/api/analysis-chart/{stock_code}")
+@app.get("/stock/data/api/analysis-chart/{stock_code}")
+async def get_analysis_chart_data(stock_code: str):
+    """Fetch live daily and 15-minute chart data for a stock code (for the analysis screen)."""
+    try:
+        stock_code = (stock_code or '').strip()
+        if stock_code.upper().startswith('A') and stock_code[1:].isdigit():
+            stock_code = stock_code[1:]
+        if not stock_code:
+            return JSONResponse(content={"status": "error", "message": "stock_code is required"})
+
+        token = get_one_token()
+        if not token:
+            return JSONResponse(content={"status": "error", "message": "Failed to acquire access token"})
+
+        # Stock name
+        stock_name = ''
+        try:
+            info = get_stockinfo(stock_code)
+            if isinstance(info, dict):
+                stock_name = info.get('name', '') or ''
+        except Exception as e:
+            print(f"get_analysis_chart_data: get_stockinfo failed: {e}")
+
+        # Daily chart (ka10081)
+        daily_data = []
+        try:
+            day_resp = get_day_chart(token, stock_code, stock_name)
+            if isinstance(day_resp, dict):
+                daily_data = day_resp.get('stk_dt_pole_chart_qry', []) or []
+        except Exception as e:
+            print(f"get_analysis_chart_data: get_day_chart failed: {e}")
+
+        # 15-minute chart (ka10080, tic_scope=15)
+        minute_data = []
+        try:
+            minute_resp = get_bun_chart(token, stock_code, stock_name)
+            if isinstance(minute_resp, list):
+                minute_data = minute_resp or []
+        except Exception as e:
+            print(f"get_analysis_chart_data: get_bun_chart failed: {e}")
+
+        return JSONResponse(content={
+            "status": "success",
+            "stock_code": stock_code,
+            "stock_name": stock_name,
+            "daily": daily_data,
+            "minute": minute_data,
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse(content={"status": "error", "message": str(e)})
+
+
+@app.get("/api/minute-chart/{stock_code}")
+@app.get("/stock/data/api/minute-chart/{stock_code}")
+async def get_minute_chart_by_tic(stock_code: str, tic: str = Query('15')):
+    """Fetch live minute chart data for a stock at a given tic interval (15/30/60 minutes)."""
+    try:
+        stock_code = (stock_code or '').strip()
+        if stock_code.upper().startswith('A') and stock_code[1:].isdigit():
+            stock_code = stock_code[1:]
+        if not stock_code:
+            return JSONResponse(content={"status": "error", "message": "stock_code is required"})
+
+        valid_tics = {'1', '3', '5', '10', '15', '30', '45', '60'}
+        if tic not in valid_tics:
+            tic = '15'
+
+        token = get_one_token()
+        if not token:
+            return JSONResponse(content={"status": "error", "message": "Failed to acquire access token"})
+
+        minute_data = []
+        try:
+            params = {
+                'stk_cd': stock_code + '_AL',
+                'tic_scope': tic,
+                'upd_stkpc_tp': '1',
+            }
+            resp = fn_ka10080(token=token, data=params)
+            if isinstance(resp, list):
+                minute_data = resp or []
+        except Exception as e:
+            print(f"get_minute_chart_by_tic: fn_ka10080 failed: {e}")
+
+        return JSONResponse(content={
+            "status": "success",
+            "stock_code": stock_code,
+            "tic": tic,
+            "minute": minute_data,
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse(content={"status": "error", "message": str(e)})
+
 
 @app.get("/lookcsv", response_class=HTMLResponse)
 @app.get("/stock/data/lookcsv", response_class=HTMLResponse)
