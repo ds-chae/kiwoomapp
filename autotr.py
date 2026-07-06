@@ -61,6 +61,9 @@ sell_exclude_lock = threading.RLock()
 # Jango data file
 JANGO_DATA_FILE = 'jango_data.json'
 
+# Temperature/fan sensor data
+TEMPERATURE_DIR = 'temperature'
+
 # Image uploads (multipart API)
 IMAGE_UPLOAD_DIR = os.path.join('uploads', 'images')
 MAX_IMAGE_UPLOAD_BYTES = 10 * 1024 * 1024
@@ -3915,6 +3918,275 @@ async def cancel_nxt_trade_endpoint():
         return {"status": "error", "message": str(e)}
 
 
+
+
+def _to_float(v):
+    try:
+        return float(str(v).strip())
+    except Exception:
+        return None
+
+
+def _read_temperature_data(limit=3000):
+    """Read saved temperature/fan samples from TEMPERATURE_DIR.
+    Filenames are yyyymmddhhmmss.txt; content is JSON {temperature, fan}.
+    Returns a chronologically sorted list of {t, temperature, fan}.
+    """
+    out = []
+    try:
+        if not os.path.isdir(TEMPERATURE_DIR):
+            return out
+        files = [f for f in os.listdir(TEMPERATURE_DIR) if f.lower().endswith('.txt')]
+        files.sort()
+        if limit and len(files) > limit:
+            files = files[-limit:]
+        for fname in files:
+            stem = fname[:-4]
+            # Label from the filename timestamp (yyyymmddhhmmss)
+            label = stem
+            if len(stem) >= 14 and stem[:14].isdigit():
+                s = stem[:14]
+                label = f"{s[0:4]}-{s[4:6]}-{s[6:8]} {s[8:10]}:{s[10:12]}:{s[12:14]}"
+            temperature = None
+            fan = None
+            try:
+                with open(os.path.join(TEMPERATURE_DIR, fname), 'r', encoding='utf-8') as f:
+                    content = f.read().strip()
+                if content:
+                    try:
+                        obj = json.loads(content)
+                        if isinstance(obj, dict):
+                            temperature = _to_float(obj.get('temperature'))
+                            fan = _to_float(obj.get('fan'))
+                    except Exception:
+                        # Fallback: "temperature,fan" plain text
+                        parts = content.replace('\n', ',').split(',')
+                        if len(parts) >= 1:
+                            temperature = _to_float(parts[0])
+                        if len(parts) >= 2:
+                            fan = _to_float(parts[1])
+            except Exception:
+                continue
+            out.append({'t': label, 'temperature': temperature, 'fan': fan})
+    except Exception:
+        traceback.print_exc()
+    return out
+
+
+@app.post("/temperature")
+@app.post("/stock/temperature")
+async def post_temperature(request: Request):
+    """Receive {fan, temperature} and store it as ./temperature/yyyymmddhhmmss.txt."""
+    fan = None
+    temperature = None
+    # Try JSON body first, then form, then query params.
+    try:
+        data = await request.json()
+        if isinstance(data, dict):
+            fan = data.get('fan')
+            temperature = data.get('temperature')
+    except Exception:
+        pass
+    if fan is None and temperature is None:
+        try:
+            form = await request.form()
+            fan = form.get('fan')
+            temperature = form.get('temperature')
+        except Exception:
+            pass
+    qp = request.query_params
+    if fan is None:
+        fan = qp.get('fan')
+    if temperature is None:
+        temperature = qp.get('temperature')
+
+    now = datetime.now()
+    fname = now.strftime('%Y%m%d%H%M%S') + '.txt'
+    try:
+        os.makedirs(TEMPERATURE_DIR, exist_ok=True)
+        record = {
+            'temperature': _to_float(temperature),
+            'fan': _to_float(fan),
+            'time': now.strftime('%Y-%m-%d %H:%M:%S'),
+        }
+        with open(os.path.join(TEMPERATURE_DIR, fname), 'w', encoding='utf-8') as f:
+            json.dump(record, f)
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
+    return {"status": "success", "file": fname,
+            "temperature": record['temperature'], "fan": record['fan']}
+
+
+@app.get("/temperature", response_class=HTMLResponse)
+@app.get("/stock/temperature", response_class=HTMLResponse)
+async def temperature_page():
+    """Render temperature (top) and fan (bottom) line charts from stored data."""
+    data = _read_temperature_data()
+    data_json = json.dumps(data)
+    html_content = """
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>온도 / 팬 모니터</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #f0f2f5; color: #222; padding: 12px; }
+        .header { display: flex; align-items: center; justify-content: space-between;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff;
+            padding: 14px 20px; border-radius: 10px; margin-bottom: 14px; }
+        .header h1 { font-size: 20px; }
+        .header .sub { font-size: 13px; opacity: 0.9; margin-top: 4px; }
+        .header a { color: #fff; text-decoration: none; background: rgba(255,255,255,0.2);
+            padding: 8px 14px; border-radius: 6px; font-size: 13px; }
+        .header a:hover { background: rgba(255,255,255,0.35); }
+        .panel { background: #fff; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            margin-bottom: 16px; overflow: hidden; }
+        .panel-title { font-size: 15px; font-weight: 600; color: #333;
+            padding: 12px 16px; border-bottom: 1px solid #eee; background: #fafbfc; }
+        .chart-wrap { overflow-x: auto; overflow-y: hidden; }
+        .chart-wrap canvas { display: block; }
+        .status-msg { padding: 30px; text-align: center; color: #888; font-size: 14px; }
+        .temp-chart-wrap { height: 340px; }
+        .fan-chart-wrap { height: 220px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div>
+            <h1>온도 / 팬 모니터</h1>
+            <div class="sub" id="subtitle"></div>
+        </div>
+        <a href="javascript:location.reload()">새로고침</a>
+    </div>
+
+    <div id="status" class="status-msg" style="display:none;">저장된 데이터가 없습니다.</div>
+
+    <div id="charts">
+        <div class="panel">
+            <div class="panel-title">온도 (Temperature)</div>
+            <div class="chart-wrap temp-chart-wrap"><canvas id="temp-chart"></canvas></div>
+        </div>
+        <div class="panel">
+            <div class="panel-title">팬 (Fan)</div>
+            <div class="chart-wrap fan-chart-wrap"><canvas id="fan-chart"></canvas></div>
+        </div>
+    </div>
+
+    <script>
+        const DATA = __DATA__;
+
+        function setCanvasSize(canvas, width) {
+            const wrap = canvas.parentElement;
+            canvas.height = wrap.clientHeight;
+            canvas.width = Math.max(width, wrap.clientWidth);
+        }
+
+        function drawXLabels(ctx, labels, xAt, baseY, n) {
+            ctx.fillStyle = '#888'; ctx.font = '9px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+            const step = Math.max(1, Math.floor(n / 12));
+            for (let i = 0; i < n; i += step) {
+                const raw = (labels[i] || '').toString();
+                const txt = raw.length >= 16 ? raw.slice(5, 16) : raw;  // MM-DD HH:MM
+                ctx.fillText(txt, xAt(i), baseY + 6);
+            }
+        }
+
+        function renderChart(canvasId, values, labels, opts) {
+            opts = opts || {};
+            const canvas = document.getElementById(canvasId);
+            const ctx = canvas.getContext('2d');
+            const spacing = opts.spacing || 8;
+            const left = 56, right = 20, top = 16, bottom = 42;
+            const n = values.length;
+            const chartW = Math.max(1, (n - 1)) * spacing;
+            setCanvasSize(canvas, left + chartW + right);
+            const chartH = canvas.height - top - bottom;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            if (n === 0) return;
+
+            let lo, hi;
+            if (opts.fixed01) { lo = 0; hi = 1; }
+            else {
+                lo = Infinity; hi = -Infinity;
+                values.forEach(v => { if (v != null) { lo = Math.min(lo, v); hi = Math.max(hi, v); } });
+                if (lo === Infinity) { lo = 0; hi = 1; }
+                if (lo === hi) { lo -= 1; hi += 1; }
+                const pad = (hi - lo) * 0.1; lo -= pad; hi += pad;
+            }
+            const range = hi - lo;
+            const yAt = v => top + chartH - (v - lo) / range * chartH;
+            const xAt = i => left + i * spacing;
+
+            // Y gridlines + labels
+            ctx.fillStyle = '#777'; ctx.font = '10px Arial'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+            const ticks = opts.fixed01 ? 1 : 6;
+            for (let i = 0; i <= ticks; i++) {
+                const val = hi - range * (i / ticks);
+                const y = Math.round(yAt(val)) + 0.5;
+                ctx.strokeStyle = '#f2f2f2'; ctx.beginPath();
+                ctx.moveTo(left, y); ctx.lineTo(left + chartW, y); ctx.stroke();
+                ctx.fillText(opts.fixed01 ? String(Math.round(val)) : val.toFixed(1), left - 6, y);
+            }
+            // Axis
+            ctx.strokeStyle = '#ddd'; ctx.lineWidth = 1; ctx.beginPath();
+            ctx.moveTo(left + 0.5, top); ctx.lineTo(left + 0.5, top + chartH);
+            ctx.lineTo(left + chartW, top + chartH + 0.5); ctx.stroke();
+
+            // Line
+            ctx.strokeStyle = opts.color || '#e53935';
+            ctx.lineWidth = opts.fixed01 ? 2 : 1.6;
+            ctx.beginPath();
+            let started = false;
+            for (let i = 0; i < n; i++) {
+                const v = values[i];
+                if (v == null) { started = false; continue; }
+                const x = xAt(i), y = yAt(v);
+                if (!started) { ctx.moveTo(x, y); started = true; }
+                else if (opts.step) { ctx.lineTo(x, yAt(values[i - 1] != null ? values[i - 1] : v)); ctx.lineTo(x, y); }
+                else { ctx.lineTo(x, y); }
+            }
+            ctx.stroke();
+
+            // Points
+            ctx.fillStyle = opts.color || '#e53935';
+            for (let i = 0; i < n; i++) {
+                const v = values[i];
+                if (v == null) continue;
+                ctx.beginPath(); ctx.arc(xAt(i), yAt(v), 2, 0, Math.PI * 2); ctx.fill();
+            }
+
+            drawXLabels(ctx, labels, xAt, top + chartH, n);
+            const wrap = canvas.parentElement;
+            wrap.scrollLeft = wrap.scrollWidth;
+        }
+
+        function renderAll() {
+            if (!DATA.length) {
+                document.getElementById('status').style.display = 'block';
+                document.getElementById('charts').style.display = 'none';
+                return;
+            }
+            const labels = DATA.map(d => d.t);
+            const temps = DATA.map(d => (d.temperature === null ? null : d.temperature));
+            const fans = DATA.map(d => (d.fan === null ? null : d.fan));
+            document.getElementById('subtitle').textContent =
+                '샘플 ' + DATA.length + '개 · 최근 ' + (labels[labels.length - 1] || '');
+            renderChart('temp-chart', temps, labels, { color: '#e53935', spacing: 8 });
+            renderChart('fan-chart', fans, labels, { color: '#1e88e5', spacing: 8, fixed01: true, step: true });
+        }
+
+        let resizeTimer = null;
+        window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(renderAll, 200); });
+        renderAll();
+    </script>
+</body>
+</html>
+"""
+    html_content = html_content.replace('__DATA__', data_json)
+    return HTMLResponse(content=html_content)
 
 
 # Proxy endpoint for datagather service
