@@ -309,7 +309,8 @@ def fn_kt00018(log_jango, token, data, cont_yn='N', next_key=''):
         response = requests.post(url, headers=headers, json=data)
 
         if log_jango:
-            print('get_jango => Code: {}'.format(response.status_code))
+            pass
+            #print('get_jango => Code: {}'.format(response.status_code))
             #print('get_jango => Header:', json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4, ensure_ascii=False))
             #print('get_jango => Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON ÀÀ´äÀ» ÆÄ½ÌÇÏ¿© Ãâ·Â
             #print('get_jango => Finish:')
@@ -409,7 +410,8 @@ def get_jango(market = 'KRX'):
 
     elapsed = time_module.time() - start
     if log_jango:
-        print('get_jango => elapsed={:.3f} seconds'.format(elapsed))
+        pass
+        #print('get_jango => elapsed={:.3f} seconds'.format(elapsed))
 
     return jango
 
