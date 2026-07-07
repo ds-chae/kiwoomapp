@@ -4048,8 +4048,10 @@ async def temperature_page():
             margin-bottom: 16px; overflow: hidden; }
         .panel-title { font-size: 15px; font-weight: 600; color: #333;
             padding: 12px 16px; border-bottom: 1px solid #eee; background: #fafbfc; }
-        .chart-wrap { overflow-x: auto; overflow-y: hidden; }
-        .chart-wrap canvas { display: block; }
+        .chart-row { display: flex; align-items: stretch; }
+        .axis-canvas { flex: 0 0 auto; display: block; background: #fff; z-index: 2; }
+        .chart-scroll { flex: 1 1 auto; overflow-x: auto; overflow-y: hidden; }
+        .chart-scroll canvas { display: block; }
         .status-msg { padding: 30px; text-align: center; color: #888; font-size: 14px; }
         .temp-chart-wrap { height: 340px; }
         .fan-chart-wrap { height: 220px; }
@@ -4069,11 +4071,17 @@ async def temperature_page():
     <div id="charts">
         <div class="panel">
             <div class="panel-title">온도 (Temperature)</div>
-            <div class="chart-wrap temp-chart-wrap"><canvas id="temp-chart"></canvas></div>
+            <div class="chart-row temp-chart-wrap">
+                <canvas id="temp-axis" class="axis-canvas"></canvas>
+                <div class="chart-scroll"><canvas id="temp-chart"></canvas></div>
+            </div>
         </div>
         <div class="panel">
             <div class="panel-title">팬 (Fan)</div>
-            <div class="chart-wrap fan-chart-wrap"><canvas id="fan-chart"></canvas></div>
+            <div class="chart-row fan-chart-wrap">
+                <canvas id="fan-axis" class="axis-canvas"></canvas>
+                <div class="chart-scroll"><canvas id="fan-chart"></canvas></div>
+            </div>
         </div>
     </div>
 
@@ -4086,22 +4094,49 @@ async def temperature_page():
             canvas.width = Math.max(width, wrap.clientWidth);
         }
 
-        function drawXLabels(ctx, labels, xAt, baseY, n) {
-            ctx.fillStyle = '#888'; ctx.font = '9px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-            const step = Math.max(1, Math.floor(n / 12));
-            for (let i = 0; i < n; i += step) {
-                const raw = (labels[i] || '').toString();
-                const txt = raw.length >= 16 ? raw.slice(5, 16) : raw;  // MM-DD HH:MM
-                ctx.fillText(txt, xAt(i), baseY + 6);
+        // Indices where a new clock-hour starts (based on "YYYY-MM-DD HH...").
+        function hourBoundaries(labels) {
+            const res = [];
+            let prev = null;
+            for (let i = 0; i < labels.length; i++) {
+                const key = (labels[i] || '').toString().slice(0, 13); // "YYYY-MM-DD HH"
+                if (key && key !== prev) { res.push({ i: i, key: key }); prev = key; }
             }
+            return res;
+        }
+
+        const AXIS_W = 52;   // fixed left column width (holds Y-axis labels)
+
+        // Draw the fixed Y-axis (kept pinned while the body scrolls).
+        function drawAxis(axisId, height, top, chartH, lo, hi, range, opts) {
+            const axis = document.getElementById(axisId);
+            axis.width = AXIS_W; axis.height = height;
+            const actx = axis.getContext('2d');
+            actx.clearRect(0, 0, AXIS_W, height);
+            actx.fillStyle = '#fff'; actx.fillRect(0, 0, AXIS_W, height);
+            const yAt = v => top + chartH - (v - lo) / range * chartH;
+            actx.textAlign = 'right'; actx.textBaseline = 'middle';
+            actx.font = '10px Arial';
+            const labelVals = [];
+            if (opts.fixed01) { labelVals.push(0, 1); }
+            else { for (let v = Math.ceil(lo); v <= Math.floor(hi); v++) labelVals.push(v); }
+            labelVals.forEach(val => {
+                const y = Math.round(yAt(val)) + 0.5;
+                actx.strokeStyle = '#ccc'; actx.beginPath();
+                actx.moveTo(AXIS_W - 4, y); actx.lineTo(AXIS_W - 0.5, y); actx.stroke();  // tick
+                actx.fillStyle = '#555'; actx.fillText(String(val), AXIS_W - 8, y);
+            });
+            // Vertical axis line on the right edge of the fixed column
+            actx.strokeStyle = '#ccc'; actx.lineWidth = 1; actx.beginPath();
+            actx.moveTo(AXIS_W - 0.5, top); actx.lineTo(AXIS_W - 0.5, top + chartH); actx.stroke();
         }
 
         function renderChart(canvasId, values, labels, opts) {
             opts = opts || {};
             const canvas = document.getElementById(canvasId);
             const ctx = canvas.getContext('2d');
-            const spacing = opts.spacing || 8;
-            const left = 56, right = 20, top = 16, bottom = 42;
+            const spacing = opts.spacing || 1;   // 1 pixel per data point
+            const left = 6, right = 20, top = 16, bottom = 42;
             const n = values.length;
             const chartW = Math.max(1, (n - 1)) * spacing;
             setCanvasSize(canvas, left + chartW + right);
@@ -4110,8 +4145,11 @@ async def temperature_page():
             if (n === 0) return;
 
             let lo, hi;
-            if (opts.fixed01) { lo = 0; hi = 1; }
-            else {
+            if (opts.fixed01) {
+                // Always show both 0 and 1 regions, expand vertically so the
+                // 0/1 gridlines and points are never clipped at the edges.
+                lo = -0.25; hi = 1.25;
+            } else {
                 lo = Infinity; hi = -Infinity;
                 values.forEach(v => { if (v != null) { lo = Math.min(lo, v); hi = Math.max(hi, v); } });
                 if (lo === Infinity) { lo = 0; hi = 1; }
@@ -4122,24 +4160,46 @@ async def temperature_page():
             const yAt = v => top + chartH - (v - lo) / range * chartH;
             const xAt = i => left + i * spacing;
 
-            // Y gridlines + labels
-            ctx.fillStyle = '#777'; ctx.font = '10px Arial'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-            const ticks = opts.fixed01 ? 1 : 6;
-            for (let i = 0; i <= ticks; i++) {
-                const val = hi - range * (i / ticks);
-                const y = Math.round(yAt(val)) + 0.5;
-                ctx.strokeStyle = '#f2f2f2'; ctx.beginPath();
-                ctx.moveTo(left, y); ctx.lineTo(left + chartW, y); ctx.stroke();
-                ctx.fillText(opts.fixed01 ? String(Math.round(val)) : val.toFixed(1), left - 6, y);
+            // Fixed Y-axis (pinned, always visible during horizontal scroll)
+            if (opts.axisId) drawAxis(opts.axisId, canvas.height, top, chartH, lo, hi, range, opts);
+
+            // Vertical gridlines: one per clock-hour
+            const bounds = hourBoundaries(labels);
+            ctx.lineWidth = 1;
+            ctx.font = '9px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+            bounds.forEach(b => {
+                const x = Math.round(xAt(b.i)) + 0.5;
+                const hh = b.key.slice(11, 13);
+                ctx.strokeStyle = (hh === '00') ? '#cfcfcf' : '#ececec';
+                ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, top + chartH); ctx.stroke();
+                ctx.fillStyle = '#999';
+                ctx.fillText(hh === '00' ? b.key.slice(5, 10) : hh + ':00', x, top + chartH + 6);
+            });
+
+            // Horizontal gridlines (labels are drawn on the fixed axis canvas)
+            if (opts.fixed01) {
+                [0, 1].forEach(val => {
+                    const y = Math.round(yAt(val)) + 0.5;
+                    ctx.strokeStyle = '#dcdcdc'; ctx.beginPath();
+                    ctx.moveTo(left, y); ctx.lineTo(left + chartW, y); ctx.stroke();
+                });
+            } else {
+                // One horizontal line per 1 degree
+                const start = Math.ceil(lo), end = Math.floor(hi);
+                for (let val = start; val <= end; val++) {
+                    const y = Math.round(yAt(val)) + 0.5;
+                    ctx.strokeStyle = (val % 5 === 0) ? '#d5d5d5' : '#f0f0f0';
+                    ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(left + chartW, y); ctx.stroke();
+                }
             }
-            // Axis
+
+            // Bottom axis line
             ctx.strokeStyle = '#ddd'; ctx.lineWidth = 1; ctx.beginPath();
-            ctx.moveTo(left + 0.5, top); ctx.lineTo(left + 0.5, top + chartH);
-            ctx.lineTo(left + chartW, top + chartH + 0.5); ctx.stroke();
+            ctx.moveTo(left, top + chartH + 0.5); ctx.lineTo(left + chartW, top + chartH + 0.5); ctx.stroke();
 
             // Line
             ctx.strokeStyle = opts.color || '#e53935';
-            ctx.lineWidth = opts.fixed01 ? 2 : 1.6;
+            ctx.lineWidth = opts.fixed01 ? 2 : 1.4;
             ctx.beginPath();
             let started = false;
             for (let i = 0; i < n; i++) {
@@ -4152,15 +4212,16 @@ async def temperature_page():
             }
             ctx.stroke();
 
-            // Points
-            ctx.fillStyle = opts.color || '#e53935';
-            for (let i = 0; i < n; i++) {
-                const v = values[i];
-                if (v == null) continue;
-                ctx.beginPath(); ctx.arc(xAt(i), yAt(v), 2, 0, Math.PI * 2); ctx.fill();
+            // Points (only when there is enough horizontal room)
+            if (spacing >= 4) {
+                ctx.fillStyle = opts.color || '#e53935';
+                for (let i = 0; i < n; i++) {
+                    const v = values[i];
+                    if (v == null) continue;
+                    ctx.beginPath(); ctx.arc(xAt(i), yAt(v), 2, 0, Math.PI * 2); ctx.fill();
+                }
             }
 
-            drawXLabels(ctx, labels, xAt, top + chartH, n);
             const wrap = canvas.parentElement;
             wrap.scrollLeft = wrap.scrollWidth;
         }
@@ -4176,8 +4237,8 @@ async def temperature_page():
             const fans = DATA.map(d => (d.fan === null ? null : d.fan));
             document.getElementById('subtitle').textContent =
                 '샘플 ' + DATA.length + '개 · 최근 ' + (labels[labels.length - 1] || '');
-            renderChart('temp-chart', temps, labels, { color: '#e53935', spacing: 8 });
-            renderChart('fan-chart', fans, labels, { color: '#1e88e5', spacing: 8, fixed01: true, step: true });
+            renderChart('temp-chart', temps, labels, { color: '#e53935', spacing: 1, axisId: 'temp-axis' });
+            renderChart('fan-chart', fans, labels, { color: '#1e88e5', spacing: 1, fixed01: true, step: true, axisId: 'fan-axis' });
         }
 
         let resizeTimer = null;
