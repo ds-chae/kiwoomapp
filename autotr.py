@@ -4121,29 +4121,41 @@ async def temperature_page():
             return res;
         }
 
-        const AXIS_W = 52;   // fixed left column width (holds Y-axis labels)
+        const AXIS_W = 56;   // fixed left column width (holds Y-axis labels)
+
+        // Integer degree ticks covering [lo, hi]. Always returns at least one value.
+        function degreeTicks(lo, hi) {
+            let start = Math.floor(lo);
+            let end = Math.ceil(hi);
+            if (end < start) end = start;
+            if (end === start) { start -= 1; end += 1; }  // ensure at least two ticks
+            const vals = [];
+            for (let v = start; v <= end; v++) vals.push(v);
+            return vals;
+        }
 
         // Draw the fixed Y-axis (kept pinned while the body scrolls).
         function drawAxis(axisId, height, top, chartH, lo, hi, range, opts) {
             const axis = document.getElementById(axisId);
+            if (!axis) return;
             axis.width = AXIS_W; axis.height = height;
             const actx = axis.getContext('2d');
             actx.clearRect(0, 0, AXIS_W, height);
             actx.fillStyle = '#fff'; actx.fillRect(0, 0, AXIS_W, height);
             const yAt = v => top + chartH - (v - lo) / range * chartH;
             actx.textAlign = 'right'; actx.textBaseline = 'middle';
-            actx.font = '10px Arial';
-            const labelVals = [];
-            if (opts.fixed01) { labelVals.push(0, 1); }
-            else { for (let v = Math.ceil(lo); v <= Math.floor(hi); v++) labelVals.push(v); }
+            actx.font = '11px Arial';
+            const labelVals = opts.fixed01 ? [0, 1] : degreeTicks(lo, hi);
             labelVals.forEach(val => {
                 const y = Math.round(yAt(val)) + 0.5;
-                actx.strokeStyle = '#ccc'; actx.beginPath();
-                actx.moveTo(AXIS_W - 4, y); actx.lineTo(AXIS_W - 0.5, y); actx.stroke();  // tick
-                actx.fillStyle = '#555'; actx.fillText(String(val), AXIS_W - 8, y);
+                // Skip ticks that fall outside the plot area (with small margin)
+                if (y < top - 2 || y > top + chartH + 2) return;
+                actx.strokeStyle = '#999'; actx.beginPath();
+                actx.moveTo(AXIS_W - 6, y); actx.lineTo(AXIS_W - 0.5, y); actx.stroke();
+                actx.fillStyle = '#333'; actx.fillText(String(val), AXIS_W - 10, y);
             });
             // Vertical axis line on the right edge of the fixed column
-            actx.strokeStyle = '#ccc'; actx.lineWidth = 1; actx.beginPath();
+            actx.strokeStyle = '#999'; actx.lineWidth = 1; actx.beginPath();
             actx.moveTo(AXIS_W - 0.5, top); actx.lineTo(AXIS_W - 0.5, top + chartH); actx.stroke();
         }
 
@@ -4201,13 +4213,13 @@ async def temperature_page():
                     ctx.moveTo(left, y); ctx.lineTo(left + chartW, y); ctx.stroke();
                 });
             } else {
-                // One horizontal line per 1 degree
-                const start = Math.ceil(lo), end = Math.floor(hi);
-                for (let val = start; val <= end; val++) {
+                // One horizontal line per 1 degree (same ticks as Y-axis labels)
+                degreeTicks(lo, hi).forEach(val => {
                     const y = Math.round(yAt(val)) + 0.5;
+                    if (y < top - 2 || y > top + chartH + 2) return;
                     ctx.strokeStyle = (val % 5 === 0) ? '#d5d5d5' : '#f0f0f0';
                     ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(left + chartW, y); ctx.stroke();
-                }
+                });
             }
 
             // Bottom axis line
