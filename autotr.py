@@ -4061,8 +4061,9 @@ async def temperature_page():
         .chart-scroll { flex: 1 1 auto; overflow-x: auto; overflow-y: hidden; }
         .chart-scroll canvas { display: block; }
         .status-msg { padding: 30px; text-align: center; color: #888; font-size: 14px; }
-        .temp-chart-wrap { height: 340px; }
-        .fan-chart-wrap { height: 220px; }
+        .temp-chart-wrap { height: 280px; }
+        .t2-chart-wrap { height: 280px; }
+        .fan-chart-wrap { height: 120px; }
     </style>
 </head>
 <body>
@@ -4082,6 +4083,13 @@ async def temperature_page():
             <div class="chart-row temp-chart-wrap">
                 <canvas id="temp-axis" class="axis-canvas"></canvas>
                 <div class="chart-scroll" id="temp-scroll"><canvas id="temp-chart"></canvas></div>
+            </div>
+        </div>
+        <div class="panel">
+            <div class="panel-title">t2</div>
+            <div class="chart-row t2-chart-wrap">
+                <canvas id="t2-axis" class="axis-canvas"></canvas>
+                <div class="chart-scroll" id="t2-scroll"><canvas id="t2-chart"></canvas></div>
             </div>
         </div>
         <div class="panel">
@@ -4271,31 +4279,36 @@ async def temperature_page():
             document.getElementById('subtitle').textContent =
                 '샘플 ' + DATA.length + '개 · 최근 ' + (labels[labels.length - 1] || '');
             syncingScroll = true;
-            renderChart('temp-chart', temps, labels, { color: '#e53935', spacing: 1, axisId: 'temp-axis',
-                extraSeries: [{ values: t2s, color: '#1e88e5' }] });
+            renderChart('temp-chart', temps, labels, { color: '#e53935', spacing: 1, axisId: 'temp-axis' });
+            renderChart('t2-chart', t2s, labels, { color: '#1e88e5', spacing: 1, axisId: 't2-axis' });
             renderChart('fan-chart', fans, labels, { color: '#1e88e5', spacing: 1, fixed01: true, step: true, axisId: 'fan-axis' });
-            // Keep both charts scrolled to the same (rightmost) position after redraw
-            const ts = document.getElementById('temp-scroll');
-            const fs = document.getElementById('fan-scroll');
-            const end = Math.max(ts.scrollWidth - ts.clientWidth, fs.scrollWidth - fs.clientWidth, 0);
-            ts.scrollLeft = end; fs.scrollLeft = end;
+            // Keep all charts scrolled to the same (rightmost) position after redraw
+            const scrolls = [
+                document.getElementById('temp-scroll'),
+                document.getElementById('t2-scroll'),
+                document.getElementById('fan-scroll')
+            ];
+            const end = Math.max(0, ...scrolls.map(s => s.scrollWidth - s.clientWidth));
+            scrolls.forEach(s => { s.scrollLeft = end; });
             syncingScroll = false;
         }
 
-        // Synchronize horizontal scroll between temperature and fan charts
+        // Synchronize horizontal scroll across temperature, t2, and fan charts
         let syncingScroll = false;
         function bindScrollSync() {
-            const a = document.getElementById('temp-scroll');
-            const b = document.getElementById('fan-scroll');
-            function link(src, dst) {
+            const scrolls = [
+                document.getElementById('temp-scroll'),
+                document.getElementById('t2-scroll'),
+                document.getElementById('fan-scroll')
+            ];
+            scrolls.forEach(src => {
                 src.addEventListener('scroll', () => {
                     if (syncingScroll) return;
                     syncingScroll = true;
-                    dst.scrollLeft = src.scrollLeft;
+                    scrolls.forEach(dst => { if (dst !== src) dst.scrollLeft = src.scrollLeft; });
                     syncingScroll = false;
                 });
-            }
-            link(a, b); link(b, a);
+            });
         }
         bindScrollSync();
 
