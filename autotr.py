@@ -4266,7 +4266,7 @@ async def temperature_page():
             }
             const labels = DATA.map(d => d.t);
             const temps = DATA.map(d => (d.temperature === null ? null : d.temperature));
-            const t2s = DATA.map(d => (d.t2 === null || d.t2 === undefined ? null : d.t2));
+            const t2s = DATA.map(d => (d.t2 === null || d.t2 === undefined ? null : d.t2 + 15));
             const fans = DATA.map(d => (d.fan === null ? null : d.fan));
             document.getElementById('subtitle').textContent =
                 '샘플 ' + DATA.length + '개 · 최근 ' + (labels[labels.length - 1] || '');
