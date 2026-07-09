@@ -4145,7 +4145,10 @@ async def temperature_page():
             const yAt = v => top + chartH - (v - lo) / range * chartH;
             actx.textAlign = 'right'; actx.textBaseline = 'middle';
             actx.font = '11px Arial';
-            const labelVals = opts.fixed01 ? [0, 1] : degreeTicks(lo, hi);
+            let labelVals;
+            if (opts.fixed01) labelVals = [0, 1];
+            else if (opts.fixedY) labelVals = opts.fixedY;
+            else labelVals = degreeTicks(lo, hi);
             labelVals.forEach(val => {
                 const y = Math.round(yAt(val)) + 0.5;
                 // Skip ticks that fall outside the plot area (with small margin)
@@ -4177,6 +4180,10 @@ async def temperature_page():
                 // Always show both 0 and 1 regions, expand vertically so the
                 // 0/1 gridlines and points are never clipped at the edges.
                 lo = -0.25; hi = 1.25;
+            } else if (opts.fixedY) {
+                // Fixed Y labels/range — do not derive from data
+                lo = opts.fixedY[0];
+                hi = opts.fixedY[opts.fixedY.length - 1];
             } else {
                 lo = Infinity; hi = -Infinity;
                 values.forEach(v => { if (v != null) { lo = Math.min(lo, v); hi = Math.max(hi, v); } });
@@ -4211,6 +4218,12 @@ async def temperature_page():
                     const y = Math.round(yAt(val)) + 0.5;
                     ctx.strokeStyle = '#dcdcdc'; ctx.beginPath();
                     ctx.moveTo(left, y); ctx.lineTo(left + chartW, y); ctx.stroke();
+                });
+            } else if (opts.fixedY) {
+                opts.fixedY.forEach(val => {
+                    const y = Math.round(yAt(val)) + 0.5;
+                    ctx.strokeStyle = (val % 5 === 0) ? '#d5d5d5' : '#f0f0f0';
+                    ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(left + chartW, y); ctx.stroke();
                 });
             } else {
                 // One horizontal line per 1 degree (same ticks as Y-axis labels)
@@ -4291,7 +4304,10 @@ async def temperature_page():
             document.getElementById('subtitle').textContent =
                 '샘플 ' + DATA.length + '개 · 최근 ' + (labels[labels.length - 1] || '');
             syncingScroll = true;
-            renderChart('temp-chart', temps, labels, { color: '#e53935', spacing: 1, axisId: 'temp-axis' });
+            renderChart('temp-chart', temps, labels, {
+                color: '#e53935', spacing: 1, axisId: 'temp-axis',
+                fixedY: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+            });
             renderChart('t2-chart', t2s, labels, { color: '#1e88e5', spacing: 1, axisId: 't2-axis' });
             renderChart('fan-chart', fans, labels, { color: '#1e88e5', spacing: 1, fixed01: true, step: true, axisId: 'fan-axis' });
             // Keep all charts scrolled to the same (rightmost) position after redraw
