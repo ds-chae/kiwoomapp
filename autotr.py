@@ -3950,6 +3950,7 @@ def _read_temperature_data(limit=3000):
                 s = stem[:14]
                 label = f"{s[0:4]}-{s[4:6]}-{s[6:8]} {s[8:10]}:{s[10:12]}:{s[12:14]}"
             temperature = None
+            t2 = None
             fan = None
             try:
                 with open(os.path.join(TEMPERATURE_DIR, fname), 'r', encoding='utf-8') as f:
@@ -3959,6 +3960,7 @@ def _read_temperature_data(limit=3000):
                         obj = json.loads(content)
                         if isinstance(obj, dict):
                             temperature = _to_float(obj.get('temperature'))
+                            t2 = _to_float(obj.get('t2'))
                             fan = _to_float(obj.get('fan'))
                     except Exception:
                         # Fallback: "temperature,fan" plain text
@@ -3969,7 +3971,7 @@ def _read_temperature_data(limit=3000):
                             fan = _to_float(parts[1])
             except Exception:
                 continue
-            out.append({'t': label, 'temperature': temperature, 'fan': fan})
+            out.append({'t': label, 'temperature': temperature, 't2': t2, 'fan': fan})
     except Exception:
         traceback.print_exc()
     return out
@@ -3981,12 +3983,14 @@ async def post_temperature(request: Request):
     """Receive {fan, temperature} and store it as ./temperature/yyyymmddhhmmss.txt."""
     fan = None
     temperature = None
+    t2 = None
     # Try JSON body first, then form, then query params.
     try:
         data = await request.json()
         if isinstance(data, dict):
             fan = data.get('fan')
             temperature = data.get('temperature')
+            t2 = data.get('t2')
     except Exception:
         pass
     if fan is None and temperature is None:
@@ -3994,6 +3998,7 @@ async def post_temperature(request: Request):
             form = await request.form()
             fan = form.get('fan')
             temperature = form.get('temperature')
+            t2 = form.get('t2')
         except Exception:
             pass
     qp = request.query_params
@@ -4001,6 +4006,8 @@ async def post_temperature(request: Request):
         fan = qp.get('fan')
     if temperature is None:
         temperature = qp.get('temperature')
+    if t2 is None:
+        t2 = qp.get('t2')
 
     now = datetime.now()
     fname = now.strftime('%Y%m%d%H%M%S') + '.txt'
@@ -4008,6 +4015,7 @@ async def post_temperature(request: Request):
         os.makedirs(TEMPERATURE_DIR, exist_ok=True)
         record = {
             'temperature': _to_float(temperature),
+            't2': _to_float(t2),
             'fan': _to_float(fan),
             'time': now.strftime('%Y-%m-%d %H:%M:%S'),
         }
@@ -4073,14 +4081,14 @@ async def temperature_page():
             <div class="panel-title">온도 (Temperature)</div>
             <div class="chart-row temp-chart-wrap">
                 <canvas id="temp-axis" class="axis-canvas"></canvas>
-                <div class="chart-scroll"><canvas id="temp-chart"></canvas></div>
+                <div class="chart-scroll" id="temp-scroll"><canvas id="temp-chart"></canvas></div>
             </div>
         </div>
         <div class="panel">
             <div class="panel-title">팬 (Fan)</div>
             <div class="chart-row fan-chart-wrap">
                 <canvas id="fan-axis" class="axis-canvas"></canvas>
-                <div class="chart-scroll"><canvas id="fan-chart"></canvas></div>
+                <div class="chart-scroll" id="fan-scroll"><canvas id="fan-chart"></canvas></div>
             </div>
         </div>
     </div>
@@ -4152,6 +4160,7 @@ async def temperature_page():
             } else {
                 lo = Infinity; hi = -Infinity;
                 values.forEach(v => { if (v != null) { lo = Math.min(lo, v); hi = Math.max(hi, v); } });
+                (opts.extraSeries || []).forEach(s => s.values.forEach(v => { if (v != null) { lo = Math.min(lo, v); hi = Math.max(hi, v); } }));
                 if (lo === Infinity) { lo = 0; hi = 1; }
                 if (lo === hi) { lo -= 1; hi += 1; }
                 const pad = (hi - lo) * 0.1; lo -= pad; hi += pad;
@@ -4222,6 +4231,29 @@ async def temperature_page():
                 }
             }
 
+            // Additional overlaid series drawn in the same plot area
+            (opts.extraSeries || []).forEach(s => {
+                const sv = s.values;
+                ctx.strokeStyle = s.color; ctx.lineWidth = 1.4;
+                ctx.beginPath();
+                let st = false;
+                for (let i = 0; i < sv.length; i++) {
+                    const v = sv[i];
+                    if (v == null) { st = false; continue; }
+                    const x = xAt(i), y = yAt(v);
+                    if (!st) { ctx.moveTo(x, y); st = true; } else { ctx.lineTo(x, y); }
+                }
+                ctx.stroke();
+                if (spacing >= 4) {
+                    ctx.fillStyle = s.color;
+                    for (let i = 0; i < sv.length; i++) {
+                        const v = sv[i];
+                        if (v == null) continue;
+                        ctx.beginPath(); ctx.arc(xAt(i), yAt(v), 2, 0, Math.PI * 2); ctx.fill();
+                    }
+                }
+            });
+
             const wrap = canvas.parentElement;
             wrap.scrollLeft = wrap.scrollWidth;
         }
@@ -4234,12 +4266,38 @@ async def temperature_page():
             }
             const labels = DATA.map(d => d.t);
             const temps = DATA.map(d => (d.temperature === null ? null : d.temperature));
+            const t2s = DATA.map(d => (d.t2 === null || d.t2 === undefined ? null : d.t2));
             const fans = DATA.map(d => (d.fan === null ? null : d.fan));
             document.getElementById('subtitle').textContent =
                 '샘플 ' + DATA.length + '개 · 최근 ' + (labels[labels.length - 1] || '');
-            renderChart('temp-chart', temps, labels, { color: '#e53935', spacing: 1, axisId: 'temp-axis' });
+            syncingScroll = true;
+            renderChart('temp-chart', temps, labels, { color: '#e53935', spacing: 1, axisId: 'temp-axis',
+                extraSeries: [{ values: t2s, color: '#1e88e5' }] });
             renderChart('fan-chart', fans, labels, { color: '#1e88e5', spacing: 1, fixed01: true, step: true, axisId: 'fan-axis' });
+            // Keep both charts scrolled to the same (rightmost) position after redraw
+            const ts = document.getElementById('temp-scroll');
+            const fs = document.getElementById('fan-scroll');
+            const end = Math.max(ts.scrollWidth - ts.clientWidth, fs.scrollWidth - fs.clientWidth, 0);
+            ts.scrollLeft = end; fs.scrollLeft = end;
+            syncingScroll = false;
         }
+
+        // Synchronize horizontal scroll between temperature and fan charts
+        let syncingScroll = false;
+        function bindScrollSync() {
+            const a = document.getElementById('temp-scroll');
+            const b = document.getElementById('fan-scroll');
+            function link(src, dst) {
+                src.addEventListener('scroll', () => {
+                    if (syncingScroll) return;
+                    syncingScroll = true;
+                    dst.scrollLeft = src.scrollLeft;
+                    syncingScroll = false;
+                });
+            }
+            link(a, b); link(b, a);
+        }
+        bindScrollSync();
 
         let resizeTimer = null;
         window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(renderAll, 200); });
