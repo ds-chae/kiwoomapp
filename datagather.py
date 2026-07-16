@@ -114,7 +114,7 @@ def _build_logs_tree(base_dir: str) -> dict:
                     continue
                 child_abs = os.path.join(abs_path, e)
                 # allow directories and .txt files
-                if os.path.isdir(child_abs) or e.lower().endswith('.txt'):
+                if os.path.isdir(child_abs) or e.lower().endswith('.txt') or e.lower().endswith('.log'):
                     children.append(build_node(child_abs))
             return {"type": "dir", "name": name, "path": rel, "children": children}
         return {"type": "file", "name": name, "path": rel}
