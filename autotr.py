@@ -772,7 +772,7 @@ def call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_co
     ret_status = sell_order(MY_ACCESS_TOKEN, dmst_stex_tp=market, stk_cd=stk_cd,
                             ord_qty=str(trde_able_qty_int), ord_uv=str(sell_price), trde_tp=trde_tp, cond_uv='')
     log_print(ACCT, stk_cd, f' ret_status={ret_status}')
-    test_ret_status('SELL', stk_cd, stk_nm, ret_status)
+    test_ret_status('SELL', stk_cd, stk_nm, ret_status, sell_price)
 
 
 wait_hour_change = False
@@ -1282,7 +1282,7 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
                 log_print(ACCT, stk_cd, 'buy_order market={}, qty={} price={}'.format(stex, ord_qty, ord_price))
                 ret_status = buy_order(MY_ACCESS_TOKEN, stk_nm, stex, stk_cd, str(ord_qty), str(ord_price), trde_tp=trde_tp, cond_uv='')
                 log_print(ACCT, stk_cd, '1_buy_order_result: {}'.format(ret_status))
-                tr = test_ret_status('BUY', stk_cd, stk_nm, ret_status)
+                tr = test_ret_status('BUY', stk_cd, stk_nm, ret_status, ord_price)
                 if tr == 0 or tr == 20 or tr == 200 :
                     add_order_count(ACCT, stk_cd, 1)
                     log_print(ACCT, stk_cd, '1_buy_order_result success  : {}'.format(ret_status['return_msg']))
@@ -1301,7 +1301,7 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
             if ord_qty > 0 :
                 log_print(ACCT, stk_cd, 'buy_order market={}, qty={} price={}'.format(stex, ord_qty, ord_price))
                 ret_status = buy_order(MY_ACCESS_TOKEN, stk_nm, stex, stk_cd, str(ord_qty), str(ord_price), trde_tp=trde_tp, cond_uv='')
-                tr = test_ret_status('BUY', stk_cd, stk_nm, ret_status)
+                tr = test_ret_status('BUY', stk_cd, stk_nm, ret_status, ord_price)
                 if tr == 0 or tr == 20 or tr == 200 :
                     log_print(ACCT, stk_cd, '2_buy_order_result success : {}'.format(ret_status))
                     add_order_count(ACCT, stk_cd, 1)
