@@ -137,7 +137,7 @@ env_pctoken = os.getenv('PCTOKEN')
 
 # In-memory token storage (in production, use Redis or database)
 active_tokens = {}
-updown_list = {}
+upper_limits = {}
 
 key_list = get_key_list()
 order_count = {}
@@ -548,8 +548,8 @@ def is_between(now, start, end):
 from ka10007 import fn_ka10007
 
 def get_upper_limit(MY_ACCESS_TOKEN, stk_cd):
-    global updown_list
-    if not stk_cd in updown_list:
+    global upper_limits
+    if stk_cd not in upper_limits:
         params = {
             'stk_cd': stk_cd,  # 종목코드 거래소별 종목코드 (KRX:039490,NXT:039490_NX,SOR:039490_AL)
         }
@@ -560,20 +560,18 @@ def get_upper_limit(MY_ACCESS_TOKEN, stk_cd):
             if rstk_cd[0] == 'A':
                 rstk_cd = rstk_cd[1:]
             if stk_cd == rstk_cd:
-                updown_list[stk_cd] = response
+                stk_data = response
+                upper_limits[stk_cd] = int(stk_data['upl_pric'])
             else:
                 print('calling fn_ka1007 in get_upper_limit mismatch')
                 print('stk_cd in response is {}'.format(response['stk_cd']))
+                return 0
         except Exception as ex:
             print('calling fn_ka1007 in get_upper_limit failed')
             print(ex)
-            return
-    stk_data = updown_list[stk_cd]
-    try:
-        uplimit = stk_data['upl_pric']
-        return int(uplimit)
-    except:
-        return 0
+            return 0
+
+    return upper_limits[stk_cd]
 
 
 def cancel_different_sell_order(now, ACCT, stk_cd, stk_nm, new_price):
@@ -762,7 +760,11 @@ def call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_co
 
     if market == 'KRX':
         if market_closed.get(stk_cd, False):
-            log_print(ACCT, stk_cd, f'{stk_nm} Market is closed for this stock.')
+            log_print(ACCT, stk_cd, f'{stk_nm} KRX Market is closed for this stock.')
+            return
+    if market == 'NXT':
+        if market_closed.get(stk_cd, False):
+            log_print(ACCT, stk_cd, f'{stk_nm} NXT Market is closed for this stock.')
             return
 
     working_status = 'call sell_order()'
@@ -814,7 +816,7 @@ def _is_success_return_code(rc) -> bool:
     return False
 
 
-def test_ret_status(sell_buy, stk_cd, stk_nm, ret_status):
+def test_ret_status(sell_buy, stk_cd, stk_nm, ret_status, ord_prc):
     global now, wait_hour_change
     if not isinstance(ret_status, dict):
         return ''
@@ -823,20 +825,23 @@ def test_ret_status(sell_buy, stk_cd, stk_nm, ret_status):
     rmsg = ret_status.get('return_msg', '')
     if rmsg and len(rmsg) > 13:
         code = rmsg[7:13]
-        if code == '507615':
+        if code == '571551': # '주문단가가 상한가를 초과합니다.'
+            upper_limits[stk_cd] = ord_prc - 1
+            log_print('', stk_cd, f'Setting upper limit to {ord_prc - 1}')
+        elif code == '507615':
             log_print('', stk_cd, '{} 507615 NXT 거래불가'.format(sell_buy))
             print(stk_cd, '{} {} 507615 NXT 거래불가. nxt_tradable={}'.format(sell_buy, stk_nm, nxt_tradable[stk_cd]))
-        if code == '571489':
+        elif code == '571489':
             set_new_day(False)
             print('No trading day, set new_day to False')
             log_print('', '000000', 'No trading day, set new_day to False')
-        if code == '505182': # 장개시전입니다.)', 'return_code': 20}
+        elif code == '505182': # 장개시전입니다.)', 'return_code': 20}
             print(rmsg)
             wait_hour_change = True
-        if code == '505217':
+        elif code == '505217':
             #  장 종료되었습니다.
             market_closed[stk_cd] = True
-        if code == '508749': # 주문단가가 시간외단일가 상한가를 초과합니다.)', 'return_code': 20}
+        elif code == '508749': # 주문단가가 시간외단일가 상한가를 초과합니다.)', 'return_code': 20}
             after_exceeded[stk_cd] = True # 장후 시간외 상한가 초과
 
         print(now, rcde)
@@ -1377,7 +1382,7 @@ def clear_for_new_day():
     global now
     global new_day, nxt_start_time, nxt_cancelled, krx_after_state #, krx_first
     global current_status, market_closed
-    global updown_list, today_yyyymmdd
+    global upper_limits, today_yyyymmdd
     global bun_charts_lock, bun_charts
     global daily_charts_lock, daily_charts, last_logs
     global after_exceeded, old_sel_price
@@ -1391,7 +1396,7 @@ def clear_for_new_day():
     #krx_first = False
     current_status = 'NEW'
     market_closed = {}
-    updown_list = {}
+    upper_limits = {}
     init_order_count()
     with bun_charts_lock:
         bun_charts = {}
@@ -1405,7 +1410,7 @@ def clear_for_new_day():
 def set_new_day(tf):
     global new_day
     global current_status
-    global updown_list, access_token, now, today_yyyymmdd, last_logs
+    global upper_limits, access_token, now, today_yyyymmdd, last_logs
 
     if tf:
         if new_day:
