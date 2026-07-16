@@ -1345,8 +1345,8 @@ async def logs_file_api(path: str = Query("")):
             return JSONResponse(content={"status": "error", "message": "File not found"})
         if os.path.isdir(full):
             return JSONResponse(content={"status": "error", "message": "Path is a directory"})
-        if not full.lower().endswith('.txt'):
-            return JSONResponse(content={"status": "error", "message": "Only .txt files allowed"})
+        if not (full.lower().endswith('.txt') or full.lower().endswith('.log')):
+            return JSONResponse(content={"status": "error", "message": "Only .txt or .log files allowed"})
         with open(full, 'r', encoding='utf-8', errors='replace') as f:
             content = f.read()
         return JSONResponse(content={"status": "success", "content": content})
