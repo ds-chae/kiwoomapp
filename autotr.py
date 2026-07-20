@@ -58,6 +58,13 @@ SELL_EXCLUDE_FILE = 'sell_exclude.json'
 sell_exclude = {}
 sell_exclude_lock = threading.RLock()
 
+# pctoken default params (used when interested-stocks is called with pctoken)
+PC_SETTINGS_FILE = 'pc_settings.json'
+pc_color = 'Y'
+pc_sellrate = 1.2
+pc_bamount = 500000
+pc_settings_lock = threading.RLock()
+
 # Jango data file
 JANGO_DATA_FILE = 'jango_data.json'
 
@@ -1437,6 +1444,7 @@ def load_dictionaries_from_json():
     """Load auto_sell_enabled, and interested_stocks from JSON files"""
     global auto_sell_enabled, interested_stocks, interested_stocks_lock
     global sell_exclude, sell_exclude_lock
+    global pc_color, pc_sellrate, pc_bamount
 
     # Load sell_exclude
     if os.path.exists(SELL_EXCLUDE_FILE):
@@ -1454,6 +1462,33 @@ def load_dictionaries_from_json():
         with sell_exclude_lock:
             sell_exclude = {}
         print(f"Created new sell_exclude dictionary")
+
+    # Load pc settings (pctoken defaults)
+    if os.path.exists(PC_SETTINGS_FILE):
+        try:
+            with open(PC_SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                loaded_pc = json.load(f)
+            if isinstance(loaded_pc, dict):
+                with pc_settings_lock:
+                    if 'pc_color' in loaded_pc and loaded_pc['pc_color'] is not None:
+                        pc_color = str(loaded_pc['pc_color']).strip() or pc_color
+                    if 'pc_sellrate' in loaded_pc and loaded_pc['pc_sellrate'] is not None:
+                        try:
+                            pc_sellrate = float(loaded_pc['pc_sellrate'])
+                        except (ValueError, TypeError):
+                            pass
+                    if 'pc_bamount' in loaded_pc and loaded_pc['pc_bamount'] is not None:
+                        try:
+                            pc_bamount = int(float(loaded_pc['pc_bamount']))
+                        except (ValueError, TypeError):
+                            pass
+            print(f"Loaded pc settings from {PC_SETTINGS_FILE}: "
+                  f"color={pc_color}, sellrate={pc_sellrate}, bamount={pc_bamount}")
+        except Exception as e:
+            print(f"Error loading pc settings: {e}")
+    else:
+        save_pc_settings_to_json()
+        print(f"Created new pc settings file {PC_SETTINGS_FILE}")
 
     # Load auto_sell_enabled
     if os.path.exists(AUTO_SELL_FILE):
@@ -1570,6 +1605,30 @@ def save_auto_sell_to_json():
     except Exception as e:
         print(f"Error saving auto_sell_enabled: {e}")
         return False
+
+
+def get_pc_settings_snapshot():
+    """Return a copy of current pc_* settings."""
+    with pc_settings_lock:
+        return {
+            'pc_color': pc_color,
+            'pc_sellrate': pc_sellrate,
+            'pc_bamount': pc_bamount,
+        }
+
+
+def save_pc_settings_to_json():
+    """Save pc_color / pc_sellrate / pc_bamount to JSON file"""
+    try:
+        data = get_pc_settings_snapshot()
+        with open(PC_SETTINGS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        print(f"Saved pc settings to {PC_SETTINGS_FILE}: {data}")
+        return True
+    except Exception as e:
+        print(f"Error saving pc settings: {e}")
+        return False
+
 
 def save_sell_exclude_to_json():
     """Save sell_exclude to JSON file"""
@@ -2452,6 +2511,26 @@ async def conn_files_page_stock(token: str = Cookie(None, alias="stoken")):
     html_content = html_content.replace("{IP_SUFFIX}", ip_suffix)
     return HTMLResponse(content=html_content)
 
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_page_root(token: str = Cookie(None, alias="stoken")):
+    if not token or not verify_token(token):
+        return RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
+    ip_suffix = get_server_ip_last_digit()
+    html_content = load_text_file("./settings.html")
+    html_content = html_content.replace("{IP_SUFFIX}", ip_suffix)
+    return HTMLResponse(content=html_content)
+
+
+@app.get("/stock/settings", response_class=HTMLResponse)
+async def settings_page_stock(token: str = Cookie(None, alias="stoken")):
+    if not token or not verify_token(token):
+        return RedirectResponse(url="/stock/login", status_code=status.HTTP_302_FOUND)
+    ip_suffix = get_server_ip_last_digit()
+    html_content = load_text_file("./settings.html")
+    html_content = html_content.replace("{IP_SUFFIX}", ip_suffix)
+    return HTMLResponse(content=html_content)
+
 @app.get("/api/conn-files")
 @app.get("/stock/api/conn-files")
 async def get_conn_files_api(proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
@@ -3329,6 +3408,63 @@ async def set_auto_sell_api(request: dict, proxy_path: str = "", token: str = Co
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+
+@app.get("/api/pc-settings")
+@app.get("/stock/api/pc-settings")
+async def get_pc_settings_api(token: str = Cookie(None, alias="stoken")):
+    """Return current pc_color / pc_sellrate / pc_bamount."""
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+    return {"status": "success", "data": get_pc_settings_snapshot()}
+
+
+@app.post("/api/pc-settings")
+@app.post("/stock/api/pc-settings")
+async def set_pc_settings_api(request: dict, token: str = Cookie(None, alias="stoken")):
+    """Update and persist pc_color / pc_sellrate / pc_bamount."""
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+    global pc_color, pc_sellrate, pc_bamount
+    try:
+        if not isinstance(request, dict):
+            return {"status": "error", "message": "Invalid request body"}
+
+        new_color = request.get('pc_color', request.get('color'))
+        new_sellrate = request.get('pc_sellrate', request.get('sellrate'))
+        new_bamount = request.get('pc_bamount', request.get('bamount'))
+
+        with pc_settings_lock:
+            if new_color is not None:
+                color_s = str(new_color).strip()
+                if not color_s:
+                    return {"status": "error", "message": "pc_color is empty"}
+                pc_color = color_kor_to_eng(color_s)
+            if new_sellrate is not None:
+                try:
+                    pc_sellrate = float(new_sellrate)
+                except (ValueError, TypeError):
+                    return {"status": "error", "message": "pc_sellrate must be a number"}
+            if new_bamount is not None:
+                try:
+                    pc_bamount = int(float(new_bamount))
+                except (ValueError, TypeError):
+                    return {"status": "error", "message": "pc_bamount must be an integer"}
+
+        if save_pc_settings_to_json():
+            data = get_pc_settings_snapshot()
+            return {"status": "success", "data": data, "message": "Settings saved"}
+        return {"status": "error", "message": "Failed to save settings to file"}
+    except Exception as e:
+        traceback.print_exc()
+        return {"status": "error", "message": str(e)}
+
+
 @app.get("/api/interested-stocks")
 @app.get("/{proxy_path:path}/api/interested-stocks")
 async def get_interested_stocks_api(proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
@@ -3492,12 +3628,11 @@ def set_interested_rate(stock_code, stock_name='', color=None,
                     stime='', yyyymmdd='', sellprice='0',
                     sellrate=0.0, sellgap='0', clrate=None,
                     is_pctoken=False):
-    global interested_stocks, interested_stocks_lock
+    global interested_stocks, interested_stocks_lock, pc_color, pc_bamount, pc_sellrate
     if is_pctoken:
-        if not color:
-            color = 'O'
-        if bamount is None or bamount == '' or bamount == '0':
-            bamount = '1000000'
+        color = pc_color
+        bamount = pc_bamount
+        sellrate = pc_sellrate
     else:
         log_print('', stock_code, 'pctoken False stime = {}, yyyymmdd = {}'.format(stime, yyyymmdd))
 
@@ -3564,9 +3699,12 @@ def set_interested_rate(stock_code, stock_name='', color=None,
             stock['sellprice'] = sellprice
             if is_pctoken:
                 if float(stock.get('sellrate', 0)) == 0.0:
-                    log_print('', stock_code, f'pctoken True sellrate 1.5 stime = {stime}, yyyymmdd = {yyyymmdd}')
-                    if sellrate == 0.0:
-                        stock['sellrate'] = 1.2
+                    log_print('', stock_code, f'pctoken True sellrate {sellrate} stime = {stime}, yyyymmdd = {yyyymmdd}')
+                    try:
+                        sr = float(sellrate)
+                    except (ValueError, TypeError):
+                        sr = 0.0
+                    stock['sellrate'] = sr if sr != 0.0 else 1.2
             else:
                 stock['sellrate'] = sellrate
             if int(sellgap) > 60:
