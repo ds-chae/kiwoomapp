@@ -1410,6 +1410,7 @@ def clear_for_new_day():
     with daily_charts_lock:
         daily_charts = {}
     last_logs = {}
+    log_print('', '000000', 'cleared last_logs')
     old_sel_price = {}
     after_exceeded = {}  # 장후 시간외 상한가 초과
 
