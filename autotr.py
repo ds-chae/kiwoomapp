@@ -839,7 +839,7 @@ def test_ret_status(sell_buy, stk_cd, stk_nm, ret_status, ord_prc):
             log_print('', stk_cd, '{} 507615 NXT 거래불가'.format(sell_buy))
             print(stk_cd, '{} {} 507615 NXT 거래불가. nxt_tradable={}'.format(sell_buy, stk_nm, nxt_tradable[stk_cd]))
         elif code == '571489':
-            set_new_day(False)
+            set_new_day_false()
             print('No trading day, set new_day to False')
             log_print('', '000000', 'No trading day, set new_day to False')
         elif code == '505182': # 장개시전입니다.)', 'return_code': 20}
@@ -1379,7 +1379,7 @@ def daily_work():
         log_print('', '000000', '1244 OFF')
         current_status = 'OFF'
         if (new_day):
-            set_new_day(False)
+            set_new_day_false()
             msg = '{} {} Setting new day=False'.format(cur_date(), now)
             print(msg)
             log_print('', '000000', msg)
@@ -1415,26 +1415,31 @@ def clear_for_new_day():
     after_exceeded = {}  # 장후 시간외 상한가 초과
 
 
-def set_new_day(tf):
+def set_new_day_true():
     global new_day
     global current_status
     global upper_limits, access_token, now, today_yyyymmdd, last_logs
 
-    if tf:
-        if new_day:
-            return
-        print('{} Setting new_day=True, clearing variables.'.format(now))
-        log_print('ALLACCT', '000000', ' Setting new_day=True, clearing variables.')
-        now = datetime.now()
-        clear_for_new_day()
+    if new_day :
+        return
+    new_day = True
 
-    else:
-        if not new_day:
-            return
-        print('{} new_day is switching OFF'.format(now))
-        log_print('ALLACCT','000000', ' new_day is switching OFF')
-        new_day = False
-        current_status = 'OFF'
+    print('{} Setting new_day=True, clearing variables.'.format(now))
+    log_print('ALLACCT', '000000', ' Setting new_day=True, clearing variables.')
+    now = datetime.now()
+    clear_for_new_day()
+
+def set_new_day_false():
+    global new_day
+    global current_status
+    global upper_limits, access_token, now, today_yyyymmdd, last_logs
+
+    if not new_day:
+        return
+    new_day = False
+    current_status = 'OFF'
+    print('{} new_day is switching OFF'.format(now))
+    log_print('ALLACCT','000000', ' new_day is switching OFF')
 
 
 # Global flag for auto sell - dictionary keyed by account
@@ -2139,7 +2144,7 @@ def order_queued_buy(bqlen):
 def periodic_timer_handler():
     """Periodic timer event handler that runs the trading loop logic"""
     global prev_hour, new_day, stored_jango_data, stored_miche_data, working_status, now, cleanup_run_today
-    global wait_hour_change, calculate_pl_today
+    global wait_hour_change, calculate_pl_today, new_day
 
     now = datetime.now()
     now_hour = now.hour
@@ -2153,9 +2158,12 @@ def periodic_timer_handler():
             print(f"Error running cleanup at 20:30: {e}")
             traceback.print_exc()
 
-    if now_hour == 23 and now.minute == 0 and not calculate_pl_today:
-        calculate_pl_today = True
-        calculate_pl()
+    if now_hour == 23:
+        if now.minute == 0 and not calculate_pl_today:
+            calculate_pl_today = True
+            calculate_pl()
+        elif now.minute == 50 :
+            new_day = False
 
     # Reset cleanup flag at midnight (00:00)
     if now_hour == 0 and now.minute == 0:
@@ -2171,8 +2179,8 @@ def periodic_timer_handler():
         return
 
     try:
-        if is_between(now, day_start_time, nxt_start_time):
-            set_new_day(True)
+        if now == day_start_time and not new_day :
+            set_new_day_true()
         elif is_between(now, nxt_start_time, nxt_fin_time_2000):
             bqlen = len(buy_queue)
             if bqlen > 0 :
@@ -4553,5 +4561,5 @@ async def proxy_to_datagather(path: str, request: Request):
 
 # 실행 구간
 if __name__ == '__main__':
-    set_new_day(True)
+    set_new_day_true()
     uvicorn.run(app, host="0.0.0.0", port=8006, access_log=False)
