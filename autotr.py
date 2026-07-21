@@ -2179,7 +2179,8 @@ def periodic_timer_handler():
         return
 
     try:
-        if now == day_start_time and not new_day :
+        if now.time() == day_start_time and not new_day :
+            log_print('', '000000', f'calling set_new_day_true at {now}')
             set_new_day_true()
         elif is_between(now, nxt_start_time, nxt_fin_time_2000):
             bqlen = len(buy_queue)
