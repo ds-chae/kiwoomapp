@@ -1207,6 +1207,13 @@ async def logs_page():
             .node.dir.open::before { content: "▾ "; }
             .node.file::before { content: "📄 "; }
             .node:hover { background: #f3f4ff; }
+            .file-row { display: flex; align-items: center; gap: 6px; }
+            .file-row .node.file { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+            .btn-del-log {
+                flex: 0 0 auto; border: 1px solid #e0b4b4; background: #fff5f5; color: #c0392b;
+                border-radius: 4px; padding: 1px 7px; font-size: 11px; cursor: pointer; line-height: 1.4;
+            }
+            .btn-del-log:hover { background: #ffe3e3; }
             pre { white-space: pre; overflow-x: auto; -webkit-overflow-scrolling: touch; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; line-height: 1.35; }
             .muted { color: #888; font-size: 12px; }
             @media (max-width: 768px) {
@@ -1254,14 +1261,16 @@ async def logs_page():
                 return (s ?? '').toString();
             }
 
+            let selectedPath = '';
+
             function renderNode(node) {
                 const li = document.createElement('li');
                 const label = document.createElement('div');
                 label.className = 'node ' + (node.type === 'dir' ? 'dir' : 'file');
                 label.textContent = node.name;
-                li.appendChild(label);
 
                 if (node.type === 'dir') {
+                    li.appendChild(label);
                     const ul = document.createElement('ul');
                     ul.style.display = 'none';
                     li.appendChild(ul);
@@ -1274,6 +1283,17 @@ async def logs_page():
                         }
                     });
                 } else {
+                    const row = document.createElement('div');
+                    row.className = 'file-row';
+                    row.appendChild(label);
+                    const delBtn = document.createElement('button');
+                    delBtn.type = 'button';
+                    delBtn.className = 'btn-del-log';
+                    delBtn.textContent = '삭제';
+                    delBtn.title = 'Delete ' + node.name;
+                    row.appendChild(delBtn);
+                    li.appendChild(row);
+
                     label.addEventListener('click', async () => {
                         setStatus('Loading ' + node.path + ' ...');
                         try {
@@ -1282,6 +1302,7 @@ async def logs_page():
                             if (data.status === 'success') {
                                 contentEl.classList.remove('muted');
                                 contentEl.textContent = escapeText(data.content);
+                                selectedPath = node.path;
                                 setStatus(node.path);
                             } else {
                                 contentEl.classList.add('muted');
@@ -1292,6 +1313,33 @@ async def logs_page():
                             contentEl.classList.add('muted');
                             contentEl.textContent = 'Error: ' + e.message;
                             setStatus('Error');
+                        }
+                    });
+
+                    delBtn.addEventListener('click', async (ev) => {
+                        ev.stopPropagation();
+                        if (!confirm('Delete log file?\n' + node.path)) return;
+                        setStatus('Deleting ' + node.path + ' ...');
+                        try {
+                            const resp = await fetch('./api/logs/file?path=' + encodeURIComponent(node.path) + '&t=' + Date.now(), {
+                                method: 'DELETE'
+                            });
+                            const data = await resp.json();
+                            if (data.status === 'success') {
+                                if (selectedPath === node.path) {
+                                    selectedPath = '';
+                                    contentEl.classList.add('muted');
+                                    contentEl.textContent = 'Select a log file from the left.';
+                                }
+                                li.remove();
+                                setStatus('Deleted ' + node.path);
+                            } else {
+                                setStatus('Error: ' + (data.message || 'delete failed'));
+                                alert('Delete failed: ' + (data.message || 'unknown'));
+                            }
+                        } catch (e) {
+                            setStatus('Error');
+                            alert('Delete failed: ' + e.message);
                         }
                     });
                 }
@@ -1352,6 +1400,25 @@ async def logs_file_api(path: str = Query("")):
         return JSONResponse(content={"status": "success", "content": content})
     except Exception as e:
         return JSONResponse(content={"status": "error", "message": str(e)})
+
+
+@app.delete("/api/logs/file")
+@app.delete("/stock/data/api/logs/file")
+async def logs_file_delete_api(path: str = Query("")):
+    """Delete a log file under LOGS_DIR."""
+    try:
+        full = _safe_join_logs(path)
+        if not full or not os.path.exists(full):
+            return JSONResponse(content={"status": "error", "message": "File not found"})
+        if os.path.isdir(full):
+            return JSONResponse(content={"status": "error", "message": "Path is a directory"})
+        if not (full.lower().endswith('.txt') or full.lower().endswith('.log')):
+            return JSONResponse(content={"status": "error", "message": "Only .txt or .log files allowed"})
+        os.remove(full)
+        return JSONResponse(content={"status": "success", "message": f"Deleted {path}", "path": path})
+    except Exception as e:
+        return JSONResponse(content={"status": "error", "message": str(e)})
+
 
 @app.get("/api/status")
 @app.get("/stock/data/api/status")
