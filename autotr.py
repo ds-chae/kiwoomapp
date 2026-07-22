@@ -1396,7 +1396,7 @@ def clear_for_new_day():
 
     today_yyyymmdd = now.strftime("%Y%m%d")
     print('{} {} Setting new day=True'.format(cur_date(), now))
-    log_print('', '000000', ' Setting new day=True')
+    log_print('', '000000', 'clear_for_new_day Setting new day=True')
     new_day = True
     nxt_cancelled = False
     krx_after_state = 0
@@ -1424,9 +1424,8 @@ def set_new_day_true():
         return
     new_day = True
 
-    print('{} Setting new_day=True, clearing variables.'.format(now))
-    log_print('ALLACCT', '000000', ' Setting new_day=True, clearing variables.')
-    now = datetime.now()
+    print(f'set_new_day_true {now} Setting new_day=True, clearing variables.')
+    log_print('ALLACCT', '000000', 'set_new_day_true Setting new_day=True, clearing variables.')
     clear_for_new_day()
 
 def set_new_day_false():
@@ -1981,9 +1980,15 @@ async def lifespan(app: FastAPI):
     """Lifespan event handler for startup and shutdown"""
     global stored_jango_data, stored_miche_data, background_thread, thread_stop_event
     global previous_jango_data_simplified, bun_charts_thread, bun_charts_thread_stop_event
+    global now
 
     # Startup
     print("Starting application...")
+    # Initialize stored jango data - first try to load from file, then update
+    log_print('', '000000', f'from lifespan calling set_new_day_true at {now}')
+    set_new_day_true()
+    calculate_pl()
+
     try:
         load_dictionaries_from_json()
         print("Dictionaries loaded successfully")
@@ -1991,11 +1996,6 @@ async def lifespan(app: FastAPI):
         print(f"Error loading dictionaries: {e}")
 
     #fill_charts_for_CL(get_one_token()) # bun_charts is filled by thread.
-
-    # Initialize stored jango data - first try to load from file, then update
-    now = datetime.now()
-    clear_for_new_day() # now should be set before call this.
-    calculate_pl()
 
     print("Initializing jango data...")
     # Load previous jango data from file
@@ -4562,5 +4562,5 @@ async def proxy_to_datagather(path: str, request: Request):
 
 # 실행 구간
 if __name__ == '__main__':
-    set_new_day_true()
+    now = datetime.now()
     uvicorn.run(app, host="0.0.0.0", port=8006, access_log=False)
