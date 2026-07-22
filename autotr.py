@@ -1090,6 +1090,7 @@ krx_start_time = time(8,52)
 krx_end_time_1531 = time(15,31)
 krx_aft_time_1601 = time(16, 1)
 nxt_fin_time_2000 = time(20, 0)
+day_change_time = time(23, 59)
 
 new_day = False
 nxt_cancelled = False
@@ -1204,20 +1205,22 @@ def buy_cl_by_account(ACCT, MY_ACCESS_TOKEN, stex, stk_nm):
     global working_status
     global gap_prices, new_day, interested_stocks, interested_stocks_lock
 
-    working_status = 'in buy_cl_by_account'
-    with interested_stocks_lock:
-        istk_items = list(interested_stocks.items())
-    for stk_cd, int_stock in istk_items:
-        btype = int_stock.get('btype', '')
-        if btype == 'CL':
-            if not stk_cd in gap_prices:
-                gap_prices[stk_cd] = get_gap_price(MY_ACCESS_TOKEN, stk_cd, stk_nm)
+    try:
+        working_status = 'in buy_cl_by_account'
+        with interested_stocks_lock:
+            istk_items = list(interested_stocks.items())
+        for stk_cd, int_stock in istk_items:
+            btype = int_stock.get('btype', '')
+            if btype == 'CL':
+                if not stk_cd in gap_prices:
+                    gap_prices[stk_cd] = get_gap_price(MY_ACCESS_TOKEN, stk_cd, stk_nm)
 
-            buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_prices[stk_cd])
-        if not new_day:
-            break
-    pass
-
+                buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_prices[stk_cd])
+            if not new_day:
+                break
+        pass
+    except Exception as ex:
+        print(ex)
 
 def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
     global working_status, now, key_list
@@ -2142,10 +2145,16 @@ def order_queued_buy(bqlen):
     for bidx in range(bqlen):
         bq = buy_queue[bidx]
         trde_begin_h = bq[0]
+        stk_cd = bq[1]
         if trde_begin_h == 8 :
+            if not nxt_tradable.get(stk_cd, True):
+                bq[0] = 9
+                trde_begin_h = 9
+        if trde_begin_h == 8:
             trde_end_h = 20
         else:
             trde_end_h = 16
+
         if now.hour >= trde_begin_h and now.hour < trde_end_h:  # trade_begin_hour
             stk_cd = bq[1]
             stk_nm = bq[2]
@@ -2170,7 +2179,7 @@ def order_queued_buy(bqlen):
 def periodic_timer_handler():
     """Periodic timer event handler that runs the trading loop logic"""
     global prev_hour, new_day, stored_jango_data, stored_miche_data, working_status, now, cleanup_run_today
-    global wait_hour_change, calculate_pl_today, new_day
+    global wait_hour_change, calculate_pl_today, new_day, day_change_time
 
     now = datetime.now()
     now_hour = now.hour
@@ -2205,9 +2214,12 @@ def periodic_timer_handler():
         return
 
     try:
-        if now.time() == day_start_time and not new_day :
+        now_time = now.time()
+        if now_time == day_start_time and not new_day :
             log_print('', '000000', f'calling set_new_day_true at {now}')
             set_new_day_true()
+        elif now_time == day_change_time :
+            set_new_day_false()
         elif is_between(now, nxt_start_time, nxt_fin_time_2000):
             bqlen = len(buy_queue)
             if bqlen > 0 :
@@ -3315,7 +3327,7 @@ async def buy_order_api(request: dict, proxy_path: str = "", token: str = Cookie
             accounts = list(key_list.keys())
         print('buy_order_api accounts={}'.format(accounts))
 
-        buy_queue.append((8, stk_cd, stk_nm, ord_uv, ord_qty, accounts, stex, trde_tp))
+        buy_queue.append([8, stk_cd, stk_nm, ord_uv, ord_qty, accounts, stex, trde_tp])
         msg = f"Buy orders queued for {8} o'clock : {ord_qty} shares of {stk_nm or stk_cd} at {ord_uv}"
         log_print('', stk_cd, msg)
         return {
