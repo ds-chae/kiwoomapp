@@ -741,15 +741,15 @@ def call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_co
     trde_tp = '0'  # 매매구분 0:보통 , 3:시장가 , 5:조건부지정가 , 81:장마감후시간외 , 61:장시작전시간외, 62:시간외단일가 ,
     # 6:최유리지정가 , 7:최우선지정가 , 10:보통(IOC) , 13:시장가(IOC) , 16:최유리(IOC) , 20:보통(FOK) ,
     # 23:시장가(FOK) , 26:최유리(FOK) , 28:스톱지정가,29:중간가,30:중간가(IOC),31:중간가(FOK)
-    nxt_yn = get_stockinfo(stk_cd)['nxtEnable']
+    nxt_yn = nxt_tradable.get(stk_cd, True)
     if market == 'NXT':
-        if nxt_yn == 'Y':
+        if nxt_yn :
             log_print(ACCT, stk_cd, f' in call_sell_order {stk_nm} market={market}')
         else:
             log_print(ACCT, stk_cd, f' in call_sell_order skip {stk_nm}, not a NXT stock market={market}')
             return
     elif market == 'AFT':
-        if get_stockinfo(stk_cd)['nxtEnable'] == 'Y':
+        if nxt_tradable.get(stk_cd, False) :
             market = 'NXT'
         else:
             if after_exceeded.get(stk_cd, False):
@@ -822,13 +822,25 @@ def _is_success_return_code(rc) -> bool:
         return False
     return False
 
+def nxt_order_fail(stk_cd, ret_status):
+    global nxt_tradable
+    rmsg = ret_status.get('return_msg', '')
+    if len(rmsg) <= 13:
+        return False
+    code = rmsg[7:13]
+    if code == '507615':
+        nxt_tradable[stk_cd] = False
+        log_print('', stk_cd, 'nxt_order_fail buy 507615 NXT 거래불가. nxt_tradable=False')
+        return True
+    return False
 
 def test_ret_status(sell_buy, stk_cd, stk_nm, ret_status, ord_prc):
-    global now, wait_hour_change
+    global now, wait_hour_change, nxt_tradable
     if not isinstance(ret_status, dict):
         return ''
 
     rcde = ret_status.get('return_code')
+
     rmsg = ret_status.get('return_msg', '')
     if rmsg and len(rmsg) > 13:
         code = rmsg[7:13]
@@ -837,6 +849,7 @@ def test_ret_status(sell_buy, stk_cd, stk_nm, ret_status, ord_prc):
             log_print('', stk_cd, f'Setting upper limit to {ord_prc - 1}')
         elif code == '507615':
             log_print('', stk_cd, '{} 507615 NXT 거래불가'.format(sell_buy))
+            nxt_tradable[stk_cd] = False
             print(stk_cd, '{} {} 507615 NXT 거래불가. nxt_tradable={}'.format(sell_buy, stk_nm, nxt_tradable[stk_cd]))
         elif code == '571489':
             set_new_day_false()
@@ -884,11 +897,11 @@ def sell_jango(jango, market):
                     continue
                 sell_it = True
                 if market == 'NXT':
-                    if get_stockinfo(stk_cd)['nxtEnable'] != 'Y':
+                    if not nxt_tradable.get(stk_cd, True) :
                         sell_it = False
                         log_print('', stk_cd, f'Cannot sell {stk_nm} in NXT market')
                 elif market == 'AFT':
-                    if get_stockinfo(stk_cd)['nxtEnable'] == 'Y':
+                    if nxt_tradable.get(stk_cd, True) :
                         sell_it = False
                         log_print('', stk_cd, f'Cannot sell {stk_nm} in AFT market')
 
@@ -902,7 +915,6 @@ def sell_jango(jango, market):
         except Exception as ex:
             print('at 314 {}'.format(working_status))
             print(ex)
-            exit()
     pass
 
 
@@ -1211,7 +1223,7 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
     global working_status, now, key_list
     if not gap_price:
         return
-    if stex == 'NXT' and get_stockinfo(stk_cd)['nxtEnable'] != 'Y':
+    if stex == 'NXT' and not nxt_tradable.get(stk_cd, True) :
         return
 
     stk_nm = int_stock['stock_name']
@@ -1413,7 +1425,7 @@ def clear_for_new_day():
     log_print('', '000000', 'cleared last_logs')
     old_sel_price = {}
     after_exceeded = {}  # 장후 시간외 상한가 초과
-
+    nxt_tradable = {}
 
 def set_new_day_true():
     global new_day
@@ -2146,7 +2158,11 @@ def order_queued_buy(bqlen):
                       f"Try buy queued orders {bq[0]} o'clock : {ord_qty} shares of {stk_nm or stk_cd} at {ord_uv}")
             results = call_issue_buy_order(stk_cd, stk_nm, ord_uv, ord_qty, accounts, stex, trde_tp)
             all_success = all(r.get('status') == 'success' for r in results)
-            if all_success:
+            if bq[0] == 8 and nxt_order_fail(stk_cd, results[0].get('ret_status', {})):
+                # set trade begin hour to 9
+                buy_queue[bidx][0] = 9
+            else:
+                # else delete that queued order
                 del buy_queue[bidx]
             break
 
@@ -3218,7 +3234,7 @@ def call_issue_buy_order(stk_cd, stk_nm, ord_uv, ord_qty, accounts, stex, trde_t
             results.append({
                 'account': account,
                 'status': 'success' if ok else 'error',
-                'data': ret_status
+                'ret_status': ret_status
             })
             if not ok:
                 return results
@@ -3280,30 +3296,7 @@ async def buy_order_api(request: dict, proxy_path: str = "", token: str = Cookie
 
         trde_tp = '0'
 
-        trade_begin_hour = 9
-        trade_end_hour = 16
-        if get_stockinfo(stk_cd)['nxtEnable'] == 'Y':
-            trade_begin_hour = 8
-            trade_end_hour = 20
         now = datetime.now()
-        if now.hour < trade_begin_hour or now.hour > trade_end_hour:
-            buy_queue.append((trade_begin_hour, stk_cd, stk_nm, ord_uv, ord_qty, accounts, stex, trde_tp))
-            msg = f"Buy orders queued for {trade_begin_hour} o'clock : {ord_qty} shares of {stk_nm or stk_cd} at {ord_uv}"
-            log_print('', stk_cd, msg)
-            return {
-                'status': 'success',
-                'message': msg
-            }
-
-        # Ensure accounts is a list (handle case where it might be a string or other type)
-        if not isinstance(accounts, list):
-            if isinstance(accounts, str):
-                accounts = [acc.strip() for acc in accounts.split(',') if acc.strip()]
-            else:
-                accounts = []
-
-        log_print('', stk_cd, 'buy_order_api: stk_cd={}, stk_nm={}, ord_uv={}, amount={}, qty={}, accounts={} (type: {})'.format(
-            stk_cd, stk_nm, ord_uv, ord_amount, ord_qty, accounts, type(accounts).__name__))
 
         if not all([stk_cd, ord_uv, ord_qty]):
             return {"status": "error", "message": "Missing required parameters: stock_code, price, and amount or qty"}
@@ -3314,7 +3307,7 @@ async def buy_order_api(request: dict, proxy_path: str = "", token: str = Cookie
             return {"status": "error", "message": "Quantity must be greater than 0"}
 
         # Remove 'A' prefix from stock code if present
-        if stk_cd and stk_cd[0] == 'A':
+        if stk_cd[0] == 'A':
             stk_cd = stk_cd[1:]
 
         # If no accounts specified, use all accounts
@@ -3322,21 +3315,12 @@ async def buy_order_api(request: dict, proxy_path: str = "", token: str = Cookie
             accounts = list(key_list.keys())
         print('buy_order_api accounts={}'.format(accounts))
 
-        results = call_issue_buy_order(stk_cd, stk_nm, ord_uv, ord_qty, accounts, stex, trde_tp)
-
-        all_success = all(r.get('status') == 'success' for r in results)
-        if all_success:
-            return {
-                'status': 'success',
-                'message': f"Buy orders placed for {len(results)} account(s): {ord_qty} shares of {stk_nm or stk_cd} at {ord_uv}",
-                'data': results
-            }
-
-        failed_accounts = [r['account'] for r in results if r.get('status') != 'success']
+        buy_queue.append((8, stk_cd, stk_nm, ord_uv, ord_qty, accounts, stex, trde_tp))
+        msg = f"Buy orders queued for {8} o'clock : {ord_qty} shares of {stk_nm or stk_cd} at {ord_uv}"
+        log_print('', stk_cd, msg)
         return {
-            'status': 'partial',
-            'message': f"Some buy orders failed for accounts: {', '.join(failed_accounts)}",
-            'data': results
+            'status': 'success',
+            'message': msg
         }
 
     except Exception as e:
