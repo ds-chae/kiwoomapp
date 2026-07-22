@@ -3250,12 +3250,27 @@ async def buy_order_api(request: dict, proxy_path: str = "", token: str = Cookie
         stk_cd = request.get('stock_code')
         stk_nm = request.get('stock_name')
         ord_uv = int(request.get('price'))  # Order price
-        ord_amount = int(request.get('amount'))
-        if ord_amount < 1000: # 1000이하의 금액이 들어오면 10,000을 곱해준다.
-            log_print('', stk_cd, 'buy amount = {}, less than 1000'.format(ord_amount))
-            ord_amount *= 10000
-            log_print('', stk_cd, 'buy amount = changed to {}, less than 1000'.format(ord_amount))
-        ord_qty = ord_amount // ord_uv
+        qty_raw = request.get('qty', None)
+        ord_qty = None
+        ord_amount = 0
+
+        # Prefer explicit qty (share quantity) when provided
+        if qty_raw is not None and str(qty_raw).strip() != '':
+            try:
+                qty_val = int(float(qty_raw))
+            except (ValueError, TypeError):
+                return {"status": "error", "message": "qty must be an integer"}
+            if qty_val <= 0:
+                return {"status": "error", "message": "qty must be greater than 0"}
+            ord_qty = qty_val
+            ord_amount = ord_qty * ord_uv
+        else:
+            ord_amount = int(request.get('amount'))
+            if ord_amount < 1000: # 1000이하의 금액이 들어오면 10,000을 곱해준다.
+                log_print('', stk_cd, 'buy amount = {}, less than 1000'.format(ord_amount))
+                ord_amount *= 10000
+                log_print('', stk_cd, 'buy amount = changed to {}, less than 1000'.format(ord_amount))
+            ord_qty = ord_amount // ord_uv
         accounts = request.get('accounts', [])  # List of accounts
 
         #stex = 'SOR' # 20260409 this make many problems
@@ -3287,16 +3302,16 @@ async def buy_order_api(request: dict, proxy_path: str = "", token: str = Cookie
             else:
                 accounts = []
 
-        log_print('', stk_cd, 'buy_order_api: stk_cd={}, stk_nm={}, ord_uv={}, amount={}, accounts={} (type: {})'.format(
-            stk_cd, stk_nm, ord_uv, ord_amount, accounts, type(accounts).__name__))
+        log_print('', stk_cd, 'buy_order_api: stk_cd={}, stk_nm={}, ord_uv={}, amount={}, qty={}, accounts={} (type: {})'.format(
+            stk_cd, stk_nm, ord_uv, ord_amount, ord_qty, accounts, type(accounts).__name__))
 
         if not all([stk_cd, ord_uv, ord_qty]):
-            return {"status": "error", "message": "Missing required parameters: stock_code, price, amount"}
+            return {"status": "error", "message": "Missing required parameters: stock_code, price, and amount or qty"}
 
         if ord_uv <= 0:
             return {"status": "error", "message": "Price must be greater than 0"}
         if ord_qty <= 0:
-            return {"status": "error", "message": "Amount must be greater than 0"}
+            return {"status": "error", "message": "Quantity must be greater than 0"}
 
         # Remove 'A' prefix from stock code if present
         if stk_cd and stk_cd[0] == 'A':

@@ -371,3 +371,7 @@ interested stocks ui를 개선한다. 삭제 버튼 좌측에 "분석" 버튼을
 autotr.py를 수정한다. /stock/temperature backend로 post request에 의한 데이터를 받는다. 이 데이터는 fan과 temperatur 두 개이다. ./temperature 디렉토리에 데이터를 받은 시간을 이용하여 yyyymmddhhmmss.txt라는 이 형식의 이름으로 저장한다. 그리고, /stock/temperatur backend를 get method로 호출하면 ./temperature에 저장된 데이커를 읽어서 위쪽에는 temperature를 표시하고, 아래쪽에는 fan을 표시하는 꺾은 선 그래프를 그리도록 한다. fan의 값은 0과 1만 존재한다.
 
 autotr.py를 수정한다.  pc_color, pc_sellrate, pc_bamount를 전역 변수로 선언헌다. 이 전역 변수 세개를 파일로 저장해서 관리한다. 이 값들을 관리하는 화면을 "설정" 버튼을 통해서 진입하도록 한다
+
+ui의 buy section에 amount 우측에 unit 입력창을 만든다. unit을 입력하면 buy button을 클릭했을 때에 unit에 있는 수량 만큼을 매수한다.
+
+이전 작업에서 unit이라고 표시한 것을 qty로 변경하라

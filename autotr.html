@@ -1290,6 +1290,11 @@
 					max-width: 80px;
 					min-width: 80px;
 				}
+				#buy-section #buy-qty-input {
+					width: 80px;
+					max-width: 80px;
+					min-width: 80px;
+				}
 				#buy-section #buy-stock-name-input {
 					width: 160px;
 					max-width: 160px;
@@ -1396,6 +1401,10 @@
 					<div class="form-group">
 						<label for="buy-amount-input">Amount</label>
 						<input type="number" id="buy-amount-input" placeholder="amount" step="1" min="1" maxlength="8" />
+					</div>
+					<div class="form-group">
+						<label for="buy-qty-input">Qty</label>
+						<input type="number" id="buy-qty-input" placeholder="qty" step="1" min="1" maxlength="8" />
 					</div>
 					<div class="form-group">
 						<label style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
@@ -1678,6 +1687,7 @@
 				document.getElementById('buy-price-input').value = '';
 			}
 			document.getElementById('buy-amount-input').value = '';
+			document.getElementById('buy-qty-input').value = '';
 			
 			// Fill int stocks section
 			document.getElementById('interested-stock-code-input').value = stockCode;
@@ -1930,6 +1940,7 @@
 				document.getElementById('buy-price-input').value = '';
 			}
 			document.getElementById('buy-amount-input').value = '';
+			document.getElementById('buy-qty-input').value = '';
 			
 			// Fill int stocks section
 			document.getElementById('interested-stock-code-input').value = stockCode;
@@ -3271,6 +3282,7 @@
 			document.getElementById('buy-stock-name-input').value = stockName;
 			document.getElementById('buy-price-input').value = '';
 			document.getElementById('buy-amount-input').value = '';
+			document.getElementById('buy-qty-input').value = '';
 
 			// Fill int stocks section
 			document.getElementById('interested-stock-code-input').value = stockCode;
@@ -4062,6 +4074,7 @@
 			document.getElementById('buy-stock-name-input').value = stockName;
 			document.getElementById('buy-price-input').value = '';
 			document.getElementById('buy-amount-input').value = '';
+			document.getElementById('buy-qty-input').value = '';
 
 			// Fill 매도 제외 section
 			fillSellExcludeInputs(stockCode, stockName);
@@ -4132,14 +4145,19 @@
 			const stockName = document.getElementById('buy-stock-name-input').value.trim();
 			const price = document.getElementById('buy-price-input').value.trim();
 			const amount = document.getElementById('buy-amount-input').value.trim();
+			const qty = document.getElementById('buy-qty-input').value.trim();
 			
 			if (!stockCode) {
 				showMessage('Please enter a stock code', 'error');
 				return;
 			}
-			
-			if (!amount || amount === '' || parseInt(amount) <= 0) {
-				showMessage('Please enter a valid amount', 'error');
+
+			const qtyVal = qty !== '' ? parseInt(qty, 10) : 0;
+			const hasQty = !isNaN(qtyVal) && qtyVal > 0;
+			const hasAmount = amount !== '' && !isNaN(parseInt(amount, 10)) && parseInt(amount, 10) > 0;
+
+			if (!hasQty && !hasAmount) {
+				showMessage('Please enter a valid amount or qty', 'error');
 				return;
 			}
 			
@@ -4163,9 +4181,12 @@
 				stock_code: stockCode,
 				stock_name: stockName,
 				price: price,
-				amount: amount,
+				amount: hasAmount ? amount : '0',
 				accounts: accountList
 			};
+			if (hasQty) {
+				buyData.qty = qtyVal;
+			}
 			
 			fetch('./api/buy-order', {
 				method: 'POST',
@@ -4191,10 +4212,12 @@
 			})
 			.then(result => {
 				if (result.status === 'success') {
-					showMessage(result.message || `Buy order placed: ${amount} shares of ${stockName || stockCode} at ${price}`, 'success');
+					const qtyMsg = hasQty ? qtyVal : amount;
+					showMessage(result.message || `Buy order placed: ${qtyMsg} shares of ${stockName || stockCode} at ${price}`, 'success');
 					// Clear the inputs after successful buy
 					document.getElementById('buy-price-input').value = '';
 					document.getElementById('buy-amount-input').value = '';
+					document.getElementById('buy-qty-input').value = '';
 					// Uncheck all account checkboxes
 					document.querySelectorAll('#buy-account-checkboxes input[type="checkbox"]').forEach(cb => {
 						cb.checked = false;
