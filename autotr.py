@@ -1555,6 +1555,16 @@ def load_dictionaries_from_json():
                 modified = True
             if 'color' in stock:
                 stock['color'] = color_kor_to_eng(stock['color'])
+            # Add rebound field if missing (percent, default 0.0)
+            if 'rebound' not in stock:
+                stock['rebound'] = 0.0
+                modified = True
+            else:
+                try:
+                    stock['rebound'] = float(stock.get('rebound', 0.0))
+                except (ValueError, TypeError):
+                    stock['rebound'] = 0.0
+                    modified = True
             # Add yyyymmdd field if empty or missing
             yyyymmdd = str(stock.get('yyyymmdd', ''))
             if len(yyyymmdd) != 8 :
@@ -3637,7 +3647,7 @@ def set_interested_rate(stock_code, stock_name='', color=None,
                     btype='', bamount='0',
                     stime='', yyyymmdd='', sellprice='0',
                     sellrate=0.0, sellgap='0', clrate=None,
-                    is_pctoken=False):
+                    rebound=None, is_pctoken=False):
     global interested_stocks, interested_stocks_lock, pc_color, pc_bamount, pc_sellrate
     if is_pctoken:
         color = pc_color
@@ -3731,6 +3741,16 @@ def set_interested_rate(stock_code, stock_name='', color=None,
             elif 'clrate' not in stock:
                 stock['clrate'] = 0
 
+            # rebound is a percent value; default 0.0
+            if rebound is not None and str(rebound).strip() != '':
+                try:
+                    stock['rebound'] = float(rebound)
+                except (ValueError, TypeError):
+                    if 'rebound' not in stock:
+                        stock['rebound'] = 0.0
+            elif 'rebound' not in stock:
+                stock['rebound'] = 0.0
+
             with interested_stocks_lock:
                 is_new = stock_code not in interested_stocks
                 interested_stocks[stock_code] = stock
@@ -3793,6 +3813,7 @@ async def add_interested_stock_api(request: dict, proxy_path: str = "",
         sellrate = float(request.get('sellrate', '0'))
         sellgap = request.get('sellgap', '0')
         clrate = request.get('clrate')
+        rebound = request.get('rebound', None)
 
         if not stock_code:
             return {"status": "error", "message": "stock_code is required"}
@@ -3803,7 +3824,7 @@ async def add_interested_stock_api(request: dict, proxy_path: str = "",
             btype=btype, bamount=bamount,
             stime=stime, yyyymmdd=yyyymmdd, sellprice=sellprice,
             sellrate=sellrate, sellgap=sellgap, clrate=clrate,
-            is_pctoken=is_pctoken,
+            rebound=rebound, is_pctoken=is_pctoken,
         )
     except Exception as e:
         print('Exception-> {}'.format(e))
