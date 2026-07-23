@@ -1255,15 +1255,29 @@ async def logs_page():
             const treeEl = document.getElementById('tree');
             const contentEl = document.getElementById('content');
 
+            // Resolve API root so trailing-slash URLs still work:
+            // /stock/data/logs[/] -> /stock/data , /logs[/] -> ''
+            const API_ROOT = (function () {
+                try {
+                    let p = location.pathname.replace(/\\/+$/, '');
+                    if (p.endsWith('/logs')) p = p.slice(0, -5);
+                    return p;
+                } catch (e) { return ''; }
+            })();
+
+            function apiUrl(path) {
+                return API_ROOT + path + (path.indexOf('?') >= 0 ? '&' : '?') + 't=' + Date.now();
+            }
+
             function setStatus(msg) { statusEl.textContent = msg || ''; }
 
             function escapeText(s) {
-                return (s ?? '').toString();
+                return (s == null ? '' : s).toString();
             }
 
             let selectedPath = '';
 
-            function renderNode(node) {
+            function renderNode(node, autoOpen) {
                 const li = document.createElement('li');
                 const label = document.createElement('div');
                 label.className = 'node ' + (node.type === 'dir' ? 'dir' : 'file');
@@ -1274,14 +1288,31 @@ async def logs_page():
                     const ul = document.createElement('ul');
                     ul.style.display = 'none';
                     li.appendChild(ul);
-                    label.addEventListener('click', () => {
-                        const isOpen = ul.style.display !== 'none';
-                        ul.style.display = isOpen ? 'none' : 'block';
-                        label.classList.toggle('open', !isOpen);
-                        if (!isOpen && ul.childNodes.length === 0) {
-                            (node.children || []).forEach(child => ul.appendChild(renderNode(child)));
+
+                    function fillChildren() {
+                        if (ul.childNodes.length === 0) {
+                            (node.children || []).forEach(child => ul.appendChild(renderNode(child, false)));
                         }
-                    });
+                    }
+
+                    function openDir() {
+                        fillChildren();
+                        ul.style.display = 'block';
+                        label.classList.add('open');
+                    }
+
+                    function toggleDir() {
+                        const isOpen = ul.style.display !== 'none';
+                        if (isOpen) {
+                            ul.style.display = 'none';
+                            label.classList.remove('open');
+                        } else {
+                            openDir();
+                        }
+                    }
+
+                    label.addEventListener('click', toggleDir);
+                    if (autoOpen) openDir();
                 } else {
                     const row = document.createElement('div');
                     row.className = 'file-row';
@@ -1297,7 +1328,7 @@ async def logs_page():
                     label.addEventListener('click', async () => {
                         setStatus('Loading ' + node.path + ' ...');
                         try {
-                            const resp = await fetch('./api/logs/file?path=' + encodeURIComponent(node.path) + '&t=' + Date.now());
+                            const resp = await fetch(apiUrl('/api/logs/file?path=' + encodeURIComponent(node.path)));
                             const data = await resp.json();
                             if (data.status === 'success') {
                                 contentEl.classList.remove('muted');
@@ -1318,10 +1349,10 @@ async def logs_page():
 
                     delBtn.addEventListener('click', async (ev) => {
                         ev.stopPropagation();
-                        if (!confirm('Delete log file?\n' + node.path)) return;
+                        if (!confirm('Delete log file? ' + node.path)) return;
                         setStatus('Deleting ' + node.path + ' ...');
                         try {
-                            const resp = await fetch('./api/logs/file?path=' + encodeURIComponent(node.path) + '&t=' + Date.now(), {
+                            const resp = await fetch(apiUrl('/api/logs/file?path=' + encodeURIComponent(node.path)), {
                                 method: 'DELETE'
                             });
                             const data = await resp.json();
@@ -1349,15 +1380,22 @@ async def logs_page():
             async function loadTree() {
                 setStatus('Loading tree...');
                 try {
-                    const resp = await fetch('./api/logs/tree?t=' + Date.now());
+                    const resp = await fetch(apiUrl('/api/logs/tree'));
                     const data = await resp.json();
                     if (data.status !== 'success') throw new Error(data.message || 'failed');
                     const root = data.tree;
                     treeEl.innerHTML = '';
                     const ul = document.createElement('ul');
-                    (root.children || []).forEach(child => ul.appendChild(renderNode(child)));
+                    const children = root.children || [];
+                    children.forEach((child, idx) => {
+                        // Auto-expand the newest date folder so files/delete buttons are visible
+                        ul.appendChild(renderNode(child, idx === 0 && child.type === 'dir'));
+                    });
                     treeEl.appendChild(ul);
-                    setStatus('');
+                    if (children.length === 0) {
+                        treeEl.innerHTML = '<div class="muted">No log files found under logs/</div>';
+                    }
+                    setStatus(children.length ? (children.length + ' folders') : '');
                 } catch (e) {
                     treeEl.innerHTML = '<div class="muted">Failed to load logs tree: ' + e.message + '</div>';
                     setStatus('Error');
