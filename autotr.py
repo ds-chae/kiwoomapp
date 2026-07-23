@@ -1600,6 +1600,9 @@ def load_dictionaries_from_json():
         print('783', ex)
         exit(0)
 
+    # Load persisted buy_queue
+    load_buy_queue_from_json()
+
 
 bun_charts = {}
 bun_charts_lock = threading.Lock()  # Lock for bun_charts dict
@@ -2152,6 +2155,7 @@ def order_queued_buy(bqlen):
             if not nxt_tradable.get(stk_cd, True):
                 bq[0] = 9
                 trde_begin_h = 9
+                save_buy_queue_to_json()
         if trde_begin_h == 8:
             trde_end_h = 20
         else:
@@ -2172,9 +2176,11 @@ def order_queued_buy(bqlen):
             if bq[0] == 8 and nxt_order_fail(stk_cd, results[0].get('ret_status', {})):
                 # set trade begin hour to 9
                 buy_queue[bidx][0] = 9
+                save_buy_queue_to_json()
             else:
                 # else delete that queued order
                 del buy_queue[bidx]
+                save_buy_queue_to_json()
             break
 
 
@@ -3175,6 +3181,80 @@ def active_market():
 
 
 buy_queue = []
+BUY_QUEUE_FILE = 'buy_queue.json'
+
+
+def save_buy_queue_to_json():
+    """Persist buy_queue to BUY_QUEUE_FILE."""
+    global buy_queue
+    try:
+        # Store as list-of-lists so entries stay mutable after reload
+        data = []
+        for bq in buy_queue:
+            try:
+                data.append(list(bq))
+            except TypeError:
+                continue
+        with open(BUY_QUEUE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        print(f"Saved buy_queue to {BUY_QUEUE_FILE}: {len(data)} entries")
+        return True
+    except Exception as e:
+        print(f"Error saving buy_queue: {e}")
+        traceback.print_exc()
+        return False
+
+
+def load_buy_queue_from_json():
+    """Load buy_queue from BUY_QUEUE_FILE at startup."""
+    global buy_queue
+    if not os.path.exists(BUY_QUEUE_FILE):
+        buy_queue = []
+        print(f"No {BUY_QUEUE_FILE}; starting with empty buy_queue")
+        return
+    try:
+        with open(BUY_QUEUE_FILE, 'r', encoding='utf-8') as f:
+            loaded = json.load(f)
+        if not isinstance(loaded, list):
+            print(f"Invalid buy_queue file format; starting empty")
+            buy_queue = []
+            return
+        normalized = []
+        for item in loaded:
+            if isinstance(item, list) and len(item) >= 8:
+                entry = list(item[:8])
+                # Ensure accounts is a list
+                accounts = entry[5]
+                if not isinstance(accounts, list):
+                    if isinstance(accounts, str):
+                        accounts = [a.strip() for a in accounts.split(',') if a.strip()]
+                    else:
+                        accounts = list(accounts) if accounts else []
+                    entry[5] = accounts
+                normalized.append(entry)
+            elif isinstance(item, dict):
+                accounts = item.get('accounts', [])
+                if not isinstance(accounts, list):
+                    if isinstance(accounts, str):
+                        accounts = [a.strip() for a in accounts.split(',') if a.strip()]
+                    else:
+                        accounts = list(accounts) if accounts else []
+                normalized.append([
+                    item.get('trade_begin_hour', 8),
+                    item.get('stock_code') or item.get('stk_cd') or '',
+                    item.get('stock_name') or item.get('stk_nm') or '',
+                    item.get('price', item.get('ord_uv', 0)),
+                    item.get('qty', item.get('ord_qty', 0)),
+                    accounts,
+                    item.get('market', item.get('stex', '')),
+                    item.get('trade_type', item.get('trde_tp', '0')),
+                ])
+        buy_queue = normalized
+        print(f"Loaded buy_queue from {BUY_QUEUE_FILE}: {len(buy_queue)} entries")
+    except Exception as e:
+        print(f"Error loading buy_queue: {e}")
+        traceback.print_exc()
+        buy_queue = []
 
 
 def format_queued_buy():
@@ -3224,6 +3304,7 @@ def delete_queued_buy(queue_index: int):
     if idx < 0 or idx >= len(buy_queue):
         return {"status": "error", "message": f"Queue index {idx} not found"}
     removed = buy_queue.pop(idx)
+    save_buy_queue_to_json()
     try:
         trade_begin_hour, stk_cd, stk_nm, ord_uv, ord_qty, accounts, stex, trde_tp = removed
         log_print('', stk_cd or '', f"Deleted queued buy #{idx}: {ord_qty} shares of {stk_nm or stk_cd} at {ord_uv}")
@@ -3330,6 +3411,7 @@ async def buy_order_api(request: dict, proxy_path: str = "", token: str = Cookie
         print('buy_order_api accounts={}'.format(accounts))
 
         buy_queue.append([8, stk_cd, stk_nm, ord_uv, ord_qty, accounts, stex, trde_tp])
+        save_buy_queue_to_json()
         msg = f"Buy orders queued for {8} o'clock : {ord_qty} shares of {stk_nm or stk_cd} at {ord_uv}"
         log_print('', stk_cd, msg)
         return {

@@ -380,3 +380,4 @@ Log Viewer를 수정한다. 각각의 log file 이름 우측에 삭제 버튼을
 
 log viewer가 목록을 보여주지 않는다.
 
+autotr.py를 수정한다. buy_queue가 변경될 때 파일로 저장하고, 처음 시작할 때는 파일에서 읽어들인다.
