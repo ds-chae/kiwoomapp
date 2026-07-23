@@ -913,7 +913,7 @@ def sell_jango(jango, market):
                     working_status = 'before call_sell_order {} {} {}'.format(market, stk_cd, stk_nm)
                     call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond)
         except Exception as ex:
-            print('at 314 {}'.format(working_status))
+            log_print('', stk_cd, f'at 314 {working_status} {str(ex)}')
             print(ex)
     pass
 
@@ -1239,98 +1239,100 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
     if bamount <= 0 :
         return
 
-    hold_count = 0
     bsum = 0
     myjango = stored_jango_data[ACCT] if (ACCT in stored_jango_data) else {}
     if not 'acnt_evlt_remn_indv_tot' in myjango:
-        print(f'ACCT={ACCT} no acnt_evlt_remn_indv_tot in myjango')
+        log_print(ACCT, stk_cd, f'no acnt_evlt_remn_indv_tot in myjango')
         return
-    acnt_evlt_remn_indv_tot = myjango['acnt_evlt_remn_indv_tot']
-    for eachjango in acnt_evlt_remn_indv_tot:
-        each_cd = eachjango['stk_cd']
-        if each_cd[0] == 'A':
-            each_cd = each_cd[1:]
-        if each_cd == stk_cd:
-            bsum += int(eachjango['pur_amt'])
-    miche = []
-    if ACCT in stored_miche_data:
-        if 'oso' in stored_miche_data[ACCT]:
-            miche = stored_miche_data[ACCT]['oso']
-    for m in miche:
-        #print('io_tp_nm=', m['io_tp_nm'])
-        if m['stk_cd'] == stk_cd and m['io_tp_nm']  == '+매수' :
-            oqty = m['ord_qty']
-            oqp = m['ord_pric']
-            bsum += int(oqty)*int(oqp)
-    scolor = int_stock['color']
-    if scolor == 'O':
-        bc2 = bamount * 1.5 * 0.85
-        bc1 = bamount * 0.5 * 0.85
-    else:
-        bc2 = bamount * 2 * 0.85
-        bc1 = bamount * 1 * 0.85
-    if bsum >= bc2:
-        add_order_count(ACCT, stk_cd, 2)
-        hold_count = 2
-    elif bsum >= bc1:
-        add_order_count(ACCT, stk_cd, 1)
-        hold_count = 1
-    else:
-        hold_count = 0
-
-    log_print(ACCT, stk_cd, 'ordered count for {} is {}, bsum={}'.format(ACCT, get_order_count(ACCT,stk_cd), bsum))
-    if get_order_count(ACCT, stk_cd) >= 2:
-        return
-
-    if not stk_cd in gap_prices:
-        log_print('', stk_cd, 'getting bun_chart or bun_price failed');
-        return
-
-    price_index = get_price_index(scolor)
-    trde_tp = '0'
-    if get_order_count(ACCT, stk_cd) < 1 and hold_count < 1 : # 보유량이 없고 주문 사실도 없다면
-        bp = gap_price['price'][price_index]
-        buy_rate = (float(gap_price.get('current_price', 0))-bp) / bp # 현재 가격과 매수 가격의 차이
-        if buy_rate >= 0.03 : # 매수 가격이랑 3%이상 차이가 난다면 매수 하지 않는다,
-            log_print('', stk_cd, ' gap over skip 1 for {} {} {} {}'.format(stk_cd, stk_nm, bp, buy_rate))
+    try:
+        acnt_evlt_remn_indv_tot = myjango['acnt_evlt_remn_indv_tot']
+        for eachjango in acnt_evlt_remn_indv_tot:
+            each_cd = eachjango['stk_cd']
+            if each_cd[0] == 'A':
+                each_cd = each_cd[1:]
+            if each_cd == stk_cd:
+                bsum += int(eachjango['pur_amt'])
+        miche = []
+        if ACCT in stored_miche_data:
+            if 'oso' in stored_miche_data[ACCT]:
+                miche = stored_miche_data[ACCT]['oso']
+        for m in miche:
+            #print('io_tp_nm=', m['io_tp_nm'])
+            if m['stk_cd'] == stk_cd and m['io_tp_nm']  == '+매수' :
+                oqty = m['ord_qty']
+                oqp = m['ord_pric']
+                bsum += int(oqty)*int(oqp)
+        scolor = int_stock['color']
+        if scolor == 'O':
+            bc2 = bamount * 1.5 * 0.85
+            bc1 = bamount * 0.5 * 0.85
         else:
-            ord_price = round_trunc(bp)
-            if scolor == 'O':
-                ord_qty = int((bamount/2) // ord_price)
+            bc2 = bamount * 2 * 0.85
+            bc1 = bamount * 1 * 0.85
+        if bsum >= bc2:
+            add_order_count(ACCT, stk_cd, 2)
+            hold_count = 2
+        elif bsum >= bc1:
+            add_order_count(ACCT, stk_cd, 1)
+            hold_count = 1
+        else:
+            hold_count = 0
+
+        log_print(ACCT, stk_cd, 'ordered count for {} is {}, bsum={}'.format(ACCT, get_order_count(ACCT,stk_cd), bsum))
+        if get_order_count(ACCT, stk_cd) >= 2:
+            return
+
+        if not stk_cd in gap_prices:
+            log_print('', stk_cd, 'getting bun_chart or bun_price failed');
+            return
+
+        price_index = get_price_index(scolor)
+        trde_tp = '0'
+        if get_order_count(ACCT, stk_cd) < 1 and hold_count < 1 : # 보유량이 없고 주문 사실도 없다면
+            bp = gap_price['price'][price_index]
+            buy_rate = (float(gap_price.get('current_price', 0))-bp) / bp # 현재 가격과 매수 가격의 차이
+            if buy_rate >= 0.03 : # 매수 가격이랑 3%이상 차이가 난다면 매수 하지 않는다,
+                log_print('', stk_cd, ' gap over skip 1 for {} {} {} {}'.format(stk_cd, stk_nm, bp, buy_rate))
             else:
+                ord_price = round_trunc(bp)
+                if scolor == 'O':
+                    ord_qty = int((bamount/2) // ord_price)
+                else:
+                    ord_qty = int(bamount // ord_price)
+                if ord_qty > 0 :
+                    #ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trade_tp=trde_tp, cond_uv='')
+                    log_print(ACCT, stk_cd, 'buy_order market={}, qty={} price={}'.format(stex, ord_qty, ord_price))
+                    ret_status = buy_order(MY_ACCESS_TOKEN, stk_nm, stex, stk_cd, str(ord_qty), str(ord_price), trde_tp=trde_tp, cond_uv='')
+                    log_print(ACCT, stk_cd, '1_buy_order_result: {}'.format(ret_status))
+                    tr = test_ret_status('BUY', stk_cd, stk_nm, ret_status, ord_price)
+                    if tr == 0 or tr == 20 or tr == 200 :
+                        add_order_count(ACCT, stk_cd, 1)
+                        log_print(ACCT, stk_cd, '1_buy_order_result success  : {}'.format(ret_status['return_msg']))
+                    else:
+                        log_print(ACCT, stk_cd, '1_buy_order_result failure : {}'.format(ret_status['return_msg']))
+                log_print(ACCT, stk_cd, 'price:{} current buy order for {} is {}'.format(ord_price, ACCT, get_order_count(ACCT,stk_cd)))
+        if hold_count >= 1 and get_order_count(ACCT, stk_cd) < 2: # 하나 보유하고 주문은 아직 둘이 아니면
+            bp = gap_price['price'][price_index+1]
+            buy_rate = (float(gap_price.get('current_price', 0))-bp) / bp # 현재 가격과 매수 가격의 차이
+            if buy_rate >= 0.03 : # 매수 가격이랑 3%이상 차이가 난다면 매수 하지 않는다,
+                log_print('', stk_cd, ' gap over skip 2 for {} {} {} {}'.format(stk_cd, stk_nm, bp, buy_rate))
+            else:
+                ord_price = round_trunc(bp)
                 ord_qty = int(bamount // ord_price)
-            if ord_qty > 0 :
-                #ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trade_tp=trde_tp, cond_uv='')
-                log_print(ACCT, stk_cd, 'buy_order market={}, qty={} price={}'.format(stex, ord_qty, ord_price))
-                ret_status = buy_order(MY_ACCESS_TOKEN, stk_nm, stex, stk_cd, str(ord_qty), str(ord_price), trde_tp=trde_tp, cond_uv='')
-                log_print(ACCT, stk_cd, '1_buy_order_result: {}'.format(ret_status))
-                tr = test_ret_status('BUY', stk_cd, stk_nm, ret_status, ord_price)
-                if tr == 0 or tr == 20 or tr == 200 :
-                    add_order_count(ACCT, stk_cd, 1)
-                    log_print(ACCT, stk_cd, '1_buy_order_result success  : {}'.format(ret_status['return_msg']))
-                else:
-                    log_print(ACCT, stk_cd, '1_buy_order_result failure : {}'.format(ret_status['return_msg']))
-            log_print(ACCT, stk_cd, 'price:{} current buy order for {} is {}'.format(ord_price, ACCT, get_order_count(ACCT,stk_cd)))
-    if hold_count >= 1 and get_order_count(ACCT, stk_cd) < 2: # 하나 보유하고 주문은 아직 둘이 아니면
-        bp = gap_price['price'][price_index+1]
-        buy_rate = (float(gap_price.get('current_price', 0))-bp) / bp # 현재 가격과 매수 가격의 차이
-        if buy_rate >= 0.03 : # 매수 가격이랑 3%이상 차이가 난다면 매수 하지 않는다,
-            log_print('', stk_cd, ' gap over skip 2 for {} {} {} {}'.format(stk_cd, stk_nm, bp, buy_rate))
-        else:
-            ord_price = round_trunc(bp)
-            ord_qty = int(bamount // ord_price)
-            # ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trade_tp=trde_tp, cond_uv='')
-            if ord_qty > 0 :
-                log_print(ACCT, stk_cd, 'buy_order market={}, qty={} price={}'.format(stex, ord_qty, ord_price))
-                ret_status = buy_order(MY_ACCESS_TOKEN, stk_nm, stex, stk_cd, str(ord_qty), str(ord_price), trde_tp=trde_tp, cond_uv='')
-                tr = test_ret_status('BUY', stk_cd, stk_nm, ret_status, ord_price)
-                if tr == 0 or tr == 20 or tr == 200 :
-                    log_print(ACCT, stk_cd, '2_buy_order_result success : {}'.format(ret_status))
-                    add_order_count(ACCT, stk_cd, 1)
-                else:
-                    log_print(ACCT, stk_cd, '2_buy_order_result failure : {}'.format(ret_status['return_msg']))
-            log_print(ACCT, stk_cd, 'price:{} current buy order for {} {} {} is {}'.format(ord_price, ACCT, stk_cd, stk_nm, get_order_count(ACCT,stk_cd)))
-
+                # ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trade_tp=trde_tp, cond_uv='')
+                if ord_qty > 0 :
+                    log_print(ACCT, stk_cd, 'buy_order market={}, qty={} price={}'.format(stex, ord_qty, ord_price))
+                    ret_status = buy_order(MY_ACCESS_TOKEN, stk_nm, stex, stk_cd, str(ord_qty), str(ord_price), trde_tp=trde_tp, cond_uv='')
+                    tr = test_ret_status('BUY', stk_cd, stk_nm, ret_status, ord_price)
+                    if tr == 0 or tr == 20 or tr == 200 :
+                        log_print(ACCT, stk_cd, '2_buy_order_result success : {}'.format(ret_status))
+                        add_order_count(ACCT, stk_cd, 1)
+                    else:
+                        log_print(ACCT, stk_cd, '2_buy_order_result failure : {}'.format(ret_status['return_msg']))
+                log_print(ACCT, stk_cd, 'price:{} current buy order for {} {} {} is {}'.format(ord_price, ACCT, stk_cd, stk_nm, get_order_count(ACCT,stk_cd)))
+    except Exception as ex:
+        print(f'Exception {str(ex)}')
+        log_printf(ACCT, stk_cd, str(ex))
     pass
 
 
