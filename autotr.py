@@ -1292,7 +1292,7 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
             bp = gap_price['price'][price_index]
             buy_rate = (float(gap_price.get('current_price', 0))-bp) / bp # 현재 가격과 매수 가격의 차이
             if buy_rate >= 0.03 : # 매수 가격이랑 3%이상 차이가 난다면 매수 하지 않는다,
-                log_print('', stk_cd, ' gap over skip 1 for {} {} {} {}'.format(stk_cd, stk_nm, bp, buy_rate))
+                log_print('', stk_cd, f'gap over skip 1 for {stk_nm} {bp} {buy_rate:.3f}')
             else:
                 ord_price = round_trunc(bp)
                 if scolor == 'O':
@@ -1315,7 +1315,7 @@ def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
             bp = gap_price['price'][price_index+1]
             buy_rate = (float(gap_price.get('current_price', 0))-bp) / bp # 현재 가격과 매수 가격의 차이
             if buy_rate >= 0.03 : # 매수 가격이랑 3%이상 차이가 난다면 매수 하지 않는다,
-                log_print('', stk_cd, ' gap over skip 2 for {} {} {} {}'.format(stk_cd, stk_nm, bp, buy_rate))
+                log_print('', stk_cd, f'gap over skip 2 for {stk_nm} {bp} {buy_rate:.3f}')
             else:
                 ord_price = round_trunc(bp)
                 ord_qty = int(bamount // ord_price)
