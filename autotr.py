@@ -2184,6 +2184,10 @@ def order_queued_buy(bqlen):
             break
 
 
+def equal_hh_mm(t1, t2):
+    return t1.hour == t2.hour and t1.minute == t2.minute
+
+
 def periodic_timer_handler():
     """Periodic timer event handler that runs the trading loop logic"""
     global prev_hour, new_day, stored_jango_data, stored_miche_data, working_status, now, cleanup_run_today
@@ -2191,7 +2195,7 @@ def periodic_timer_handler():
 
     now = datetime.now()
     now_hour = now.hour
-    
+    now_time = now.time()
     # Check if it's 20:30 and cleanup hasn't run today
     if now_hour == 20 and now.minute == 30 and not cleanup_run_today:
         try:
@@ -2222,11 +2226,10 @@ def periodic_timer_handler():
         return
 
     try:
-        now_time = now.time()
-        if now_time == day_start_time and not new_day :
+        if equal_hh_mm(now_time, day_start_time) and not new_day :
             log_print('', '000000', f'calling set_new_day_true at {now}')
             set_new_day_true()
-        elif now_time == day_change_time :
+        elif equal_hh_mm(now_time, day_change_time) :
             set_new_day_false()
         elif is_between(now, nxt_start_time, nxt_fin_time_2000):
             bqlen = len(buy_queue)
