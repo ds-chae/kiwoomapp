@@ -4682,4 +4682,5 @@ async def proxy_to_datagather(path: str, request: Request):
 # 실행 구간
 if __name__ == '__main__':
     now = datetime.now()
+    print(equal_hh_mm(now.time(), now.time()))
     uvicorn.run(app, host="0.0.0.0", port=8006, access_log=False)
