@@ -485,6 +485,65 @@
 			.btn-analyze-interested:hover {
 				background: #2980b9;
 			}
+			.btn-split-protected {
+				background: #8e44ad;
+				color: white;
+				border: none;
+				padding: 4px 8px;
+				border-radius: 4px;
+				cursor: pointer;
+				font-size: 12px;
+				font-weight: 600;
+				margin-right: 4px;
+			}
+			.btn-split-protected:hover {
+				background: #71368a;
+			}
+			.split-protected-overlay {
+				position: fixed;
+				inset: 0;
+				z-index: 12000;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				background: rgba(0, 0, 0, 0.5);
+			}
+			.split-protected-dialog {
+				width: min(420px, calc(100vw - 32px));
+				padding: 20px;
+				border-radius: 8px;
+				background: #fff;
+				box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+			}
+			.split-protected-dialog h3 {
+				margin: 0 0 14px;
+			}
+			.split-protected-dialog ul {
+				margin: 10px 0 18px;
+				padding-left: 24px;
+			}
+			.split-protected-dialog-actions {
+				display: flex;
+				justify-content: flex-end;
+				gap: 8px;
+			}
+			.btn-clear-split-protected {
+				background: #e74c3c;
+				color: #fff;
+				border: none;
+				padding: 7px 14px;
+				border-radius: 4px;
+				cursor: pointer;
+				font-weight: 700;
+			}
+			.btn-close-split-protected {
+				background: #95a5a6;
+				color: #fff;
+				border: none;
+				padding: 7px 14px;
+				border-radius: 4px;
+				cursor: pointer;
+			}
 			.color-select {
 				padding: 4px 8px;
 				border: 1px solid #ddd;
@@ -608,12 +667,12 @@
 				white-space: nowrap;
 				overflow: hidden;
 			}
-			/* Fix Action column width to 6 digits */
+			/* Action buttons: SPLIT, 분석, Remove */
 			#interested-stocks-container table th:nth-child(11),
 			#interested-stocks-container table td:nth-child(11) {
-				width: 60px;
-				max-width: 60px;
-				min-width: 60px;
+				width: 180px;
+				max-width: 180px;
+				min-width: 180px;
 				white-space: nowrap;
 				overflow: hidden;
 			}
@@ -702,10 +761,32 @@
 				font-size: 14px;
 				width: 120px;
 				text-align: right;
+				box-sizing: content-box;
+				font-variant-numeric: tabular-nums;
 			}
 			.sell-price-edit-form input:focus {
 				outline: none;
 				border-color: #667eea;
+			}
+			/* Digit-width fields: Sell Price/CUT/Split Price 8, Rate 5, Gap/Split Qty/Split Rate 4 */
+			.sell-price-edit-form input[id^="edit-sell-price-"],
+			.sell-price-edit-form input[id^="edit-split-price-"],
+			.sell-price-edit-form input[id^="edit-cut-amount-"] {
+				width: 8ch;
+				min-width: 8ch;
+				max-width: 8ch;
+			}
+			.sell-price-edit-form input[id^="edit-sell-rate-"] {
+				width: 5ch;
+				min-width: 5ch;
+				max-width: 5ch;
+			}
+			.sell-price-edit-form input[id^="edit-sell-gap-"],
+			.sell-price-edit-form input[id^="edit-split-qty-"],
+			.sell-price-edit-form input[id^="edit-split-rate-"] {
+				width: 4ch;
+				min-width: 4ch;
+				max-width: 4ch;
 			}
 			.sell-price-edit-buttons {
 				display: flex;
@@ -722,7 +803,7 @@
 				align-items: flex-end;
 				flex: 1 1 auto;
 			}
-			.sell-price-edit-fields > div:not(.sell-price-edit-gap-with-actions) {
+			.sell-price-edit-fields > div:not(.sell-price-edit-gap-with-actions):not(.sell-price-edit-split-row):not(.sell-price-edit-main-row) {
 				display: flex;
 				flex-direction: column;
 				align-items: flex-start;
@@ -741,6 +822,80 @@
 				width: 120px;
 				box-sizing: border-box;
 				text-align: center;
+			}
+			.sell-price-edit-fields > .sell-price-edit-main-row,
+			.sell-price-edit-main-row {
+				display: flex;
+				flex-direction: row;
+				flex-wrap: nowrap;
+				gap: 12px;
+				align-items: center;
+				flex: 1 1 100%;
+				width: 100%;
+				overflow-x: auto;
+				box-sizing: border-box;
+			}
+			.sell-price-edit-inline-field {
+				display: flex;
+				flex-direction: row;
+				flex-wrap: nowrap;
+				align-items: center;
+				gap: 6px;
+				flex: 0 0 auto;
+			}
+			.sell-price-edit-inline-field label {
+				margin-right: 0;
+				white-space: nowrap;
+			}
+			.sell-price-edit-fields > .sell-price-edit-split-row,
+			.sell-price-edit-split-row {
+				display: flex;
+				flex-direction: row;
+				flex-wrap: nowrap;
+				gap: 12px;
+				align-items: center;
+				flex: 1 1 100%;
+				width: 100%;
+				margin-top: 8px;
+				padding-top: 8px;
+				border-top: 1px dashed #ddd;
+				overflow-x: auto;
+				box-sizing: border-box;
+			}
+			.sell-price-edit-split-row > div {
+				display: flex;
+				flex-direction: row;
+				flex-wrap: nowrap;
+				align-items: center;
+				gap: 6px;
+				flex: 0 0 auto;
+			}
+			.sell-price-edit-split-row > div > label {
+				margin-right: 0;
+				white-space: nowrap;
+			}
+			.sell-price-edit-split-row .sell-price-edit-field-spacer {
+				display: none;
+			}
+			.btn-split-sell {
+				background: #e67e22;
+				color: #fff;
+				border: none;
+				padding: 6px 16px;
+				border-radius: 4px;
+				cursor: pointer;
+				font-size: 14px;
+				font-weight: 700;
+				width: 120px;
+				box-sizing: border-box;
+				text-align: center;
+			}
+			.btn-split-sell:hover {
+				background: #d35400;
+			}
+			.btn-split-sell:disabled {
+				opacity: 0.6;
+				cursor: not-allowed;
 			}
 			.sell-price-edit-gap-with-actions {
 				display: flex;
@@ -830,6 +985,25 @@
 					font-size: 12px;
 					text-align: right;
 				}
+				.sell-price-edit-form input[id^="edit-sell-price-"],
+				.sell-price-edit-form input[id^="edit-split-price-"],
+				.sell-price-edit-form input[id^="edit-cut-amount-"] {
+					width: 8ch;
+					min-width: 8ch;
+					max-width: 8ch;
+				}
+				.sell-price-edit-form input[id^="edit-sell-rate-"] {
+					width: 5ch;
+					min-width: 5ch;
+					max-width: 5ch;
+				}
+				.sell-price-edit-form input[id^="edit-sell-gap-"],
+				.sell-price-edit-form input[id^="edit-split-qty-"],
+				.sell-price-edit-form input[id^="edit-split-rate-"] {
+					width: 4ch;
+					min-width: 4ch;
+					max-width: 4ch;
+				}
 				.sell-price-edit-buttons {
 					gap: 6px;
 				}
@@ -859,12 +1033,28 @@
 					padding: 4px 6px;
 					font-size: 12px;
 				}
-				.sell-price-edit-gap-with-actions {
+				.sell-price-edit-fields > .sell-price-edit-main-row,
+				.sell-price-edit-main-row,
+				.sell-price-edit-fields > .sell-price-edit-split-row,
+				.sell-price-edit-split-row {
 					flex-direction: row;
-					flex-wrap: wrap;
-					align-items: flex-end;
-					gap: 8px;
+					flex-wrap: nowrap;
+					flex: 1 1 100%;
 					width: 100%;
+					gap: 8px;
+					align-items: center;
+				}
+				.sell-price-edit-inline-field {
+					flex-direction: row;
+					align-items: center;
+					gap: 4px;
+				}
+				.btn-split-sell {
+					width: 60px;
+					min-width: 60px;
+					max-width: 60px;
+					padding: 4px 6px;
+					font-size: 12px;
 				}
 			}
 
@@ -1734,10 +1924,11 @@
 						if (!rowElement.isConnected) return;
 						if (result.status === 'success' && result.data && result.data[stockCode]) {
 							// Only prefill sell price when an existing value is saved
-							sellPriceFromAPI = result.data[stockCode].sellprice || result.data[stockCode].sell_price || result.data[stockCode].price || '';
-							sellgap = result.data[stockCode].sellgap || '';
-							sellrateFromAPI = result.data[stockCode].sellrate || '';
-							yyyymmddFromAPI = result.data[stockCode].yyyymmdd || '';
+							const sd = result.data[stockCode];
+							sellPriceFromAPI = sd.sellprice || sd.sell_price || sd.price || '';
+							sellgap = sd.sellgap || '';
+							sellrateFromAPI = sd.sellrate || '';
+							yyyymmddFromAPI = sd.yyyymmdd || '';
 						}
 						
 						// Use sell price from API if available, otherwise use from row attribute
@@ -1752,53 +1943,50 @@
 								<div class="sell-price-edit-form sell-price-edit-form--with-cut">
 									<div class="sell-price-edit-fields">
 									<input type="hidden" id="edit-yyyymmdd-${stockCode}" value="${ymdVal}">
-									<div>
-										<label>Sell Price:</label>
-										<input type="number" id="edit-sell-price-${stockCode}" placeholder="Price" step="0.01" value="${finalSellPrice || ''}">
-									</div>
-									<div>
-										<label>Sell Rate (%):</label>
-										<input type="number" id="edit-sell-rate-${stockCode}" placeholder="Rate" step="0.01" value="${finalSellRate || ''}">
-									</div>
-									<div class="sell-price-edit-gap-with-actions">
-										<div>
-											<label>Sell Gap:</label>
+									<div class="sell-price-edit-main-row">
+										<div class="sell-price-edit-inline-field">
+											<label>Sell Price:</label>
+											<input type="number" id="edit-sell-price-${stockCode}" placeholder="Price" step="0.01" value="${finalSellPrice || ''}">
+										</div>
+										<div class="sell-price-edit-inline-field">
+											<label>Rate:</label>
+											<input type="number" id="edit-sell-rate-${stockCode}" placeholder="Rate" step="0.01" value="${finalSellRate || ''}">
+										</div>
+										<div class="sell-price-edit-inline-field">
+											<label>Gap:</label>
 											<input type="number" id="edit-sell-gap-${stockCode}" placeholder="Gap" step="0.01" value="${sellgap || ''}">
 										</div>
 										<div class="sell-price-edit-buttons">
 											<button class="btn-apply-sell-price" onclick="applySellPriceEdit('${stockCode}', '${stockName}')">Apply</button>
 											<button class="btn-cancel-sell-price" onclick="cancelSellPriceEdit('${stockCode}')">Cancel</button>
 										</div>
-									</div>
-									<div>
-										<label class="sell-price-edit-field-spacer" aria-hidden="true">&nbsp;</label>
 										<input type="number" id="edit-cut-amount-${stockCode}" placeholder="금액" step="1" min="1" aria-label="손절 금액 (원)">
-									</div>
-									<div>
-										<label class="sell-price-edit-field-spacer" aria-hidden="true">&nbsp;</label>
 										<button type="button" class="btn-cut" id="edit-cut-btn-${stockCode}">CUT</button>
+									</div>
+									<div class="sell-price-edit-split-row">
+										<div>
+											<label>Split Qty:</label>
+											<input type="number" id="edit-split-qty-${stockCode}" placeholder="수량" step="1" min="0" value="">
+										</div>
+										<div>
+											<label>Price:</label>
+											<input type="number" id="edit-split-price-${stockCode}" placeholder="가격" step="1" min="0" value="">
+										</div>
+										<div>
+											<label>Rate:</label>
+											<input type="number" id="edit-split-rate-${stockCode}" placeholder="수익율" step="0.01" value="">
+										</div>
+										<div>
+											<label class="sell-price-edit-field-spacer" aria-hidden="true">&nbsp;</label>
+											<button type="button" class="btn-split-sell" id="edit-split-sell-btn-${stockCode}" onclick="applySplitSell('${stockCode}', '${stockName}')">SELL</button>
+										</div>
 									</div>
 									</div>
 								</div>
 							</td>
 						`;
 
-						const priceInput = document.getElementById(`edit-sell-price-${stockCode}`);
-						const rateInput = document.getElementById(`edit-sell-rate-${stockCode}`);
-						const gapInput = document.getElementById(`edit-sell-gap-${stockCode}`);
-
-						if (priceInput) {
-							priceInput.addEventListener('click', function() { this.select(); });
-							priceInput.addEventListener('focus', function() { this.select(); });
-						}
-						if (rateInput) {
-							rateInput.addEventListener('click', function() { this.select(); });
-							rateInput.addEventListener('focus', function() { this.select(); });
-						}
-						if (gapInput) {
-							gapInput.addEventListener('click', function() { this.select(); });
-							gapInput.addEventListener('focus', function() { this.select(); });
-						}
+						bindSellPriceEditInputs(stockCode);
 						bindStopLossCutControls(stockCode, stockName, accountForCut);
 					})
 					.catch(error => {
@@ -1811,53 +1999,49 @@
 								<div class="sell-price-edit-form sell-price-edit-form--with-cut">
 									<div class="sell-price-edit-fields">
 									<input type="hidden" id="edit-yyyymmdd-${stockCode}" value="">
-									<div>
-										<label>Sell Price:</label>
-										<input type="number" id="edit-sell-price-${stockCode}" placeholder="Price" step="0.01" value="${fallbackSellPrice || ''}">
-									</div>
-									<div>
-										<label>Sell Rate (%):</label>
-										<input type="number" id="edit-sell-rate-${stockCode}" placeholder="Rate" step="0.01" value="${sellRate || ''}">
-									</div>
-									<div class="sell-price-edit-gap-with-actions">
-										<div>
-											<label>Sell Gap:</label>
+									<div class="sell-price-edit-main-row">
+										<div class="sell-price-edit-inline-field">
+											<label>Sell Price:</label>
+											<input type="number" id="edit-sell-price-${stockCode}" placeholder="Price" step="0.01" value="${fallbackSellPrice || ''}">
+										</div>
+										<div class="sell-price-edit-inline-field">
+											<label>Rate:</label>
+											<input type="number" id="edit-sell-rate-${stockCode}" placeholder="Rate" step="0.01" value="${sellRate || ''}">
+										</div>
+										<div class="sell-price-edit-inline-field">
+											<label>Gap:</label>
 											<input type="number" id="edit-sell-gap-${stockCode}" placeholder="Gap" step="0.01" value="">
 										</div>
 										<div class="sell-price-edit-buttons">
 											<button class="btn-apply-sell-price" onclick="applySellPriceEdit('${stockCode}', '${stockName}')">Apply</button>
 											<button class="btn-cancel-sell-price" onclick="cancelSellPriceEdit('${stockCode}')">Cancel</button>
 										</div>
-									</div>
-									<div>
-										<label class="sell-price-edit-field-spacer" aria-hidden="true">&nbsp;</label>
 										<input type="number" id="edit-cut-amount-${stockCode}" placeholder="금액" step="1" min="1" aria-label="손절 금액 (원)">
-									</div>
-									<div>
-										<label class="sell-price-edit-field-spacer" aria-hidden="true">&nbsp;</label>
 										<button type="button" class="btn-cut" id="edit-cut-btn-${stockCode}">CUT</button>
+									</div>
+									<div class="sell-price-edit-split-row">
+										<div>
+											<label>Split Qty:</label>
+											<input type="number" id="edit-split-qty-${stockCode}" placeholder="수량" step="1" min="0" value="">
+										</div>
+										<div>
+											<label>Price:</label>
+											<input type="number" id="edit-split-price-${stockCode}" placeholder="가격" step="1" min="0" value="">
+										</div>
+										<div>
+											<label>Rate:</label>
+											<input type="number" id="edit-split-rate-${stockCode}" placeholder="수익율" step="0.01" value="">
+										</div>
+										<div>
+											<label class="sell-price-edit-field-spacer" aria-hidden="true">&nbsp;</label>
+											<button type="button" class="btn-split-sell" id="edit-split-sell-btn-${stockCode}" onclick="applySplitSell('${stockCode}', '${stockName}')">SELL</button>
+										</div>
 									</div>
 									</div>
 								</div>
 							</td>
 						`;
-
-						const priceInput = document.getElementById(`edit-sell-price-${stockCode}`);
-						const rateInput = document.getElementById(`edit-sell-rate-${stockCode}`);
-						const gapInput = document.getElementById(`edit-sell-gap-${stockCode}`);
-
-						if (priceInput) {
-							priceInput.addEventListener('click', function() { this.select(); });
-							priceInput.addEventListener('focus', function() { this.select(); });
-						}
-						if (rateInput) {
-							rateInput.addEventListener('click', function() { this.select(); });
-							rateInput.addEventListener('focus', function() { this.select(); });
-						}
-						if (gapInput) {
-							gapInput.addEventListener('click', function() { this.select(); });
-							gapInput.addEventListener('focus', function() { this.select(); });
-						}
+						bindSellPriceEditInputs(stockCode);
 						bindStopLossCutControls(stockCode, stockName, accountForCut);
 					});
 		}
@@ -3332,10 +3516,11 @@
 					.then(result => {
 						if (result.status === 'success' && result.data && result.data[stockCode]) {
 							// Only prefill sell price when an existing value is saved
-							sellPriceFromAPI = result.data[stockCode].sellprice || result.data[stockCode].sell_price || result.data[stockCode].price || '';
-							sellgap = result.data[stockCode].sellgap || '';
-							sellrateFromAPI = result.data[stockCode].sellrate || '';
-							yyyymmddFromAPI = result.data[stockCode].yyyymmdd || '';
+							const sd = result.data[stockCode];
+							sellPriceFromAPI = sd.sellprice || sd.sell_price || sd.price || '';
+							sellgap = sd.sellgap || '';
+							sellrateFromAPI = sd.sellrate || '';
+							yyyymmddFromAPI = sd.yyyymmdd || '';
 						}
 						
 						// Use sell price from API if available, otherwise use from row attribute
@@ -3350,31 +3535,43 @@
 								<div class="sell-price-edit-form sell-price-edit-form--with-cut">
 									<div class="sell-price-edit-fields">
 									<input type="hidden" id="edit-yyyymmdd-${stockCode}" value="${ymdVal}">
-									<div>
-										<label>Sell Price:</label>
-										<input type="number" id="edit-sell-price-${stockCode}" placeholder="Price" step="0.01" value="${finalSellPrice || ''}">
-									</div>
-									<div>
-										<label>Sell Rate (%):</label>
-										<input type="number" id="edit-sell-rate-${stockCode}" placeholder="Rate" step="0.01" value="${finalSellRate || ''}">
-									</div>
-									<div class="sell-price-edit-gap-with-actions">
-										<div>
-											<label>Sell Gap:</label>
+									<div class="sell-price-edit-main-row">
+										<div class="sell-price-edit-inline-field">
+											<label>Sell Price:</label>
+											<input type="number" id="edit-sell-price-${stockCode}" placeholder="Price" step="0.01" value="${finalSellPrice || ''}">
+										</div>
+										<div class="sell-price-edit-inline-field">
+											<label>Rate:</label>
+											<input type="number" id="edit-sell-rate-${stockCode}" placeholder="Rate" step="0.01" value="${finalSellRate || ''}">
+										</div>
+										<div class="sell-price-edit-inline-field">
+											<label>Gap:</label>
 											<input type="number" id="edit-sell-gap-${stockCode}" placeholder="Gap" step="0.01" value="${sellgap || ''}">
 										</div>
 										<div class="sell-price-edit-buttons">
 											<button class="btn-apply-sell-price" onclick="applySellPriceEdit('${stockCode}', '${stockName}')">Apply</button>
 											<button class="btn-cancel-sell-price" onclick="cancelSellPriceEdit('${stockCode}')">Cancel</button>
 										</div>
-									</div>
-									<div>
-										<label class="sell-price-edit-field-spacer" aria-hidden="true">&nbsp;</label>
 										<input type="number" id="edit-cut-amount-${stockCode}" placeholder="금액" step="1" min="1" aria-label="손절 금액 (원)">
-									</div>
-									<div>
-										<label class="sell-price-edit-field-spacer" aria-hidden="true">&nbsp;</label>
 										<button type="button" class="btn-cut" id="edit-cut-btn-${stockCode}">CUT</button>
+									</div>
+									<div class="sell-price-edit-split-row">
+										<div>
+											<label>Split Qty:</label>
+											<input type="number" id="edit-split-qty-${stockCode}" placeholder="수량" step="1" min="0" value="">
+										</div>
+										<div>
+											<label>Price:</label>
+											<input type="number" id="edit-split-price-${stockCode}" placeholder="가격" step="1" min="0" value="">
+										</div>
+										<div>
+											<label>Rate:</label>
+											<input type="number" id="edit-split-rate-${stockCode}" placeholder="수익율" step="0.01" value="">
+										</div>
+										<div>
+											<label class="sell-price-edit-field-spacer" aria-hidden="true">&nbsp;</label>
+											<button type="button" class="btn-split-sell" id="edit-split-sell-btn-${stockCode}" onclick="applySplitSell('${stockCode}', '${stockName}')">SELL</button>
+										</div>
 									</div>
 									</div>
 								</div>
@@ -3383,24 +3580,7 @@
 						
 						// Insert after the clicked row
 						rowElement.parentNode.insertBefore(editArea, rowElement.nextSibling);
-						
-						// Add select-all on click for input fields
-						const priceInput = document.getElementById(`edit-sell-price-${stockCode}`);
-						const rateInput = document.getElementById(`edit-sell-rate-${stockCode}`);
-						const gapInput = document.getElementById(`edit-sell-gap-${stockCode}`);
-						
-						if (priceInput) {
-							priceInput.addEventListener('click', function() { this.select(); });
-							priceInput.addEventListener('focus', function() { this.select(); });
-						}
-						if (rateInput) {
-							rateInput.addEventListener('click', function() { this.select(); });
-							rateInput.addEventListener('focus', function() { this.select(); });
-						}
-						if (gapInput) {
-							gapInput.addEventListener('click', function() { this.select(); });
-							gapInput.addEventListener('focus', function() { this.select(); });
-						}
+						bindSellPriceEditInputs(stockCode);
 						bindStopLossCutControls(stockCode, stockName, accountForCut);
 					})
 					.catch(error => {
@@ -3413,55 +3593,50 @@
 								<div class="sell-price-edit-form sell-price-edit-form--with-cut">
 									<div class="sell-price-edit-fields">
 									<input type="hidden" id="edit-yyyymmdd-${stockCode}" value="">
-									<div>
-										<label>Sell Price:</label>
-										<input type="number" id="edit-sell-price-${stockCode}" placeholder="Price" step="0.01" value="${fallbackSellPrice || ''}">
-									</div>
-									<div>
-										<label>Sell Rate (%):</label>
-										<input type="number" id="edit-sell-rate-${stockCode}" placeholder="Rate" step="0.01" value="${sellRate || ''}">
-									</div>
-									<div class="sell-price-edit-gap-with-actions">
-										<div>
-											<label>Sell Gap:</label>
+									<div class="sell-price-edit-main-row">
+										<div class="sell-price-edit-inline-field">
+											<label>Sell Price:</label>
+											<input type="number" id="edit-sell-price-${stockCode}" placeholder="Price" step="0.01" value="${fallbackSellPrice || ''}">
+										</div>
+										<div class="sell-price-edit-inline-field">
+											<label>Rate:</label>
+											<input type="number" id="edit-sell-rate-${stockCode}" placeholder="Rate" step="0.01" value="${sellRate || ''}">
+										</div>
+										<div class="sell-price-edit-inline-field">
+											<label>Gap:</label>
 											<input type="number" id="edit-sell-gap-${stockCode}" placeholder="Gap" step="0.01" value="">
 										</div>
 										<div class="sell-price-edit-buttons">
 											<button class="btn-apply-sell-price" onclick="applySellPriceEdit('${stockCode}', '${stockName}')">Apply</button>
 											<button class="btn-cancel-sell-price" onclick="cancelSellPriceEdit('${stockCode}')">Cancel</button>
 										</div>
-									</div>
-									<div>
-										<label class="sell-price-edit-field-spacer" aria-hidden="true">&nbsp;</label>
 										<input type="number" id="edit-cut-amount-${stockCode}" placeholder="금액" step="1" min="1" aria-label="손절 금액 (원)">
-									</div>
-									<div>
-										<label class="sell-price-edit-field-spacer" aria-hidden="true">&nbsp;</label>
 										<button type="button" class="btn-cut" id="edit-cut-btn-${stockCode}">CUT</button>
+									</div>
+									<div class="sell-price-edit-split-row">
+										<div>
+											<label>Split Qty:</label>
+											<input type="number" id="edit-split-qty-${stockCode}" placeholder="수량" step="1" min="0" value="">
+										</div>
+										<div>
+											<label>Price:</label>
+											<input type="number" id="edit-split-price-${stockCode}" placeholder="가격" step="1" min="0" value="">
+										</div>
+										<div>
+											<label>Rate:</label>
+											<input type="number" id="edit-split-rate-${stockCode}" placeholder="수익율" step="0.01" value="">
+										</div>
+										<div>
+											<label class="sell-price-edit-field-spacer" aria-hidden="true">&nbsp;</label>
+											<button type="button" class="btn-split-sell" id="edit-split-sell-btn-${stockCode}" onclick="applySplitSell('${stockCode}', '${stockName}')">SELL</button>
+										</div>
 									</div>
 									</div>
 								</div>
 							</td>
 						`;
 						rowElement.parentNode.insertBefore(editArea, rowElement.nextSibling);
-						
-						// Add select-all on click for input fields
-						const priceInput = document.getElementById(`edit-sell-price-${stockCode}`);
-						const rateInput = document.getElementById(`edit-sell-rate-${stockCode}`);
-						const gapInput = document.getElementById(`edit-sell-gap-${stockCode}`);
-						
-						if (priceInput) {
-							priceInput.addEventListener('click', function() { this.select(); });
-							priceInput.addEventListener('focus', function() { this.select(); });
-						}
-						if (rateInput) {
-							rateInput.addEventListener('click', function() { this.select(); });
-							rateInput.addEventListener('focus', function() { this.select(); });
-						}
-						if (gapInput) {
-							gapInput.addEventListener('click', function() { this.select(); });
-							gapInput.addEventListener('focus', function() { this.select(); });
-						}
+						bindSellPriceEditInputs(stockCode);
 						bindStopLossCutControls(stockCode, stockName, accountForCut);
 					});
 			}
@@ -3594,6 +3769,9 @@
 									<td>${gaprateDisplay}</td>
 									<td>${reboundDisplay}</td>
 									<td>
+										<button class="btn-split-protected" onclick="event.stopPropagation(); showSplitSellProtected('${stockCode}')" title="분할 매도 보호 가격">
+											SPLIT
+										</button>
 										<button class="btn-analyze-interested" onclick="event.stopPropagation(); openStockAnalysis('${stockCode}', '${stockName}')" title="종목 분석">
 											분석
 										</button>
@@ -3832,6 +4010,100 @@
 			const url = '/stock/data/stock-analysis?code=' + encodeURIComponent(stockCode) +
 				'&name=' + encodeURIComponent(stockName || '');
 			window.open(url, '_blank');
+		}
+
+		function closeSplitSellProtectedDialog() {
+			const overlay = document.getElementById('split-protected-overlay');
+			if (overlay) overlay.remove();
+		}
+
+		function showSplitSellProtected(stockCode) {
+			if (!stockCode) {
+				showMessage('Stock code is missing', 'error');
+				return;
+			}
+			closeSplitSellProtectedDialog();
+			fetch('./api/split-sell-protected/' + encodeURIComponent(stockCode) + '?t=' + Date.now())
+				.then(async (response) => {
+					let data = {};
+					try { data = await response.json(); } catch (e) { data = {}; }
+					if (response.status === 401) {
+						const loginPath = window.location.pathname.includes('/stock') ? '/stock/login' : '/login';
+						window.location.href = loginPath;
+						return { status: 'error', message: 'Not authenticated' };
+					}
+					return data;
+				})
+				.then(result => {
+					if (result.status !== 'success') {
+						showMessage('Error: ' + (result.message || 'Failed to load split protected prices'), 'error');
+						return;
+					}
+					const prices = (result.data && Array.isArray(result.data.prices))
+						? result.data.prices : [];
+					const overlay = document.createElement('div');
+					overlay.id = 'split-protected-overlay';
+					overlay.className = 'split-protected-overlay';
+					const priceContent = prices.length
+						? `<ul>${prices.map(price => `<li>${Number(price).toLocaleString()}</li>`).join('')}</ul>`
+						: '<p>보호 중인 split sell 가격이 없습니다.</p>';
+					overlay.innerHTML = `
+						<div class="split-protected-dialog" role="dialog" aria-modal="true">
+							<h3>SPLIT 보호 가격 - ${escapeHtml(stockCode)}</h3>
+							${priceContent}
+							<div class="split-protected-dialog-actions">
+								${prices.length ? '<button type="button" class="btn-clear-split-protected">CLEAR</button>' : ''}
+								<button type="button" class="btn-close-split-protected">Close</button>
+							</div>
+						</div>
+					`;
+					overlay.addEventListener('click', (event) => {
+						if (event.target === overlay) closeSplitSellProtectedDialog();
+					});
+					overlay.querySelector('.btn-close-split-protected')
+						.addEventListener('click', closeSplitSellProtectedDialog);
+					const clearButton = overlay.querySelector('.btn-clear-split-protected');
+					if (clearButton) {
+						clearButton.addEventListener('click', () => {
+							clearSplitSellProtected(stockCode, clearButton);
+						});
+					}
+					document.body.appendChild(overlay);
+				})
+				.catch(error => {
+					showMessage('Error loading split protected prices: ' + error.message, 'error');
+				});
+		}
+
+		function clearSplitSellProtected(stockCode, buttonElement) {
+			if (buttonElement) buttonElement.disabled = true;
+			fetch('./api/split-sell-protected/' + encodeURIComponent(stockCode), {
+				method: 'DELETE',
+				headers: { 'Content-Type': 'application/json' }
+			})
+				.then(async (response) => {
+					let data = {};
+					try { data = await response.json(); } catch (e) { data = {}; }
+					if (response.status === 401) {
+						const loginPath = window.location.pathname.includes('/stock') ? '/stock/login' : '/login';
+						window.location.href = loginPath;
+						return { status: 'error', message: 'Not authenticated' };
+					}
+					return data;
+				})
+				.then(result => {
+					if (result.status === 'success') {
+						closeSplitSellProtectedDialog();
+						showMessage('해당 종목의 split sell 보호 가격을 초기화했습니다.', 'success');
+					} else {
+						showMessage('Error: ' + (result.message || 'Failed to clear split protected prices'), 'error');
+						if (buttonElement) buttonElement.disabled = false;
+					}
+				})
+				.catch(error => {
+					showMessage('Error clearing split protected prices: ' + error.message, 'error');
+					if (buttonElement) buttonElement.disabled = false;
+				});
 		}
 
 		function removeInterestedStock(stockCode, stockName) {
@@ -4626,6 +4898,71 @@
 			} finally {
 				btn.disabled = false;
 			}
+		}
+
+		function bindSellPriceEditInputs(stockCode) {
+			['sell-price', 'sell-rate', 'sell-gap', 'split-qty', 'split-price', 'split-rate'].forEach((suffix) => {
+				const el = document.getElementById(`edit-${suffix}-${stockCode}`);
+				if (!el) return;
+				el.addEventListener('click', function() { this.select(); });
+				el.addEventListener('focus', function() { this.select(); });
+			});
+		}
+
+		function applySplitSell(stockCode, stockName) {
+			const splitQtyEl = document.getElementById(`edit-split-qty-${stockCode}`);
+			const splitPriceEl = document.getElementById(`edit-split-price-${stockCode}`);
+			const splitRateEl = document.getElementById(`edit-split-rate-${stockCode}`);
+			const btn = document.getElementById(`edit-split-sell-btn-${stockCode}`);
+			const splitQty = splitQtyEl ? splitQtyEl.value.trim() : '';
+			const splitPrice = splitPriceEl ? splitPriceEl.value.trim() : '';
+			const splitRate = splitRateEl ? splitRateEl.value.trim() : '';
+			if (!splitQty || Number(splitQty) <= 0) {
+				showMessage('Split Qty를 입력하세요.', 'error');
+				return;
+			}
+			if ((!splitPrice || Number(splitPrice) <= 0) && (!splitRate || Number(splitRate) === 0)) {
+				showMessage('Price 또는 Rate를 입력하세요.', 'error');
+				return;
+			}
+			if (btn) btn.disabled = true;
+			fetch('./api/split-sell', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					stock_code: stockCode,
+					stock_name: stockName || null,
+					split_qty: splitQty,
+					split_price: splitPrice || '0',
+					split_rate: splitRate || '0'
+				})
+			})
+			.then(async (response) => {
+				let data = {};
+				try { data = await response.json(); } catch (e) { data = {}; }
+				if (response.status === 401) {
+					const loginPath = window.location.pathname.includes('/stock') ? '/stock/login' : '/login';
+					window.location.href = loginPath;
+					return { status: 'error', message: 'Not authenticated' };
+				}
+				return data;
+			})
+			.then(result => {
+				if (result.status === 'success') {
+					showMessage('분할 매도가 대기열에 등록되었습니다. 다음 매도 사이클에서 실행됩니다.', 'success');
+					updateTable();
+					updateInterestedStocks();
+				} else {
+					showMessage('Error: ' + (result.message || 'Split sell failed'), 'error');
+				}
+			})
+			.catch(error => {
+				console.error('Error split sell:', error);
+				showMessage('Error split sell: ' + error.message, 'error');
+			})
+			.finally(() => {
+				if (btn) btn.disabled = false;
+			});
 		}
 
 		function applySellPriceEdit(stockCode, stockName) {

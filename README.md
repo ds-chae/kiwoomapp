@@ -381,3 +381,27 @@ Log Viewer를 수정한다. 각각의 log file 이름 우측에 삭제 버튼을
 log viewer가 목록을 보여주지 않는다.
 
 autotr.py를 수정한다. buy_queue가 변경될 때 파일로 저장하고, 처음 시작할 때는 파일에서 읽어들인다.
+
+분할 매도를 구현한다. 보유수량의 일정 부분을 지정된 가격 또는 지정한 수익율에 따라 매도 주문하도록 구현한다. 단, 지정한 수량이 매도가 된 경우에 나머지 수량이 분할 매도로 지정한 가격이나 수익율에 매도되지 않도록 해야한다.
+
+Split Qty, Split Price, Split Rate 표사룰 Split Qty, Price, Rate로 라벨을 변경하고 한 줄로 표시할것. 이 줄 우측에 "SELL" 버튼을 추가하여 이 SELL 버튼을 클릭할 때만 분할 매도를 실행할 것
+
+Split 관련 입력창을 한 줄에 표시하지 않고 있음.
+
+Sell Price, Rate, Gap의 라벨과 입력창을 모두 같은 주에 표시하라
+
+Sell Price의 입력창 너비를 8자리, Rate의 입력창 너비를 5자리, Gap의 입력창 너비를 4자리로 수정하라. Split Qty의 입력창 너비는 4자리, Price의 입력창 너비는 8자리, Rate의 입력창 너비는 4자리로 수정하라
+
+CUT  입력창 너비도 8자리로 수정하라.
+
+SELL 버튼에 대응하는 backend의 함수명을 알려줘
+SELL 버튼 → POST /api/split-sell → split_sell_api → 실제 처리는 _split_sell_execute_sync (autotr.py)입니다.
+
+split sell 요청은 persist한 것이 아니다.  요청한 시점에서만 실행하라. 즉 interested stocks에 저장하지 않도록 한다. persist하게 구현한 사항을 모두 제거하라.
+SELL 버튼 → split_sell_api → _split_sell_execute_sync (autotr.py)입니다.
+
+_calculate_split_sell_price 함수로 구현하지 말고 인라인 코드로 구현해
+
+기존 매도 주문이 있으면 그걸 취소해야 tradde_able_qty에 매도 가능 수량이 나오는데, 현재 로직은 trade_able_qty가 0이면 split 매도를 수행하지 않는다. 따라서, 일단 요청이 들어오면 기존 매도 주문을 취소하고, split_sell request를 queue에 넣었다가 다음 sell때에 split request가 있는지 검사해서 있으면 split request를 수행하고 남은 수량에 대해서는 기존의 sell request에 대응하도록 수정해야 하지 않는가.
+
+cancel_different_sell_order를 호출할 때에 expexted_qty는 무엇인가
