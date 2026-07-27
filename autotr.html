@@ -768,6 +768,15 @@
 				outline: none;
 				border-color: #667eea;
 			}
+			.sell-price-edit-form input[type="number"]::-webkit-outer-spin-button,
+			.sell-price-edit-form input[type="number"]::-webkit-inner-spin-button {
+				-webkit-appearance: none;
+				margin: 0;
+			}
+			.sell-price-edit-form input[type="number"] {
+				-moz-appearance: textfield;
+				appearance: textfield;
+			}
 			/* Digit-width fields: Sell Price/CUT/Split Price 8, Rate 5, Gap/Split Qty/Split Rate 4 */
 			.sell-price-edit-form input[id^="edit-sell-price-"],
 			.sell-price-edit-form input[id^="edit-split-price-"],
@@ -4949,7 +4958,7 @@
 			})
 			.then(result => {
 				if (result.status === 'success') {
-					showMessage('분할 매도가 대기열에 등록되었습니다. 다음 매도 사이클에서 실행됩니다.', 'success');
+					showMessage('분할 매도 요청을 기록했습니다. 다음 매도 사이클에서 실행됩니다.', 'success');
 					updateTable();
 					updateInterestedStocks();
 				} else {

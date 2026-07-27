@@ -405,3 +405,20 @@ _calculate_split_sell_price 함수로 구현하지 말고 인라인 코드로 �
 기존 매도 주문이 있으면 그걸 취소해야 tradde_able_qty에 매도 가능 수량이 나오는데, 현재 로직은 trade_able_qty가 0이면 split 매도를 수행하지 않는다. 따라서, 일단 요청이 들어오면 기존 매도 주문을 취소하고, split_sell request를 queue에 넣었다가 다음 sell때에 split request가 있는지 검사해서 있으면 split request를 수행하고 남은 수량에 대해서는 기존의 sell request에 대응하도록 수정해야 하지 않는가.
 
 cancel_different_sell_order를 호출할 때에 expexted_qty는 무엇인가
+수랼이라는 것은 이미 주문한 것 중에 매도에 성공하면 줄어드는 것이니 가격만 비교해야지
+
+그리고, split sell을 여러번 호출할 수 있으니까, 가격을 리스트로 관리해야지, 새로운 하루를 시작할 때에 이 리스크를 초기화 해야하고
+
+cancel_different_sell_orderd에서 protect_prices를 리스트로 준 다음에 set로 변환하는 짓을 왜 하는가. project_prices를 처음부터 set로 관리해도 되지 않는가
+
+split_sell_protected를 초기화하는 버튼을 interested_stocks에 넣어줘. 수행 순서는 interested_stocks의 우측 컬럼에 SPLIT 버튼을 생성하고, SPLIT 버튼을 클릭하면 split_sell_protected를 보여주고, 없으면 없다고 표시하고, 있으면 목록과 함께 "CLEAR" 버튼을 보여준다. 여기서 "CLEAR"를 클릭하면 split_sell_protected를 해당 종목에 대해서 초기화 한다.
+
+split sell 관련한 코드가 너무 어려줘. 왜 이렇게 더럽게 작성하는 거야.다시 단순하게 만들어봐
+
+_normalize_stk_cd를 최소로 호출하도록 수정해. 상위 함수에서 호출했으면 호출되는 함수 속에서는 호출할 필요가 없어.
+
+split_sell_queue 관련해서 큐를 사용하지 않고 오직 하나의 요청만 처리하도록 수정해. 분할 매도 요청 -> 기존 매도 요청 취소 -> 분할 매도 요청 기록 -> 다음 매도 시기에 분할 매도 실행 -> 분할 매도 보호 이 순서로 수정해
+
+split request는 종목별로 발생하는 것이 아니야. 종목 코드를 저장하는 것은 맞지만 그런 종목이 있느냐는 방식으로 할 필요는 없어.
+
+sell price, rate, gap, cut amount, split quty price rate 이 모든 입력창에서 상하 화살표를 제거하라
