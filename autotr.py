@@ -753,19 +753,20 @@ def _drop_split_sell_request():
 
 def _finish_split_sell_order(stk_cd, ordered_qty: int, ordered_price: int):
     """Protect the price and reduce the pending request quantity."""
-    global split_sell_request
+    global split_sell_protected
     with split_sell_lock:
         split_sell_protected.setdefault(stk_cd, set()).add(ordered_price)
-        split_sell_request.stock_code = ''
 
 
 def _get_split_sell_protected(stk_cd):
+    global split_sell_protected
     """Return protected prices for an already-normalized stk_cd."""
     with split_sell_lock:
         return set(split_sell_protected.get(stk_cd) or set())
 
 
 def _clear_split_sell_protected(stk_cd):
+    global split_sell_protected
     """Clear protected prices for an already-normalized stk_cd."""
     with split_sell_lock:
         removed = set(split_sell_protected.pop(stk_cd, set()))
@@ -775,7 +776,7 @@ def _clear_split_sell_protected(stk_cd):
 
 def _reset_split_sell_state_for_new_day():
     """Clear pending requests and protected prices at day start."""
-    global split_sell_request
+    global split_sell_request, split_sell_protected
     with split_sell_lock:
         split_sell_request.stock_code = ''
         split_sell_protected.clear()
@@ -872,16 +873,13 @@ def call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_co
             split_price = round_trunc(pur_pric * (1.0 + split_rate / 100.0))
 
         if split_price > upperlimit :
-            _drop_split_sell_request()
             log_print(ACCT, stk_cd, f'split sell {split_price} exceeds upper limit')
         elif trde_able_qty_int <= 0:
-            _drop_split_sell_request()
             log_print(ACCT, stk_cd, 'split sell request removed: trde_able_qty=0')
         else:
             resolved_market, trde_tp = _resolve_sell_market_and_trde_tp(market, stk_cd)
             if resolved_market is None:
                 log_print(ACCT, stk_cd, 'resolved_market is NOne')
-                _drop_split_sell_request()
             elif split_qty <= trde_able_qty_int :
                 log_print(ACCT, stk_cd, f'split sell_order market={resolved_market} qty={split_qty} price={split_price}')
                 ret_status = sell_order(
@@ -890,13 +888,11 @@ def call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_co
                     trde_tp=trde_tp, cond_uv='')
                 log_print(ACCT, stk_cd, f'split ret_status={ret_status}')
                 test_ret_status('SELL', stk_cd, stk_nm, ret_status, split_price)
-                if not (isinstance(ret_status, dict) and _is_success_return_code(ret_status.get('return_code'))):
-                    _drop_split_sell_request()
-                else:
+                if isinstance(ret_status, dict) and _is_success_return_code(ret_status.get('return_code')):
                     _finish_split_sell_order(stk_cd, split_qty, split_price)
                     trde_able_qty_int -= split_qty
             else :
-                _drop_split_sell_request()
+                pass
 
     # beginning of normal sell
     try:
@@ -1088,6 +1084,7 @@ def sell_jango(jango, market):
         except Exception as ex:
             log_print('', stk_cd, f'at 314 {working_status} {str(ex)}')
             print(ex)
+    _drop_split_sell_request() # delete split sell request, call this at each sell_jango scope.
     pass
 
 
@@ -3301,6 +3298,7 @@ def _split_sell_execute_sync(request: dict):
                                          request.get("split_qty", 0), request.get("split_price", 0),
                                         request.get("split_rate", 0), stock_name )
         except (TypeError, ValueError):
+            log_print('', '000000', "Invalid split sell values")
             return {"status": "error", "message": "Invalid split sell values"}
 
         log_print('', stock_code,
@@ -3341,8 +3339,9 @@ def _split_sell_execute_sync(request: dict):
             },
         }
     except Exception as e:
-        traceback.print_exc()
-        return {"status": "error", "message": str(e)}
+        exmsg = str(e)
+        log_print('', '000000', f'3342 {exmsg}')
+        return {"status": "error", "message": exmsg }
 
 
 @app.post("/api/split-sell")
