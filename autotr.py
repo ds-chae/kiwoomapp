@@ -1057,10 +1057,7 @@ def sell_jango(jango, market):
                 stk_cd = _normalize_stk_cd(indv.get('stk_cd', ''))
                 stk_nm = indv.get('stk_nm', '')
                 with split_sell_lock:
-                    has_split = bool(
-                        split_sell_request and
-                        split_sell_request.stock_code == stk_cd
-                    )
+                    has_split = split_sell_request.stock_code == stk_cd
                 # A pending split request runs even if account auto-sell mode is off
                 if not sell_mode_on and not has_split:
                     continue
