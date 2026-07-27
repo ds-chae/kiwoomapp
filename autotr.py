@@ -711,28 +711,18 @@ def calculate_sell_price(ACCT, MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk
     return 0
 
 
-def _total_rmnd_for_stock(stk_cd, jango_data=None):
-    """Sum rmnd_qty for an already-normalized stk_cd."""
-    global stored_jango_data
-    jango = jango_data if jango_data is not None else stored_jango_data
-    total = 0
-    if not isinstance(jango, dict):
-        return 0
-    for _acct, j in jango.items():
-        if not isinstance(j, dict):
-            continue
-        if not _is_success_return_code(j.get('return_code')):
-            continue
-        for indv in j.get('acnt_evlt_remn_indv_tot') or []:
-            if _normalize_stk_cd(indv.get('stk_cd', '')) == stk_cd:
-                total += _parse_qty_str(indv.get('rmnd_qty', '0'))
-    return total
+class SplitRequest:
+    def __init__(self, cd, q, p, _rate, n):
+        self.stock_code = cd
+        self.qty = int(q)
+        self.price = int(p)
+        self.rate = float(_rate)
+        self.name = n
 
 
 # Only one pending split-sell request exists at a time.
-# request:   {stock_code, qty, price, rate, name} or None
 # protected: stk_cd -> {ordered split prices}
-split_sell_request = None
+split_sell_request = SplitRequest('', 0, 0, 0, '')
 split_sell_protected = {}
 split_sell_lock = threading.RLock()
 
@@ -741,42 +731,32 @@ def _get_split_sell_state(stk_cd):
     """Return the pending request and protected prices."""
     with split_sell_lock:
         request = None
-        if split_sell_request and split_sell_request.get('stock_code') == stk_cd:
+        if split_sell_request.stock_code == stk_cd:
             request = copy.deepcopy(split_sell_request)
         protected = set(split_sell_protected.get(stk_cd) or set())
     return request, protected
 
 
-def _record_split_sell_request(request):
+def _record_split_sell_request(request: SplitRequest):
     """Record one request. A new request replaces the previous pending one."""
     global split_sell_request
     with split_sell_lock:
-        replaced = split_sell_request is not None
         split_sell_request = copy.deepcopy(request)
-    return replaced
 
 
 def _drop_split_sell_request():
     """Remove the pending request."""
     global split_sell_request
     with split_sell_lock:
-        split_sell_request = None
+        split_sell_request.stock_code = ''
 
 
-def _finish_split_sell_order(stk_cd, ordered_qty, ordered_price):
+def _finish_split_sell_order(stk_cd, ordered_qty: int, ordered_price: int):
     """Protect the price and reduce the pending request quantity."""
     global split_sell_request
     with split_sell_lock:
-        split_sell_protected.setdefault(stk_cd, set()).add(int(ordered_price))
-        if not split_sell_request:
-            return
-        if split_sell_request.get('stock_code') != stk_cd:
-            return
-        split_sell_request['qty'] = (
-            int(split_sell_request.get('qty', 0)) - int(ordered_qty)
-        )
-        if split_sell_request['qty'] <= 0:
-            split_sell_request = None
+        split_sell_protected.setdefault(stk_cd, set()).add(ordered_price)
+        split_sell_request.stock_code = ''
 
 
 def _get_split_sell_protected(stk_cd):
@@ -797,7 +777,7 @@ def _reset_split_sell_state_for_new_day():
     """Clear pending requests and protected prices at day start."""
     global split_sell_request
     with split_sell_lock:
-        split_sell_request = None
+        split_sell_request.stock_code = ''
         split_sell_protected.clear()
     log_print('', '000000', 'reset split sell state for new day')
 
@@ -879,76 +859,55 @@ def call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_co
     pur_pric = int(pur_pric_str) if pur_pric_str else 0
     trde_able_qty_int = _parse_qty_str(trde_able_qty)
 
+    upperlimit = get_upper_limit(MY_ACCESS_TOKEN, stk_cd)
+
     # Execute the one pending split request before the normal sell.
-    split_req, protect_prices = _get_split_sell_state(stk_cd)
+    split_req, _ = _get_split_sell_state(stk_cd)
     if split_req:
-        try:
-            split_qty = int(split_req.get('qty', 0) or 0)
-            split_price = int(float(split_req.get('price', 0) or 0))
-            split_rate = float(split_req.get('rate', 0) or 0)
-        except (TypeError, ValueError):
-            split_qty, split_price, split_rate = 0, 0, 0.0
+        split_qty = split_req.qty
+        split_price = split_req.price
+        split_rate = split_req.rate
 
         if split_price <= 0 and split_rate != 0.0 and pur_pric > 0:
             split_price = round_trunc(pur_pric * (1.0 + split_rate / 100.0))
-            if split_price <= pur_pric:
-                split_price = 0
 
-        if split_price <= 0 or split_qty <= 0:
+        if split_price > upperlimit :
             _drop_split_sell_request()
-            log_print(ACCT, stk_cd, 'invalid split sell request removed')
+            log_print(ACCT, stk_cd, f'split sell {split_price} exceeds upper limit')
+        elif trde_able_qty_int <= 0:
+            _drop_split_sell_request()
+            log_print(ACCT, stk_cd, 'split sell request removed: trde_able_qty=0')
         else:
-            if split_price > get_upper_limit(MY_ACCESS_TOKEN, stk_cd):
-                log_print(ACCT, stk_cd, f'split sell {split_price} exceeds upper limit')
-                return
-
-            # The API already requested cancellation. Wait if its stale snapshot remains.
-            if cancel_different_sell_order(
-                    now, ACCT, stk_cd, stk_nm, split_price,
-                    skip_prices=protect_prices) > 0:
-                log_print(ACCT, stk_cd, 'split sell waiting for canceled order')
-                return
-
-            if trde_able_qty_int <= 0:
-                log_print(ACCT, stk_cd, 'split sell waiting: trde_able_qty=0')
-                return
-
             resolved_market, trde_tp = _resolve_sell_market_and_trde_tp(market, stk_cd)
             if resolved_market is None:
-                return
+                log_print(ACCT, stk_cd, 'resolved_market is NOne')
+                _drop_split_sell_request()
+            elif split_qty <= trde_able_qty_int :
+                log_print(ACCT, stk_cd, f'split sell_order market={resolved_market} qty={split_qty} price={split_price}')
+                ret_status = sell_order(
+                    MY_ACCESS_TOKEN, dmst_stex_tp=resolved_market, stk_cd=stk_cd,
+                    ord_qty=str(split_qty), ord_uv=str(split_price),
+                    trde_tp=trde_tp, cond_uv='')
+                log_print(ACCT, stk_cd, f'split ret_status={ret_status}')
+                test_ret_status('SELL', stk_cd, stk_nm, ret_status, split_price)
+                if not (isinstance(ret_status, dict) and _is_success_return_code(ret_status.get('return_code'))):
+                    _drop_split_sell_request()
+                else:
+                    _finish_split_sell_order(stk_cd, split_qty, split_price)
+                    trde_able_qty_int -= split_qty
+            else :
+                _drop_split_sell_request()
 
-            ord_qty = min(split_qty, trde_able_qty_int)
-            log_print(ACCT, stk_cd,
-                      f'split sell_order market={resolved_market} qty={ord_qty} price={split_price}')
-            ret_status = sell_order(
-                MY_ACCESS_TOKEN, dmst_stex_tp=resolved_market, stk_cd=stk_cd,
-                ord_qty=str(ord_qty), ord_uv=str(split_price),
-                trde_tp=trde_tp, cond_uv='')
-            log_print(ACCT, stk_cd, f'split ret_status={ret_status}')
-            test_ret_status('SELL', stk_cd, stk_nm, ret_status, split_price)
-            if not (isinstance(ret_status, dict) and
-                    _is_success_return_code(ret_status.get('return_code'))):
-                return
-
-            _finish_split_sell_order(stk_cd, ord_qty, split_price)
-            trde_able_qty_int -= ord_qty
-
-    # --- Normal auto-sell (full able qty, or remainder after split) ---
-    if not allow_normal_sell:
-        return
-    if not sell_cond:
-        return
-
+    # beginning of normal sell
     try:
         sell_price = calculate_sell_price(ACCT, MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk_nm)
-        log_print(ACCT, stk_cd, f'674 calculate_sell_price = {sell_price}')
+        log_print(ACCT, stk_cd, f'919 calculate_sell_price = {sell_price}')
         if sell_price == 0: # price is not calculated
             return
     except Exception as ex:
         log_print(ACCT, stk_cd, f' Error in calculate_sell_price :{ex}')
         return
 
-    upperlimit = get_upper_limit(MY_ACCESS_TOKEN, stk_cd)
     if sell_price > upperlimit :
         log_print(ACCT, stk_cd, f' {sell_price} exceed upper limit {upperlimit}')
         return
@@ -969,7 +928,7 @@ def call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_co
     resolved_market, trde_tp = _resolve_sell_market_and_trde_tp(market, stk_cd)
     if resolved_market is None:
         if market == 'NXT':
-            log_print(ACCT, stk_cd, f' in call_sell_order skip {stk_nm}, not a NXT stock market={market}')
+            log_print(ACCT, stk_cd, f' in call_sell_order skip {stk_nm}, not a NXT stock, market={market}')
         elif market == 'AFT':
             log_print(ACCT, stk_cd, f' in call_sell_order market={market}, exceeded upper limit return')
         else:
@@ -1100,7 +1059,7 @@ def sell_jango(jango, market):
                 with split_sell_lock:
                     has_split = bool(
                         split_sell_request and
-                        split_sell_request.get('stock_code') == stk_cd
+                        split_sell_request.stock_code == stk_cd
                     )
                 # A pending split request runs even if account auto-sell mode is off
                 if not sell_mode_on and not has_split:
@@ -3341,21 +3300,18 @@ def _split_sell_execute_sync(request: dict):
             return {"status": "error", "message": "stock_code is required"}
 
         try:
-            split_qty = int(float(request.get("split_qty", 0) or 0))
+            split_request = SplitRequest(stock_code,
+                                         request.get("split_qty", 0), request.get("split_price", 0),
+                                        request.get("split_rate", 0), stock_name )
         except (TypeError, ValueError):
-            split_qty = 0
-        try:
-            split_price = int(float(request.get("split_price", 0) or 0))
-        except (TypeError, ValueError):
-            split_price = 0
-        try:
-            split_rate = float(request.get("split_rate", 0) or 0)
-        except (TypeError, ValueError):
-            split_rate = 0.0
+            return {"status": "error", "message": "Invalid split sell values"}
 
-        if split_qty <= 0:
+        log_print('', stock_code,
+                  f'split sell request {stock_name} qty={split_request.qty} '
+                  f'prc={split_request.price} rate={split_request.rate}')
+        if split_request.qty <= 0:
             return {"status": "error", "message": "Split Qty must be > 0"}
-        if split_price <= 0 and split_rate == 0.0:
+        if split_request.price <= 0 and split_request.rate == 0.0:
             return {"status": "error", "message": "Split Price or Rate is required"}
 
         if not stock_name:
@@ -3364,34 +3320,25 @@ def _split_sell_execute_sync(request: dict):
                 stock_name = (st0.get("stock_name") or "").strip()
             if not stock_name:
                 stock_name = get_stockinfo(stock_code).get("name", "")
-
-        if _total_rmnd_for_stock(stock_code) <= 0:
-            return {"status": "error", "message": "No holdings for this stock"}
+        split_request.name = stock_name
 
         protected = _get_split_sell_protected(stock_code)
-        cancel_results = _cancel_all_sell_orders_for_stock(
-            stock_code, skip_prices=protected)
-        replaced = _record_split_sell_request({
-            'stock_code': stock_code,
-            'qty': split_qty,
-            'price': split_price,
-            'rate': split_rate,
-            'name': stock_name,
-        })
+        cancel_results = _cancel_all_sell_orders_for_stock(stock_code, skip_prices=protected)
+        _record_split_sell_request(split_request)
 
         log_print('', stock_code,
-                  f'split sell recorded qty={split_qty} price={split_price} rate={split_rate} '
-                  f'replaced={replaced} canceled={len(cancel_results)} '
+                  f'split sell recorded qty={split_request.qty} '
+                  f'price={split_request.price} rate={split_request.rate} '
+                  f'canceled={len(cancel_results)} '
                   f'protected={protected}')
 
         return {
             "status": "success",
             "message": "Split sell recorded; will run on the next sell cycle",
             "data": {
-                "split_qty": split_qty,
-                "split_price": split_price,
-                "split_rate": split_rate,
-                "replaced_previous_request": replaced,
+                "split_qty": split_request.qty,
+                "split_price": split_request.price,
+                "split_rate": split_request.rate,
                 "protect_prices": sorted(protected),
                 "canceled_orders": cancel_results,
             },

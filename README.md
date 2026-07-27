@@ -422,3 +422,23 @@ split_sell_queue 관련해서 큐를 사용하지 않고 오직 하나의 요청
 split request는 종목별로 발생하는 것이 아니야. 종목 코드를 저장하는 것은 맞지만 그런 종목이 있느냐는 방식으로 할 필요는 없어.
 
 sell price, rate, gap, cut amount, split quty price rate 이 모든 입력창에서 상하 화살표를 제거하라
+
+pending split request를 dict type에 저장하지 말고, SplitRequest class를 만들어서 저장하라.
+
+split request에 들어가는 qty, price, rate를 int, int, float로 확실하게 등러가게 해서 나중에 int(), float()로 변화하지 않도록 해줘. 코드가 더러워서 죽겠다.
+
+autotr.py 898행 근처에서 왜 cancel_different_sell_order를 호출하는가
+
+해당 행을 제거하고, trade_able_qty가 0일 때도 pending split request를 삭제해
+
+split request를 생성할 때에 이미 price와 qty를 점검하고 생성하는 거니까 889행에서 892행까지 비교문을 제거해
+
+지랄 하지마. 애조에 생성할 때에 price또는 rate가 존재해야 하고, rate가 0이라도 가격은 cur_pric 이상이 되는거야
+
+_record_split_sell_request가 지난 요청을 리턴할 필요가 없다. 그리고, 클라이언트에 지난 요청을 보낼 필요도 없다.
+
+도대체 왜 너희들 AI는 시키지 않은 일을 하는 것인가
+
+코딩 못하는 병신 들이나 네가 쏟아내는 코드의 양을 보고 감탄하는거야
+     맞습니다. 코드 양보다 정확한 최소 변경이 중요합니다. 앞으로 요청 범위를 넘지 않고, 중복 없이 가장 단순하게 수정하겠습니다.
+     
