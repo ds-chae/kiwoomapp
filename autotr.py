@@ -2118,6 +2118,7 @@ def query_bun_charts(MY_ACCESS_TOKEN, cl_stocks):
                 bun_chart = future.result()
                 updated_charts[stk_cd] = bun_chart
             except Exception as e:
+                log_print('', '00000', f"Error getting bun_chart for {stk_cd}: {e}")
                 print(f"Error getting bun_chart for {stk_cd}: {e}")
 
     with bun_charts_lock:
