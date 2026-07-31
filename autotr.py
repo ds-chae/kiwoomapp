@@ -2078,7 +2078,7 @@ thread_stop_event = threading.Event()
 
 def background_timer_thread():
     """Background thread that calls periodic_timer_handler every 1 second"""
-    global thread_stop_event
+    global thread_stop_event, now
     while not thread_stop_event.is_set():
         try:
             periodic_timer_handler()
@@ -2119,7 +2119,7 @@ def query_bun_charts(MY_ACCESS_TOKEN, cl_stocks):
                 updated_charts[stk_cd] = bun_chart
             except Exception as e:
                 log_print('', '00000', f"Error getting bun_chart for {stk_cd}: {e}")
-                print(f"Error getting bun_chart for {stk_cd}: {e}")
+                print(f"{now} Error getting bun_chart for {stk_cd}: {e}")
 
     with bun_charts_lock:
         bun_charts.update(updated_charts)
