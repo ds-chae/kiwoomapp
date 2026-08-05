@@ -38,14 +38,27 @@ key_7942['SK'] = SK_7942
 key_7942['AK'] = AK_7942
 key_7942['EXP'] = EXP_7942
 
+env_json = None
 
+def load_env_json():
+    global env_json
+    with open('env.json', 'r', encoding='utf-8') as f :
+        env_json = json.load(f)
+
+
+key_list = None
 
 def get_key_list():
-	key_list = {}
-	key_list[key_0130['ACCT']] = key_0130
-	key_list[key_9136['ACCT']] = key_9136
-	key_list[key_7942['ACCT']] = key_7942
-	return key_list
+    global key_list, env_json
+    if key_list:
+        return key_list
+    if not env_json:
+        load_env_json()
+    key_list = {}
+    ACCOUNT = env_json['ACCOUNT']
+    for A in ACCOUNT:
+        key_list[A['ACCT']] = A
+    return key_list
 
 
 # 접근토큰 발급
@@ -75,8 +88,13 @@ def fn_au10001(data):
     return response.json()
 
 
+token_list = {}
 
 def get_token(ACCT, AK, SK):
+    global token_list
+    if ACCT in token_list:
+        return token_list[ACCT]
+
     # 1. 요청 데이터
     params = {
         'grant_type': 'client_credentials',  # grant_type
@@ -87,10 +105,16 @@ def get_token(ACCT, AK, SK):
     # 2. API 실행
     j = fn_au10001(data=params)
     if 'token' in j:
-        return j['token']
+        token = j['token']
+        token_list[ACCT] = token
+        return token
     else:
         print(f'For {ACCT} non token in response {str(j)}')
         return ''
+
+def clear_token_list():
+    global token_list
+    token_list = {}
 
 
 def get_one_token():
@@ -101,3 +125,7 @@ def get_one_token():
 if __name__ == '__main__':
     token = get_token('9136', AK_9136, SK_9136)
     print(f"token={token}")
+    #load_env_json()
+    #print(env_json)
+    kl = get_key_list()
+    print(kl)
