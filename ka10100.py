@@ -234,5 +234,5 @@ if __name__ == '__main__':
     tdy_dt = '20260225'
     for k, key in key_list.items():
         ACCT = key['ACCT']
-        MY_ACCESS_TOKEN = get_token(key['AK'], key['SK'])  # 접근토큰
+        MY_ACCESS_TOKEN = get_token(ACCT, key['AK'], key['SK'])  # 접근토큰
         pl = get_pl(ACCT, MY_ACCESS_TOKEN, tdy_dt)

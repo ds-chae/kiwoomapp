@@ -7,8 +7,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Load KIWOOM_SK and KIWOOM_AK from environment variables
-KIWOOM_SK = os.getenv('KIWOOM_SK')
-KIWOOM_AK = os.getenv('KIWOOM_AK')
+SK_9136 = os.getenv('SK_9136')
+AK_9136 = os.getenv('AK_9136')
 
 SK_0130 = os.getenv('SK_0130')
 AK_0130 = os.getenv('AK_0130')
@@ -16,21 +16,28 @@ AK_0130 = os.getenv('AK_0130')
 SK_7942 = os.getenv('SK_7942')
 AK_7942 = os.getenv('AK_7942')
 
+EXP_9136 = os.getenv('EXP_9136')
+EXP_0130 = os.getenv('EXP_0130')
+EXP_7942 = os.getenv('EXP_7942')
+
 key_9136 = {}
 key_9136['ACCT'] = '9136'
-key_9136['SK'] = KIWOOM_SK
-key_9136['AK'] = KIWOOM_AK
-
+key_9136['SK'] = SK_9136
+key_9136['AK'] = AK_9136
+key_9136['EXP'] = EXP_9136
 
 key_0130 = {}
 key_0130['ACCT'] = '0130'
 key_0130['SK'] = SK_0130
 key_0130['AK'] = AK_0130
+key_0130['EXP'] = EXP_0130
 
 key_7942 = {}
 key_7942['ACCT'] = '7942'
 key_7942['SK'] = SK_7942
 key_7942['AK'] = AK_7942
+key_7942['EXP'] = EXP_7942
+
 
 
 def get_key_list():
@@ -65,29 +72,32 @@ def fn_au10001(data):
         header_data = {key: response.headers.get(key) for key in header_keys}
         # print('Header:', json.dumps(header_data, indent=4, ensure_ascii=False))
         print('Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON 응답을 파싱하여 출력
-
-    return response.json()['token']
-
+    return response.json()
 
 
 
-def get_token(KIWOOM_AK, KIWOOM_SK):
+def get_token(ACCT, AK, SK):
     # 1. 요청 데이터
     params = {
         'grant_type': 'client_credentials',  # grant_type
-        'appkey': KIWOOM_AK,  # 앱키
-        'secretkey': KIWOOM_SK,  # 시크릿키
+        'appkey': AK,  # 앱키
+        'secretkey': SK,  # 시크릿키
     }
 
     # 2. API 실행
-    token = fn_au10001(data=params)
-    return token
+    j = fn_au10001(data=params)
+    if 'token' in j:
+        return j['token']
+    else:
+        print(f'For {ACCT} non token in response {str(j)}')
+        return ''
+
 
 def get_one_token():
-    token = get_token(KIWOOM_AK, KIWOOM_SK)
+    token = get_token('9136', AK_9136, SK_9136)
     return token
 
 # 실행 구간
 if __name__ == '__main__':
-    token = get_token(KIWOOM_AK, KIWOOM_SK)
+    token = get_token('9136', AK_9136, SK_9136)
     print(f"token={token}")

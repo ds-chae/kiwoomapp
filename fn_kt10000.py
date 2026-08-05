@@ -113,7 +113,7 @@ def buy_order(MY_ACCESS_TOKEN, stk_nm, dmst_stex_tp='KRX', stk_cd='', ord_qty='0
 
 
 def buy_example(ACCT, AK, SK):
-	MY_ACCESS_TOKEN = get_token(AK, SK)  # 접근토큰
+	MY_ACCESS_TOKEN = get_token(ACCT, AK, SK)  # 접근토큰
 
 	# 2. 요청 데이터
 	params = {
@@ -136,5 +136,5 @@ if __name__ == '__main__':
 		ACCT = key['ACCT']
 		AK = key['AK']
 		SK = key['SK']
-		MY_ACCESS_TOKEN = get_token(AK, SK)  # 접근토큰
+		MY_ACCESS_TOKEN = get_token(ACCT, AK, SK)  # 접근토큰
 		print(ACCT, AK, SK, MY_ACCESS_TOKEN)

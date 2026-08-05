@@ -57,7 +57,7 @@ if __name__ == '__main__':
 	key_list = get_key_list()
 	jango = []
 	for key in key_list:
-		MY_ACCESS_TOKEN = get_token(key['AK'], key['SK'])  # 접근토큰
+		MY_ACCESS_TOKEN = get_token('9136', key['AK'], key['SK'])  # 접근토큰
 		break
 
 	# 2. 요청 데이터

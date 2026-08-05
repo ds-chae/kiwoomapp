@@ -265,7 +265,7 @@ def fn_ka01690(token, data, cont_yn='N', next_key=''):
 def print_acnt(ACCT, AK, SK):
     acnt = []
     # 1. 토큰 설정
-    MY_ACCESS_TOKEN = get_token(AK, SK) # 접근토큰
+    MY_ACCESS_TOKEN = get_token(ACCT, AK, SK) # 접근토큰
 
     # 2. 요청 데이터
     params = {
@@ -373,7 +373,7 @@ def get_jango(market = 'KRX'):
     tasks = []
     for k, key in key_list.items():
         acct = key['ACCT']
-        MY_ACCESS_TOKEN = get_token(key['AK'], key['SK'])  # 접근토큰
+        MY_ACCESS_TOKEN = get_token(acct, key['AK'], key['SK'])  # 접근토큰
         jango_token[acct] = MY_ACCESS_TOKEN
         tasks.append((acct, log_jango, market, MY_ACCESS_TOKEN))
     
@@ -1126,7 +1126,7 @@ def get_miche():
     miche = {}
     for k, key in key_list.items():
         ACCT = key['ACCT']
-        MY_ACCESS_TOKEN = get_token(key['AK'], key['SK'])  # 접근토큰
+        MY_ACCESS_TOKEN = get_token(ACCT, key['AK'], key['SK'])  # 접근토큰
         # 2. 요청 데이터
         params = {
             'all_stk_tp': '0', # 전체종목구분 0:전체, 1:종목
@@ -1366,7 +1366,7 @@ def buy_cl(now, stex):
             continue
 
         #ACCT = key['ACCT']
-        MY_ACCESS_TOKEN = get_token(key['AK'], key['SK'])  # 접근토큰
+        MY_ACCESS_TOKEN = get_token(ACCT, key['AK'], key['SK'])  # 접근토큰
         buy_cl_by_account(ACCT, MY_ACCESS_TOKEN, stex, '')
 
 gap_prices = {}
@@ -2318,7 +2318,7 @@ def calculate_pl():
     tdy_dt = today_yyyymmdd
     for k, key in key_list.items():
         ACCT = key['ACCT']
-        MY_ACCESS_TOKEN = get_token(key['AK'], key['SK'])  # 접근토큰
+        MY_ACCESS_TOKEN = get_token(ACCT, key['AK'], key['SK'])  # 접근토큰
         pl = get_pl(ACCT, MY_ACCESS_TOKEN, tdy_dt)
         total_pl[ACCT] = pl
     save_total_pl(today_yyyymmdd, total_pl)
@@ -2951,7 +2951,7 @@ async def cancel_order_api(request: dict, proxy_path: str = "", token: str = Coo
         access_token = None
         for k, key in key_list.items():
             if (key.get("ACCT") or "").strip() == acct:
-                access_token = get_token(key["AK"], key["SK"])
+                access_token = get_token(acct, key["AK"], key["SK"])
                 break
 
         if not access_token:
@@ -3425,7 +3425,7 @@ def issue_buy_order(stk_nm, stk_cd, ord_uv, ord_qty, stex, trde_tp, account):
         return {"status": "error", "message": f"Account {account} not found"}
     
     key = key_list[account]
-    access_token = get_token(key['AK'], key['SK'])
+    access_token = get_token(account, key['AK'], key['SK'])
 
     if not access_token:
         return {"status": "error", "message": "Unable to retrieve token"}
