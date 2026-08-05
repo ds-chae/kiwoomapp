@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import requests
 import json
 import os
@@ -91,9 +93,12 @@ def fn_au10001(data):
 token_list = {}
 
 def get_token(ACCT, AK, SK):
-    global token_list
+    global token_list, token_hour
+    now = datetime.now()
     if ACCT in token_list:
-        return token_list[ACCT]
+        token_pair = token_list[ACCT]
+        if now.hour == token_pair['hour'] :
+            return token_pair['token']
 
     # 1. 요청 데이터
     params = {
@@ -104,9 +109,14 @@ def get_token(ACCT, AK, SK):
 
     # 2. API 실행
     j = fn_au10001(data=params)
+    print('Refreshing token===')
+    print(str(j))
     if 'token' in j:
         token = j['token']
-        token_list[ACCT] = token
+        token_pair = {}
+        token_pair['hour'] = now.hour
+        token_pair['token'] = token
+        token_list[ACCT] = token_pair
         return token
     else:
         print(f'For {ACCT} non token in response {str(j)}')
