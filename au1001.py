@@ -108,6 +108,7 @@ def decrease_one_hour(dtstr):
     output_str = prior_dt.strftime('%Y%m%d%H%M%S')
     return output_str
 
+
 def get_one_token():
     token = get_token('9136')
     return token
