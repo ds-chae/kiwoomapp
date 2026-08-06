@@ -1,9 +1,7 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import requests
 import json
-import os
-from dotenv import load_dotenv
 
 
 env_json = None
@@ -20,6 +18,7 @@ def get_key_list():
     global key_list, env_json
     if key_list:
         return key_list
+
     if not env_json:
         load_env_json()
     key_list = {}
@@ -60,18 +59,24 @@ token_list = {}
 
 def get_token(ACCT):
     global token_list, env_json
-    if not env_json:
-        load_env_json()
 
+    expires_dt = '00000000000000'
+    token = None
     if ACCT in token_list:
-        return token_list[ACCT]
-    account = env_json['ACCOUNT']
-    keys = account[ACCT]
-    return refill_token(ACCT, keys['AK'], keys['SK'])
+        token_pair = token_list[ACCT]
+        expires_dt = token_pair['expires_dt']
+        token = token_pair['token']
+    # compare expire dt
+    nowstr = datetime.now().strftime('%Y%m%d%H%M%S')
+    if token and expires_dt > nowstr :
+        return token
 
+    # it is expected to be expired in an hour, so refresh
+    k_list = get_key_list()
+    keys = k_list[ACCT]
 
-def refill_token(ACCT, AK, SK):
-    global token_list
+    AK = keys['AK']
+    SK = keys['SK']
     # 1. 요청 데이터
     params = {
         'grant_type': 'client_credentials',  # grant_type
@@ -85,19 +90,23 @@ def refill_token(ACCT, AK, SK):
     print(str(j))
     if 'token' in j:
         token = j['token']
-        token_list[ACCT] = token
+        # replace hhmmss to 0s to compare expire.
+        expires_dt = j['expires_dt']
+        expires_dt = decrease_one_hour(expires_dt)
+        token_pair = {}
+        token_pair['token'] = token
+        token_pair['expires_dt'] = expires_dt
+        token_list[ACCT] = token_pair
         return token
     else:
         print(f'For {ACCT} non token in response {str(j)}')
         return ''
 
-
-def refresh_token():
-    global token_list, env_json
-    ACCOUNT = env_json['ACCOUNT']
-
-    for A in ACCOUNT:
-        refill_token(A['ACCT'],A['AK'], A['SK'] )
+def decrease_one_hour(dtstr):
+    dt = datetime.strptime(dtstr, '%Y%m%d%H%M%S')
+    prior_dt = dt - timedelta(hours = 1)
+    output_str = prior_dt.strftime('%Y%m%d%H%M%S')
+    return output_str
 
 def get_one_token():
     token = get_token('9136')

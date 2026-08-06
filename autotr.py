@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, time, date
 
 # load_dotenv is not required, as it is called in au1001
 # from dotenv import load_dotenv
-from au1001 import get_token, get_key_list, get_one_token, refresh_token, os_getenv
+from au1001 import get_token, get_key_list, get_one_token, os_getenv
 import time as time_module
 import threading
 import asyncio
@@ -1581,7 +1581,6 @@ def clear_for_new_day():
     global daily_charts_lock, daily_charts, last_logs
     global after_exceeded, old_sel_price
 
-    refresh_token()
     today_yyyymmdd = now.strftime("%Y%m%d")
     print('{} {} Setting new day=True'.format(cur_date(), now))
     log_print('', '000000', 'clear_for_new_day Setting new day=True')
@@ -2403,7 +2402,7 @@ def periodic_timer_handler():
         if wait_hour_change:
             log_print('', '000000', '{} Hour change from {} to {}'.format(cur_date(), prev_hour, now_hour))
             wait_hour_change = False
-        refresh_token()
+
     prev_hour = now_hour
     if wait_hour_change: # 장 개시 전이면 한시간씩 기다린다.
         return
