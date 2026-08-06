@@ -5,40 +5,6 @@ import json
 import os
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
-
-# Load KIWOOM_SK and KIWOOM_AK from environment variables
-SK_9136 = os.getenv('SK_9136')
-AK_9136 = os.getenv('AK_9136')
-
-SK_0130 = os.getenv('SK_0130')
-AK_0130 = os.getenv('AK_0130')
-
-SK_7942 = os.getenv('SK_7942')
-AK_7942 = os.getenv('AK_7942')
-
-EXP_9136 = os.getenv('EXP_9136')
-EXP_0130 = os.getenv('EXP_0130')
-EXP_7942 = os.getenv('EXP_7942')
-
-key_9136 = {}
-key_9136['ACCT'] = '9136'
-key_9136['SK'] = SK_9136
-key_9136['AK'] = AK_9136
-key_9136['EXP'] = EXP_9136
-
-key_0130 = {}
-key_0130['ACCT'] = '0130'
-key_0130['SK'] = SK_0130
-key_0130['AK'] = AK_0130
-key_0130['EXP'] = EXP_0130
-
-key_7942 = {}
-key_7942['ACCT'] = '7942'
-key_7942['SK'] = SK_7942
-key_7942['AK'] = AK_7942
-key_7942['EXP'] = EXP_7942
 
 env_json = None
 
@@ -92,14 +58,20 @@ def fn_au10001(data):
 
 token_list = {}
 
-def get_token(ACCT, AK, SK):
-    global token_list, token_hour
-    now = datetime.now()
-    if ACCT in token_list:
-        token_pair = token_list[ACCT]
-        if now.hour == token_pair['hour'] :
-            return token_pair['token']
+def get_token(ACCT):
+    global token_list, env_json
+    if not env_json:
+        load_env_json()
 
+    if ACCT in token_list:
+        return token_list[ACCT]
+    account = env_json['ACCOUNT']
+    keys = account[ACCT]
+    return refill_token(ACCT, keys['AK'], keys['SK'])
+
+
+def refill_token(ACCT, AK, SK):
+    global token_list
     # 1. 요청 데이터
     params = {
         'grant_type': 'client_credentials',  # grant_type
@@ -113,27 +85,35 @@ def get_token(ACCT, AK, SK):
     print(str(j))
     if 'token' in j:
         token = j['token']
-        token_pair = {}
-        token_pair['hour'] = now.hour
-        token_pair['token'] = token
-        token_list[ACCT] = token_pair
+        token_list[ACCT] = token
         return token
     else:
         print(f'For {ACCT} non token in response {str(j)}')
         return ''
 
-def clear_token_list():
-    global token_list
-    token_list = {}
 
+def refresh_token():
+    global token_list, env_json
+    ACCOUNT = env_json['ACCOUNT']
+
+    for A in ACCOUNT:
+        refill_token(A['ACCT'],A['AK'], A['SK'] )
 
 def get_one_token():
-    token = get_token('9136', AK_9136, SK_9136)
+    token = get_token('9136')
     return token
+
+def os_getenv(key):
+    global env_json
+    if not env_json:
+        load_env_json()
+    val = env_json[key]
+    return val
+
 
 # 실행 구간
 if __name__ == '__main__':
-    token = get_token('9136', AK_9136, SK_9136)
+    token = get_token('9136')
     print(f"token={token}")
     #load_env_json()
     #print(env_json)

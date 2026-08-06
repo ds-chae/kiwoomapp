@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, time, date
 
 # load_dotenv is not required, as it is called in au1001
 # from dotenv import load_dotenv
-from au1001 import get_token, get_key_list, get_one_token, clear_token_list
+from au1001 import get_token, get_key_list, get_one_token, refresh_token, os_getenv
 import time as time_module
 import threading
 import asyncio
@@ -136,11 +136,11 @@ def _allocate_image_store_path(stem: str, ext: str) -> tuple[str, str]:
 
 
 # Authentication configuration
-LOGIN_USERNAME = os.getenv('LOGIN_USERNAME')
-LOGIN_PASSWORD = os.getenv('LOGIN_PASSWORD')
-SECRET_KEY = os.getenv('SECRET_KEY', secrets.token_urlsafe(32))
-TOKEN_EXPIRY_HOURS = 100
-env_pctoken = os.getenv('PCTOKEN')
+LOGIN_USERNAME = os_getenv('LOGIN_USERNAME')
+LOGIN_PASSWORD = os_getenv('LOGIN_PASSWORD')
+
+TOKEN_EXPIRY_HOURS = 200
+env_pctoken = os_getenv('PCTOKEN')
 
 # In-memory token storage (in production, use Redis or database)
 active_tokens = {}
@@ -265,7 +265,7 @@ def fn_ka01690(token, data, cont_yn='N', next_key=''):
 def print_acnt(ACCT, AK, SK):
     acnt = []
     # 1. 토큰 설정
-    MY_ACCESS_TOKEN = get_token(ACCT, AK, SK) # 접근토큰
+    MY_ACCESS_TOKEN = get_token(ACCT) # 접근토큰
 
     # 2. 요청 데이터
     params = {
@@ -373,7 +373,7 @@ def get_jango(market = 'KRX'):
     tasks = []
     for k, key in key_list.items():
         acct = key['ACCT']
-        MY_ACCESS_TOKEN = get_token(acct, key['AK'], key['SK'])  # 접근토큰
+        MY_ACCESS_TOKEN = get_token(acct)  # 접근토큰
         jango_token[acct] = MY_ACCESS_TOKEN
         tasks.append((acct, log_jango, market, MY_ACCESS_TOKEN))
     
@@ -1126,7 +1126,7 @@ def get_miche():
     miche = {}
     for k, key in key_list.items():
         ACCT = key['ACCT']
-        MY_ACCESS_TOKEN = get_token(ACCT, key['AK'], key['SK'])  # 접근토큰
+        MY_ACCESS_TOKEN = get_token(ACCT)  # 접근토큰
         # 2. 요청 데이터
         params = {
             'all_stk_tp': '0', # 전체종목구분 0:전체, 1:종목
@@ -1366,7 +1366,7 @@ def buy_cl(now, stex):
             continue
 
         #ACCT = key['ACCT']
-        MY_ACCESS_TOKEN = get_token(ACCT, key['AK'], key['SK'])  # 접근토큰
+        MY_ACCESS_TOKEN = get_token(ACCT)  # 접근토큰
         buy_cl_by_account(ACCT, MY_ACCESS_TOKEN, stex, '')
 
 gap_prices = {}
@@ -1581,7 +1581,7 @@ def clear_for_new_day():
     global daily_charts_lock, daily_charts, last_logs
     global after_exceeded, old_sel_price
 
-    clear_token_list()
+    refresh_token()
     today_yyyymmdd = now.strftime("%Y%m%d")
     print('{} {} Setting new day=True'.format(cur_date(), now))
     log_print('', '000000', 'clear_for_new_day Setting new day=True')
@@ -2157,6 +2157,7 @@ def update_bun_charts_thread():
     global bun_charts, bun_charts_lock, interested_stocks, bun_charts_thread_stop_event, interested_stocks_lock
     while not bun_charts_thread_stop_event.is_set():
         # Get token for API calls
+        MY_ACCESS_TOKEN = None
         try:
             MY_ACCESS_TOKEN = get_one_token()
         except Exception as ex:
@@ -2176,6 +2177,8 @@ def update_bun_charts_thread():
 
             query_bun_charts(MY_ACCESS_TOKEN, cl_stocks)
             query_day_charts(MY_ACCESS_TOKEN, cl_stocks)
+        else:
+            print('No MY_ACCESS_TOKEN')
 
         # Sleep for 15 seconds before next update
         for _ in range(150):  # Check every 0.1 seconds for 15 seconds total
@@ -2319,7 +2322,7 @@ def calculate_pl():
     tdy_dt = today_yyyymmdd
     for k, key in key_list.items():
         ACCT = key['ACCT']
-        MY_ACCESS_TOKEN = get_token(ACCT, key['AK'], key['SK'])  # 접근토큰
+        MY_ACCESS_TOKEN = get_token(ACCT)  # 접근토큰
         pl = get_pl(ACCT, MY_ACCESS_TOKEN, tdy_dt)
         total_pl[ACCT] = pl
     save_total_pl(today_yyyymmdd, total_pl)
@@ -2400,6 +2403,7 @@ def periodic_timer_handler():
         if wait_hour_change:
             log_print('', '000000', '{} Hour change from {} to {}'.format(cur_date(), prev_hour, now_hour))
             wait_hour_change = False
+        refresh_token()
     prev_hour = now_hour
     if wait_hour_change: # 장 개시 전이면 한시간씩 기다린다.
         return
@@ -2952,7 +2956,7 @@ async def cancel_order_api(request: dict, proxy_path: str = "", token: str = Coo
         access_token = None
         for k, key in key_list.items():
             if (key.get("ACCT") or "").strip() == acct:
-                access_token = get_token(acct, key["AK"], key["SK"])
+                access_token = get_token(acct)
                 break
 
         if not access_token:
@@ -3426,7 +3430,7 @@ def issue_buy_order(stk_nm, stk_cd, ord_uv, ord_qty, stex, trde_tp, account):
         return {"status": "error", "message": f"Account {account} not found"}
     
     key = key_list[account]
-    access_token = get_token(account, key['AK'], key['SK'])
+    access_token = get_token(account)
 
     if not access_token:
         return {"status": "error", "message": "Unable to retrieve token"}
