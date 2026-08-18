@@ -229,7 +229,7 @@
 				</div>
 				<div class="body-pad">
 					<div class="image-list-toolbar">
-						<span style="font-size:13px;color:#555;font-weight:600;">파일명 정렬</span>
+						<span style="font-size:13px;color:#555;font-weight:600;">날짜/시간 정렬</span>
 						<button type="button" class="image-sort-btn active" id="image-sort-asc">오름차순</button>
 						<button type="button" class="image-sort-btn" id="image-sort-desc">내림차순</button>
 					</div>
@@ -263,6 +263,14 @@
 				document.getElementById('image-sort-asc').classList.toggle('active', !uploadImageListSortDesc);
 				document.getElementById('image-sort-desc').classList.toggle('active', uploadImageListSortDesc);
 				renderImageListGrid();
+			}
+
+			function getImageFilenameDateTime(filename) {
+				var match = filename.slice(5).match(
+					/(20\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01]))(?:\D*([01]\d|2[0-3])\D*([0-5]\d)\D*([0-5]\d))?/
+				);
+				if (!match) return null;
+				return match[1] + (match[2] || '00') + (match[3] || '00') + (match[4] || '00');
 			}
 
 			function openImageLightbox(src, filename) {
@@ -302,7 +310,11 @@
 				var errEl = document.getElementById('image-list-error');
 				errEl.style.display = 'none';
 				var names = uploadImageListCachedNames.slice().sort(function (a, b) {
-					var c = a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+					var aDateTime = getImageFilenameDateTime(a);
+					var bDateTime = getImageFilenameDateTime(b);
+					if (aDateTime === null) return bDateTime === null ? 0 : 1;
+					if (bDateTime === null) return -1;
+					var c = aDateTime.localeCompare(bDateTime);
 					return uploadImageListSortDesc ? -c : c;
 				});
 				grid.innerHTML = '';
