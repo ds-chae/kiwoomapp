@@ -1,3 +1,5 @@
+from urllib import response
+
 import requests
 import json
 import pandas as pd
@@ -87,8 +89,17 @@ def get_bun_price(stk_cd, stk_nm, chart ):
 	# [2] -> R, [3] -> O
 
 
+ka10080_error = None
+
+def get_ka10080_error():
+	global ka10080_error
+	return ka10080_error
+
+
 # 주식분봉차트조회요청
 def fn_ka10080(token, data, cont_yn='N', next_key=''):
+	global ka10080_error
+
 	# 1. 요청할 API URL
 	#host = 'https://mockapi.kiwoom.com' # 모의투자
 	host = 'https://api.kiwoom.com' # 실전투자
@@ -106,15 +117,21 @@ def fn_ka10080(token, data, cont_yn='N', next_key=''):
 
 	# 3. http POST 요청
 	response = requests.post(url, headers=headers, json=data)
-
+	resp_json = response.json()
 	dump_chart = False
 	if dump_chart:
 		# 4. 응답 상태 코드와 데이터 출력
 		print('Code:', response.status_code)
 		print('Header:', json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4, ensure_ascii=False))
-		print('Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON 응답을 파싱하여 출력
-
-	return response.json()['stk_min_pole_chart_qry']
+		print('Body:', json.dumps(resp_json, indent=4, ensure_ascii=False))  # JSON 응답을 파싱하여 출력
+	if 'stk_min_pole_chart_qry' in resp_json:
+		return resp_json['stk_min_pole_chart_qry']
+	else:
+		print('Code:', response.status_code)
+		print('Header:', json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4, ensure_ascii=False))
+		print('Body:', json.dumps(resp_json, indent=4, ensure_ascii=False))  # JSON 응답을 파싱하여 출력
+		ka10080_error = resp_json
+		return None
 
 
 def get_bun_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm):

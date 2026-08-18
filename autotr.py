@@ -23,7 +23,7 @@ import socket
 import uuid
 
 
-from ka10080 import get_bun_chart, get_price_index
+from ka10080 import get_bun_chart, get_price_index, get_ka10080_error
 from ka10081 import get_day_chart
 from ka10100 import get_stockinfo, get_pl
 
@@ -31,7 +31,10 @@ from ka10100 import get_stockinfo, get_pl
 def get_bun_chart_throttled(MY_ACCESS_TOKEN, stk_cd, stk_nm):
     """Call get_bun_chart then sleep 0.5s to throttle requests."""
     bun = get_bun_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm)
-    time_module.sleep(0.5)
+    if bun is None:
+        log_print('', stk_cd, get_ka10080_error())
+    else:
+        time_module.sleep(1)
     return bun
 
 
@@ -586,7 +589,7 @@ def cancel_different_sell_order(now, ACCT, stk_cd, stk_nm, new_price, skip_price
     Quantity is not compared: remaining ord_qty shrinks as fills succeed.
     skip_prices: set of prices to leave alone (active split sells).
     """
-    global stored_miche_data
+    global stored_miche_data, skip_delay_loop
     cancel_count = 0
     if skip_prices is None:
         skip_prices = set()
@@ -608,6 +611,7 @@ def cancel_different_sell_order(now, ACCT, stk_cd, stk_nm, new_price, skip_price
                 cancel_count += 1
     if cancel_count != 0:
         log_print(ACCT, stk_cd, 'cancel_different_sell_order np={} count={}.'.format(new_price, cancel_count))
+    skip_delay_loop = True
     return cancel_count
 
 
@@ -1799,7 +1803,9 @@ def fill_charts_for_CL(MY_ACCESS_TOKEN):
                 continue
             stk_nm = stock['stock_name']
             with bun_charts_lock:
-                bun_charts[stk_cd] = get_bun_chart_throttled(MY_ACCESS_TOKEN, stk_cd, stk_nm)
+            bc = get_bun_chart_throttled(MY_ACCESS_TOKEN, stk_cd, stk_nm)
+            if bc:
+                bun_charts[stk_cd] = bc 
     except Exception as ex:
         print('806', ex)
         exit(0)
@@ -2076,20 +2082,28 @@ def cleanup_old_interested_stocks():
 background_thread = None
 thread_stop_event = threading.Event()
 
+skip_delay_loop = False
+
 def background_timer_thread():
     """Background thread that calls periodic_timer_handler every 1 second"""
-    global thread_stop_event, now
+    global thread_stop_event, now, skip_delay_loop
     while not thread_stop_event.is_set():
         try:
             periodic_timer_handler()
         except Exception as e:
             log_print('', '000000', f"Error in periodic_timer_handler: {e}")
 
-        # Sleep for 1 second, but check stop event periodically
-        for _ in range(10):  # Check every 0.1 seconds for 1 second total
-            if thread_stop_event.is_set():
-                break
-            time_module.sleep(0.1)
+        if skip_delay_loop:
+            # do not delay 1 second when next operation is needed immediately
+            skip_delay_loop = False
+        else:
+            # Sleep for 1 second, but check stop event periodically
+            for _ in range(10):  # Check every 0.1 seconds for 1 second total
+                if thread_stop_event.is_set():
+                    break
+                if skip_delay_loop :
+                    break
+                time_module.sleep(0.1)
 
 bun_charts_thread = None
 bun_charts_thread_stop_event = threading.Event()
@@ -2103,7 +2117,7 @@ def query_bun_charts(MY_ACCESS_TOKEN, cl_stocks):
     for stk_cd, stk_nm in cl_stocks:
         bun_times[stk_cd] = bun_now
     # Query minutes charts in parallel (limit to 4 simultaneous threads)
-    max_workers = 4 # min(4, len(cl_stocks))
+    max_workers = 3 # min(4, len(cl_stocks))
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {}
         for stk_cd, stk_nm in cl_stocks:
@@ -2116,7 +2130,8 @@ def query_bun_charts(MY_ACCESS_TOKEN, cl_stocks):
             stk_cd = futures[future]
             try:
                 bun_chart = future.result()
-                updated_charts[stk_cd] = bun_chart
+                if bun_chart:
+                    updated_charts[stk_cd] = bun_chart
             except Exception as e:
                 log_print('', '00000', f"Error getting bun_chart for {stk_cd}: {e}")
                 print(f"{now} Error getting bun_chart for {stk_cd}: {e}")
@@ -2908,7 +2923,7 @@ stex_map = {"1": "KRX", "2": "NXT", "3": "SOR"}
 @app.post("/api/cancel-order")
 @app.post("/stock/api/cancel-order")
 async def cancel_order_api(request: dict, proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
-    global key_list, stex_map, stored_miche_data
+    global key_list, stex_map, stored_miche_data, skip_delay_loop
     """API endpoint to cancel an order"""
     # Check authentication
     if not token or not verify_token(token):
@@ -2988,6 +3003,7 @@ async def cancel_order_api(request: dict, proxy_path: str = "", token: str = Coo
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+    skip_delay_loop = True
 
 # 손절(CUT): 주당 손실(매수가 대비 현재가 + 매도 수수료 0.23%) 계산에 사용
 CUT_TRADING_FEE_RATE = 0.0023
