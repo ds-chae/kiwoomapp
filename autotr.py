@@ -6,6 +6,7 @@ import json
 import os
 import mimetypes
 from datetime import datetime, timedelta, time, date
+from fn_kt00001 import get_yesu_list
 
 # load_dotenv is not required, as it is called in au1001
 # from dotenv import load_dotenv
@@ -195,6 +196,9 @@ def add_order_count(ACCT, stk_cd, amnt):
 prev_hour = None
 # Global storage for jango data (updated by timer handler)
 stored_jango_data = {}
+
+# Last fetched 예수금 per account: {ACCT: {entr, d1_entra, d2_entra, text}}
+yesu_by_account = {}
 
 # Global storage for previous jango data (simplified format: {stock_code: amount})
 previous_jango_data_simplified = {}
@@ -2871,6 +2875,53 @@ async def get_accounts_api(proxy_path: str = "", token: str = Cookie(None, alias
         return {"status": "success", "data": accounts}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+def _parse_yesu_amount(raw):
+    s = str(raw or '0').strip().replace(',', '')
+    try:
+        return int(float(s))
+    except (ValueError, TypeError):
+        return 0
+
+
+def _refresh_yesu_by_account():
+    global yesu_by_account
+    result = {}
+    yesu_list = get_yesu_list()
+    for y in yesu_list:
+        if not isinstance(y, dict):
+            continue
+        acct = str(y.get('ACCT') or '').strip()
+        if not acct:
+            continue
+        entr = _parse_yesu_amount(y.get('entr'))
+        d1 = _parse_yesu_amount(y.get('d1_entra'))
+        d2 = _parse_yesu_amount(y.get('d2_entra'))
+        result[acct] = {
+            'entr': entr,
+            'd1_entra': d1,
+            'd2_entra': d2,
+            'text': f'Y={entr:,}, D+1={d1:,}, D+2={d2:,}',
+        }
+    yesu_by_account = result
+    return result
+
+
+@app.get("/api/yesu")
+@app.get("/stock/api/yesu")
+async def get_yesu_api(proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+    try:
+        data = await asyncio.to_thread(_refresh_yesu_by_account)
+        return {"status": "success", "data": data}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 
 @app.get("/api/account-data")
 @app.get("/stock/api/account-data")

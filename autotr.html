@@ -363,6 +363,34 @@
 				margin: 0;
 				font-size: 1.2em;
 			}
+			.account-header-left {
+				display: flex;
+				align-items: center;
+				gap: 10px;
+				flex-wrap: wrap;
+			}
+			.btn-yesu {
+				background: rgba(255, 255, 255, 0.2);
+				color: white;
+				border: 1px solid rgba(255, 255, 255, 0.3);
+				padding: 6px 12px;
+				border-radius: 4px;
+				cursor: pointer;
+				font-size: 13px;
+				font-weight: 600;
+			}
+			.btn-yesu:hover {
+				background: rgba(255, 255, 255, 0.3);
+			}
+			.btn-yesu:disabled {
+				opacity: 0.6;
+				cursor: default;
+			}
+			.yesu-display {
+				font-size: 14px;
+				font-weight: 500;
+				white-space: nowrap;
+			}
 			.account-auto-sell-btn {
 				background: rgba(255, 255, 255, 0.2);
 				color: white;
@@ -2301,7 +2329,11 @@
 								
 								group.innerHTML = `
 									<div class="account-group-header">
-										<h2 class="account-header-text">Account: ${acctNo}</h2>
+										<div class="account-header-left">
+											<h2 class="account-header-text">Account: ${acctNo}</h2>
+											<button type="button" class="btn-yesu" onclick="loadYesu('${acctNo}')">예수금</button>
+											<span class="yesu-display" id="yesu-display-${acctNo}"></span>
+										</div>
 										<div class="auto-sell-control">
 											<select id="select-auto-sell-${acctNo}" class="auto-sell-select">
 												${options}
@@ -2333,6 +2365,11 @@
 								} else {
 									tableContainer.appendChild(group);
 								}
+							}
+
+							if (yesuByAccount[acctNo]) {
+								const yesuEl = group.querySelector('#yesu-display-' + acctNo);
+								if (yesuEl) yesuEl.textContent = yesuByAccount[acctNo].text || '';
 							}
 							
 							// Update Select Box if not focused
@@ -2496,6 +2533,50 @@
 			}
 		}
 		
+		var yesuByAccount = {};
+
+		function applyYesuDisplays(data) {
+			yesuByAccount = data || {};
+			Object.keys(yesuByAccount).forEach(function (acct) {
+				var el = document.getElementById('yesu-display-' + acct);
+				if (el) el.textContent = yesuByAccount[acct].text || '';
+			});
+		}
+
+		function loadYesu(account) {
+			var buttons = document.querySelectorAll('.btn-yesu');
+			buttons.forEach(function (btn) { btn.disabled = true; });
+			fetch('./api/yesu', { credentials: 'same-origin' })
+			.then(async (response) => {
+				let data = {};
+				try {
+					data = await response.json();
+				} catch (e) {
+					data = {};
+				}
+				if (response.status === 401) {
+					const loginPath = window.location.pathname.includes('/stock') ? '/stock/login' : '/login';
+					window.location.href = loginPath;
+					return { status: 'error', message: 'Not authenticated' };
+				}
+				return data;
+			})
+			.then(result => {
+				if (result.status === 'success') {
+					applyYesuDisplays(result.data);
+				} else {
+					showMessage('Error: ' + (result.message || 'Failed to load 예수금'), 'error');
+				}
+			})
+			.catch(error => {
+				console.error('Error loading 예수금:', error);
+				showMessage('Error loading 예수금: ' + error.message, 'error');
+			})
+			.finally(() => {
+				buttons.forEach(function (btn) { btn.disabled = false; });
+			});
+		}
+
 		function applyAccountAutoSell(account) {
 			const select = document.getElementById('select-auto-sell-' + account);
 			if (!select) return;
