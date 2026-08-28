@@ -3,7 +3,7 @@
 	<head>
 		<meta charset="UTF-8">
 		<meta name="viewport" content="width=device-width, initial-scale=1.0">
-		<title>Account Holdings - {IP_SUFFIX}</title>
+		<title>잔고 - {IP_SUFFIX}</title>
 		<style>
 			* {
 				margin: 0;
@@ -418,6 +418,18 @@
 			}
 			.account-group table thead {
 				background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+			}
+			.jango-section-title {
+				color: #333;
+				margin-bottom: 8px;
+				font-size: 1.5em;
+			}
+			.account-group table th:nth-child(5),
+			.account-group table td:nth-child(5),
+			.account-group table th:nth-child(6),
+			.account-group table td:nth-child(6) {
+				text-align: right;
+				white-space: nowrap;
 			}
 			.miche-section {
 				margin-top: 20px;
@@ -1472,9 +1484,19 @@
 					white-space: nowrap;
 					overflow: hidden;
 				}
-				/* Fix PRESET PRC/RATE column width to 10 digits in account holdings section (6th column) in mobile */
+				.account-group table th:nth-child(5),
+				.account-group table td:nth-child(5),
 				.account-group table th:nth-child(6),
 				.account-group table td:nth-child(6) {
+					width: 110px;
+					max-width: 110px;
+					min-width: 110px;
+					white-space: nowrap;
+					overflow: hidden;
+				}
+				/* Fix PRESET PRC/RATE column width to 10 digits in account holdings section (8th column) in mobile */
+				.account-group table th:nth-child(8),
+				.account-group table td:nth-child(8) {
 					width: 100px;
 					max-width: 100px;
 					min-width: 100px;
@@ -1598,6 +1620,7 @@
 					</div>
 				</div>
 			</div>
+			<h2 class="jango-section-title">잔고</h2>
 			<div id="account-tabs-strip" class="account-tabs-strip" style="display: none;" aria-label="Select account">
 				<div class="account-tabs-inner">
 					<span class="account-tabs-title">Account</span>
@@ -1836,6 +1859,8 @@
 					<td>${item.stock_name}</td>
 					<td>${item.tradeable_qty} / ${rmndQty}</td>
 					<td>${item.avg_buy_price}</td>
+					<td>${item.pur_amt || '0'}</td>
+					<td>${item.evlt_amt || '0'}</td>
 					<td class="${profitClass}">${formatProfitRateCellHtml(item)}</td>
 					<td>${item.preset_sell_price}</td>
 				</tr>
@@ -1947,7 +1972,7 @@
 			const editArea = document.createElement('tr');
 			editArea.className = 'sell-price-edit-area show';
 			editArea.setAttribute('data-edit-for', stockCode);
-			editArea.innerHTML = '<td colspan="6"><div class="sell-price-edit-form" style="padding:8px;color:#666;">Loading sell settings...</div></td>';
+			editArea.innerHTML = '<td colspan="8"><div class="sell-price-edit-form" style="padding:8px;color:#666;">Loading sell settings...</div></td>';
 			rowElement.parentNode.insertBefore(editArea, rowElement.nextSibling);
 
 			let sellPriceFromAPI = '';
@@ -1976,7 +2001,7 @@
 						
 						// Create edit form
 						editArea.innerHTML = `
-							<td colspan="6">
+							<td colspan="8">
 								<div class="sell-price-edit-form sell-price-edit-form--with-cut">
 									<div class="sell-price-edit-fields">
 									<input type="hidden" id="edit-yyyymmdd-${stockCode}" value="${ymdVal}">
@@ -2032,7 +2057,7 @@
 						console.error('Error fetching sellgap and sellrate:', error);
 						const fallbackSellPrice = (sellPrice && sellPrice !== '-') ? sellPrice : '';
 						editArea.innerHTML = `
-							<td colspan="6">
+							<td colspan="8">
 								<div class="sell-price-edit-form sell-price-edit-form--with-cut">
 									<div class="sell-price-edit-fields">
 									<input type="hidden" id="edit-yyyymmdd-${stockCode}" value="">
@@ -2348,6 +2373,8 @@
 												<th>Name</th>
 												<th>Qty</th>
 												<th>AVGCUR PRC</th>
+												<th>매수 금액</th>
+												<th>평가 금액</th>
 												<th>Profit Rate / P&amp;L</th>
 												<th>PRESET PRC/RATE</th>
 											</tr>
@@ -2416,11 +2443,15 @@
 								}
 								
 								const profitCellHtml = formatProfitRateCellHtml(item);
+								const purAmt = item.pur_amt || '0';
+								const evltAmt = item.evlt_amt || '0';
 								const cellContent = `
 									<td><strong>${item.stock_code}</strong></td>
 									<td>${item.stock_name}</td>
 									<td>${item.tradeable_qty} / ${rmndQty}</td>
 									<td>${item.avg_buy_price}</td>
+									<td>${purAmt}</td>
+									<td>${evltAmt}</td>
 									<td class="${profitClass}">${profitCellHtml}</td>
 									<td>${presetPrcRate}</td>
 								`;
@@ -2435,17 +2466,19 @@
 									// Update existing row if content changed
 									// Instead of replacing innerHTML, update cells individually to preserve edit area
 									const cells = row.querySelectorAll('td');
-									if (cells.length >= 6) {
+									if (cells.length >= 8) {
 										// Update cells individually
 										if (cells[0].innerHTML !== `<strong>${item.stock_code}</strong>`) cells[0].innerHTML = `<strong>${item.stock_code}</strong>`;
 										if (cells[1].textContent !== item.stock_name) cells[1].textContent = item.stock_name;
 										if (cells[2].textContent !== `${item.tradeable_qty} / ${rmndQty}`) cells[2].textContent = `${item.tradeable_qty} / ${rmndQty}`;
 										if (cells[3].textContent !== item.avg_buy_price) cells[3].textContent = item.avg_buy_price;
-										if (cells[4].className !== profitClass || cells[4].innerHTML !== profitCellHtml) {
-											cells[4].className = profitClass;
-											cells[4].innerHTML = profitCellHtml;
+										if (cells[4].textContent !== purAmt) cells[4].textContent = purAmt;
+										if (cells[5].textContent !== evltAmt) cells[5].textContent = evltAmt;
+										if (cells[6].className !== profitClass || cells[6].innerHTML !== profitCellHtml) {
+											cells[6].className = profitClass;
+											cells[6].innerHTML = profitCellHtml;
 										}
-										if (cells[5].textContent !== presetPrcRate) cells[5].textContent = presetPrcRate;
+										if (cells[7].textContent !== presetPrcRate) cells[7].textContent = presetPrcRate;
 									} else {
 										// Fallback: if cell count doesn't match, update innerHTML
 										row.innerHTML = cellContent;

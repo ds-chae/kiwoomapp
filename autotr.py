@@ -2515,6 +2515,15 @@ def format_account_data():
                 except (ValueError, TypeError):
                     evltv_prft_int = 0
                 profit_loss_str = f"₩{evltv_prft_int:+,}"
+
+                try:
+                    pur_amt_int = int(stock.get('pur_amt', '0') or 0)
+                except (ValueError, TypeError):
+                    pur_amt_int = 0
+                try:
+                    evlt_amt_int = int(stock.get('evlt_amt', '0') or 0)
+                except (ValueError, TypeError):
+                    evlt_amt_int = 0
                 
                 # Get preset sell price and rate from sell_prices dictionary
                 price_part = '-'
@@ -2564,6 +2573,8 @@ def format_account_data():
                         'tradeable_qty': trde_able_qty,
                         'rmnd_qty': rmnd_qty,
                         'avg_buy_price': avg_buy_price_display,
+                        'pur_amt': f"{pur_amt_int:,}",
+                        'evlt_amt': f"{evlt_amt_int:,}",
                         'profit_rate': f"{prft_rt_float:+.2f}%",
                         'profit_loss': profit_loss_str,
                         'preset_prc_rate': preset_prc_rate
