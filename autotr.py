@@ -715,7 +715,7 @@ def calculate_sell_price(ACCT, MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk
             log_print('', stk_cd, f'calculate_sell_price return cl_price {cl_price}')
             return cl_price
 
-    log_print('', stk_cd, f'calculate_sell_price at last returns 0')
+    log_print('', stk_cd, f'calculate_sell_price no price, no rate, no sellgap returns 0')
     return 0
 
 
