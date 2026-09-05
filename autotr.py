@@ -932,9 +932,9 @@ def call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_co
     resolved_market, trde_tp = _resolve_sell_market_and_trde_tp(market, stk_cd)
     if resolved_market is None:
         if market == 'NXT':
-            log_print(ACCT, stk_cd, f' in call_sell_order skip {stk_nm}, not a NXT stock, market={market}')
-        elif market == 'AFT':
-            log_print(ACCT, stk_cd, f' in call_sell_order market={market}, exceeded upper limit return')
+            log_print(ACCT, stk_cd, f' in call_sell_order skip {stk_nm}, not a NXT stock, market=NXT')
+        elif market == 'AFT':dschae
+            log_print(ACCT, stk_cd, f' in call_sell_order market=AFT, exceeded upper limit return')
         else:
             log_print(ACCT, stk_cd, f'{stk_nm} Market is closed for this stock.')
         return
@@ -1030,7 +1030,7 @@ def test_ret_status(sell_buy, stk_cd, stk_nm, ret_status, ord_prc):
             print(rmsg)
             wait_hour_change = True
         elif code == '505217':
-            #  장 종료되었습니다.
+            #  장 종료되었습니다.  dl
             market_closed[stk_cd] = True
         elif code == '508749': # 주문단가가 시간외단일가 상한가를 초과합니다.)', 'return_code': 20}
             after_exceeded[stk_cd] = True # 장후 시간외 상한가 초과
