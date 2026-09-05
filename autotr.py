@@ -933,7 +933,7 @@ def call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_co
     if resolved_market is None:
         if market == 'NXT':
             log_print(ACCT, stk_cd, f' in call_sell_order skip {stk_nm}, not a NXT stock, market=NXT')
-        elif market == 'AFT':dschae
+        elif market == 'AFT':
             log_print(ACCT, stk_cd, f' in call_sell_order market=AFT, exceeded upper limit return')
         else:
             log_print(ACCT, stk_cd, f'{stk_nm} Market is closed for this stock.')
@@ -1030,8 +1030,9 @@ def test_ret_status(sell_buy, stk_cd, stk_nm, ret_status, ord_prc):
             print(rmsg)
             wait_hour_change = True
         elif code == '505217':
-            #  장 종료되었습니다.  dl
-            market_closed[stk_cd] = True
+            #  장 종료되었습니다. 이게 15:30에 발생하면 문제가 된다. 아직 시간외 주문이 남아있는데도, 이런 오류를 보내온다.
+            if now.time() > aft_fin_time_1800 :  # 시간외까지 끝난 후에야 market_closed를 설정한다.
+                market_closed[stk_cd] = True
         elif code == '508749': # 주문단가가 시간외단일가 상한가를 초과합니다.)', 'return_code': 20}
             after_exceeded[stk_cd] = True # 장후 시간외 상한가 초과
 
@@ -1267,6 +1268,7 @@ nxt_end_time = time(8, 49)  # 07:00
 krx_start_time = time(8,52)
 krx_end_time_1531 = time(15,31)
 krx_aft_time_1601 = time(16, 1)
+aft_fin_time_1800 = time(18, 0)
 nxt_fin_time_2000 = time(20, 0)
 day_change_time = time(23, 59)
 
