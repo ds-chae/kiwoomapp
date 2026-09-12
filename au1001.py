@@ -69,47 +69,40 @@ def decrease_one_hour(dtstr):
 def get_token(ACCT):
     global token_list
 
-    nowstr = datetime.now().strftime('%Y%m%d%H%M%S')
     with token_lock:
-        cached = token_list.get(ACCT) or {}
-        token = cached.get('token')
-        expires_dt = cached.get('expires_dt') or '00000000000000'
-        # Refresh 1 hour before the real expires_dt from the API.
-        try:
-            refresh_at = decrease_one_hour(expires_dt)
-        except (TypeError, ValueError):
-            refresh_at = '00000000000000'
-        if token and refresh_at > nowstr:
-            return token
+        if ACCT in token_list:
+            return token_list.get(ACCT)
+        token_list[ACCT] = reget_token(ACCT)
+        return token_list[ACCT]
 
-        j = None
-        try:
-            keys = get_key_list()[ACCT]
-            params = {
-                'grant_type': 'client_credentials',
-                'appkey': keys['AK'],
-                'secretkey': keys['SK'],
-            }
-            j = fn_au10001(data=params)
-            print('Refreshing token===')
-            print(str(j))
-            new_token = j.get('token') if isinstance(j, dict) else None
-            new_expires = str(j.get('expires_dt', '')).strip() if isinstance(j, dict) else ''
-            if new_token and new_expires:
-                decrease_one_hour(new_expires)
-                token_list[ACCT] = {
-                    'token': new_token,
-                    'expires_dt': new_expires,
-                }
-                return new_token
-        except Exception as ex:
-            print(f'For {ACCT} token refresh failed: {ex}')
 
-        if token and expires_dt > nowstr:
-            print(f'For {ACCT} using cached token after refresh failure')
-            return token
-        print(f'For {ACCT} no token in response {str(j)}')
-        return ''
+def refresh_tokens():
+    global token_list
+    klist = get_key_list()
+    for k in klist:
+        keys = klist[k]
+        token = reget_token(keys)
+        token_list[keys['ACCT']] = token
+
+
+def reget_token(keys):
+    ACCT = keys['ACCT']
+    try:
+        params = {
+            'grant_type': 'client_credentials',
+            'appkey': keys['AK'],
+            'secretkey': keys['SK'],
+        }
+        j = fn_au10001(data=params)
+        print('Refreshing token===')
+        print(str(j))
+        new_token = j.get('token') if isinstance(j, dict) else None
+        if new_token :
+            return new_token
+    except Exception as ex:
+        print(f'For {ACCT} token refresh failed: {ex}')
+
+    return None
 
 
 def get_one_token():

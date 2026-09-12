@@ -10,7 +10,7 @@ from fn_kt00001 import get_yesu_list
 
 # load_dotenv is not required, as it is called in au1001
 # from dotenv import load_dotenv
-from au1001 import get_token, get_key_list, get_one_token, os_getenv
+from au1001 import get_token, get_key_list, get_one_token, os_getenv, refresh_tokens
 import time as time_module
 import threading
 import asyncio
@@ -29,14 +29,6 @@ from ka10081 import get_day_chart
 from ka10100 import get_stockinfo, get_pl
 
 
-def get_bun_chart_throttled(MY_ACCESS_TOKEN, stk_cd, stk_nm):
-    """Call get_bun_chart then sleep 0.5s to throttle requests."""
-    bun = get_bun_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm)
-    if bun is None:
-        log_print('', stk_cd, get_ka10080_error())
-    else:
-        time_module.sleep(1)
-    return bun
 
 
 def get_day_chart_throttled(MY_ACCESS_TOKEN, stk_cd, stk_nm):
@@ -838,7 +830,7 @@ def _cancel_all_sell_orders_for_stock(stk_cd: str, skip_prices=None):
 
 def _resolve_sell_market_and_trde_tp(market, stk_cd):
     """Return (market, trde_tp) or (None, None) if this market should be skipped."""
-    global market_closed, after_exceeded
+    global market_closed
     trde_tp = '0'
     nxt_yn = nxt_tradable.get(stk_cd, True)
     if market == 'NXT':
@@ -848,10 +840,7 @@ def _resolve_sell_market_and_trde_tp(market, stk_cd):
         if nxt_tradable.get(stk_cd, False):
             market = 'NXT'
         else:
-            if after_exceeded.get(stk_cd, False):
-                return None, None
             market = 'KRX'
-            trde_tp = '62'
     if market == 'KRX' and market_closed.get(stk_cd, False):
         return None, None
     if market == 'NXT' and market_closed.get(stk_cd, False):
@@ -1033,8 +1022,8 @@ def test_ret_status(sell_buy, stk_cd, stk_nm, ret_status, ord_prc):
             #  장 종료되었습니다. 이게 15:30에 발생하면 문제가 된다. 아직 시간외 주문이 남아있는데도, 이런 오류를 보내온다.
             if now.time() > aft_fin_time_1800 :  # 시간외까지 끝난 후에야 market_closed를 설정한다.
                 market_closed[stk_cd] = True
-        elif code == '508749': # 주문단가가 시간외단일가 상한가를 초과합니다.)', 'return_code': 20}
-            after_exceeded[stk_cd] = True # 장후 시간외 상한가 초과
+        #elif code == '508749': # 주문단가가 시간외단일가 상한가를 초과합니다.)', 'return_code': 20}
+        #    after_exceeded[stk_cd] = True # 장후 시간외 상한가 초과
 
         print(now, rcde)
     return rcde
@@ -1197,7 +1186,8 @@ oso 미체결 LIST    N
 
 # 매도를 무조건 취소한다.
 def cancel_krx_sell(now):
-    global interested_stocks
+    global interested_stocks, cancelled_buys
+    cancelled_buys = []
     miche = get_miche()
     for m in miche.values():
         acct = m.get('ACCT', '')
@@ -1211,6 +1201,8 @@ def cancel_krx_sell(now):
                     if stk_cd in interested_stocks : # 관리 대상 종목인지 검사한다.
                         log_print(acct, stk_cd, 'cancel sell order {} {}'.format(o['io_tp_nm'], ord_no))
                         cancel_order_main(acct, now, m['TOKEN'], stex, ord_no, stk_cd)
+                elif if o['io_tp_nm'] == '+-매도':
+
         pass
 
 
@@ -1277,7 +1269,6 @@ nxt_cancelled = False
 krx_after_state = 0
 nxt_tradable = {}
 market_closed = {}
-after_exceeded = {}  # 장후 시간외 상한가 초과
 
 
 def cur_date():
@@ -1589,7 +1580,7 @@ def clear_for_new_day():
     global upper_limits, today_yyyymmdd
     global bun_charts_lock, bun_charts
     global daily_charts_lock, daily_charts, last_logs
-    global after_exceeded, old_sel_price
+    global old_sel_price
 
     today_yyyymmdd = now.strftime("%Y%m%d")
     print('{} {} Setting new day=True'.format(cur_date(), now))
@@ -1609,9 +1600,10 @@ def clear_for_new_day():
     last_logs = {}
     log_print('', '000000', 'cleared last_logs')
     old_sel_price = {}
-    after_exceeded = {}  # 장후 시간외 상한가 초과
-    nxt_tradable = {}
     _reset_split_sell_state_for_new_day()
+    refresh_tokens()
+    log_print('', '000000', 'refreshed tokens')
+
 
 def set_new_day_true():
     global new_day
@@ -2120,27 +2112,20 @@ def query_bun_charts(MY_ACCESS_TOKEN, cl_stocks):
     if not cl_stocks:
         return
     bun_now = datetime.now()
+    # Collect results and update bun_charts dict
+    updated_charts = {}
     for stk_cd, stk_nm in cl_stocks:
         bun_times[stk_cd] = bun_now
-    # Query minutes charts in parallel (limit to 4 simultaneous threads)
-    max_workers = 3 # min(4, len(cl_stocks))
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {}
-        for stk_cd, stk_nm in cl_stocks:
-            future = executor.submit(get_bun_chart_throttled, MY_ACCESS_TOKEN, stk_cd, stk_nm)
-            futures[future] = stk_cd
-
-        # Collect results and update bun_charts dict
-        updated_charts = {}
-        for future in as_completed(futures):
-            stk_cd = futures[future]
-            try:
-                bun_chart = future.result()
-                if bun_chart:
-                    updated_charts[stk_cd] = bun_chart
-            except Exception as e:
-                log_print('', '00000', f"Error getting bun_chart for {stk_cd}: {e}")
-                print(f"{now} Error getting bun_chart for {stk_cd}: {e}")
+        """Call get_bun_chart then sleep 0.5s to throttle requests."""
+        resp_json = get_bun_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm)
+        if 'stk_min_pole_chart_qry' in resp_json:
+            bun = resp_json['stk_min_pole_chart_qry']
+            updated_charts[stk_cd] = bun
+            time_module.sleep(1)
+        else:
+            return_msg = resp_json['return_msg']
+            return_code = int(resp_json['return_code'])
+            log_print('', stk_cd, f"Error getting bun_chart for {return_msg}")
 
     with bun_charts_lock:
         bun_charts.update(updated_charts)

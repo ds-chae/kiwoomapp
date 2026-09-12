@@ -124,14 +124,7 @@ def fn_ka10080(token, data, cont_yn='N', next_key=''):
 		print('Code:', response.status_code)
 		print('Header:', json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4, ensure_ascii=False))
 		print('Body:', json.dumps(resp_json, indent=4, ensure_ascii=False))  # JSON 응답을 파싱하여 출력
-	if 'stk_min_pole_chart_qry' in resp_json:
-		return resp_json['stk_min_pole_chart_qry']
-	else:
-		print('Code:', response.status_code)
-		print('Header:', json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4, ensure_ascii=False))
-		print('Body:', json.dumps(resp_json, indent=4, ensure_ascii=False))  # JSON 응답을 파싱하여 출력
-		ka10080_error = resp_json
-		return None
+	return resp_json
 
 
 def get_bun_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm):
@@ -160,11 +153,13 @@ if __name__ == '__main__':
 	}
 
 	# 3. API 실행
-	bun_chart = fn_ka10080(token=MY_ACCESS_TOKEN, data=params)
-	print(bun_chart)
+	resp_json = fn_ka10080(token=MY_ACCESS_TOKEN, data=params)
+	print(resp_json)
+	if 'stk_min_pole_chart_qry' in resp_json:
+		bun_chart = resp_json['stk_min_pole_chart_qry']
 
-	bun_price = get_bun_price(stk_cd, stk_nm, bun_chart)
-	print(bun_price)
+		bun_price = get_bun_price(stk_cd, stk_nm, bun_chart)
+		print(bun_price)
 
 	# next-key, cont-yn 값이 있을 경우
 	# fn_ka10080(token=MY_ACCESS_TOKEN, data=params, cont_yn='Y', next_key='nextkey..')
