@@ -1197,15 +1197,15 @@ def cancel_all_orders(now):
         if 'oso' in m:
             oso = m['oso'] # oso가 각 account의 미체결 정보
             for o in oso:
-                if o['io_tp_nm'] == '-매도':
-                    stex = o['stex_tp_txt']
-                    ord_no = o['ord_no']
-                    stk_cd = o['stk_cd']
-                    if stk_cd in interested_stocks : # 관리 대상 종목인지 검사한다.
+                if stk_cd in interested_stocks:  # 관리 대상 종목인지 검사한다.
+                    if o['io_tp_nm'] == '+매수':
+                        buys.append[o]
+                    if o['io_tp_nm'] == '-매도' or o['io_tp_nm'] == '+매수' :
+                        stex = o['stex_tp_txt']
+                        ord_no = o['ord_no']
+                        stk_cd = o['stk_cd']
                         log_print(acct, stk_cd, 'cancel sell order {} {}'.format(o['io_tp_nm'], ord_no))
                         cancel_order_main(acct, now, m['TOKEN'], stex, ord_no, stk_cd)
-                elif o['io_tp_nm'] == '+매수':
-                    buys.append[o]
         cancelled_buys[acct] = buys
         pass
 
@@ -1592,7 +1592,10 @@ def resume_cancelled_buy():
             ord_qty = o['ord_qty']
             stex = 'SOR'
             trde_tp = '0'
+            log_print(acct, stk_cd,
+                f'Reissue order for cancelled buy {stk_nm} prc={ord_uv} qty={ord_qty}, trde_tp={trde_tp}, stex={stex}')
             issue_buy_order(stk_nm, stk_cd, ord_uv, ord_qty, stex, trde_tp, acct)
+    cancelled_buys.clear()
     '''
     - acnt_no   계좌번호    String  N   20  
 - ord_no    주문번호    String  N   20  
