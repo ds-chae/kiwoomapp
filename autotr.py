@@ -49,6 +49,8 @@ INTERESTED_STOCKS_FILE = 'interested_stocks.json'
 interested_stocks = {}
 interested_stocks_lock = threading.RLock()
 
+cancelled_buys = {}
+
 # Sell-exclude list: stocks that must NOT be auto-sold ({stock_code: stock_name})
 SELL_EXCLUDE_FILE = 'sell_exclude.json'
 sell_exclude = {}
@@ -1185,14 +1187,15 @@ oso 미체결 LIST    N
 """
 
 # 매도를 무조건 취소한다.
-def cancel_krx_sell(now):
+def cancel_all_orders(now):
     global interested_stocks, cancelled_buys
-    cancelled_buys = []
+    cancelled_buys = {}
     miche = get_miche()
-    for m in miche.values():
+    for m in miche.values(): # miche는 여러 account 것이다. 한 번에 한 account가 나온다.
         acct = m.get('ACCT', '')
+        buys = []
         if 'oso' in m:
-            oso = m['oso']
+            oso = m['oso'] # oso가 각 account의 미체결 정보
             for o in oso:
                 if o['io_tp_nm'] == '-매도':
                     stex = o['stex_tp_txt']
@@ -1201,8 +1204,9 @@ def cancel_krx_sell(now):
                     if stk_cd in interested_stocks : # 관리 대상 종목인지 검사한다.
                         log_print(acct, stk_cd, 'cancel sell order {} {}'.format(o['io_tp_nm'], ord_no))
                         cancel_order_main(acct, now, m['TOKEN'], stex, ord_no, stk_cd)
-                elif if o['io_tp_nm'] == '+-매도':
-
+                elif o['io_tp_nm'] == '+매수':
+                    buys.append[o]
+        cancelled_buys[acct] = buys
         pass
 
 
@@ -1544,18 +1548,19 @@ def daily_work():
         current_status = 'NXT->KRX'
         if not nxt_cancelled:
             nxt_cancelled = True
-            log_print('', '000000', '1225 calling cancel_krx_sell between(nxt_end_time, krx_start_time)')
-            cancel_krx_sell(now)
+            log_print('', '000000', '1225 calling cancel_all_orders between(nxt_end_time, krx_start_time)')
+            cancel_all_orders(now)
     elif is_between(now, krx_start_time, krx_end_time_1531):
         current_status = 'KRX'
         log_print('', '000000', '1229 calling sell_jango is_between(now, krx_start_time, krx_end_time)')
         sell_jango(stored_jango_data, 'KRX')
         working_status='calling buy_cl KRX'
         buy_cl(now, 'KRX')
+        resume_cancelled_buy()
     elif is_between(now, krx_end_time_1531, krx_aft_time_1601):
         if krx_after_state == 0 :
             log_print('', '000000', '1304 cancelling all sell orders is_between(now, krx_end_time_1531, krx_aft_time_1601)')
-            cancel_krx_sell(now)
+            cancel_all_orders(now)
             krx_after_state = 1
     elif is_between(now, krx_aft_time_1601, nxt_fin_time_2000):  # KRX 거래소 시작시간과 NXT 종료 시간 사이
         current_status = 'NXT'
@@ -1563,6 +1568,7 @@ def daily_work():
         sell_jango(stored_jango_data, 'NXT')
         buy_cl(now, 'NXT')
         sell_jango(stored_jango_data, 'AFT') # NXT 에서 안 팔린 거는 여기서 매도
+        resume_cancelled_buy()
     else:
         log_print('', '000000', '1244 OFF')
         current_status = 'OFF'
@@ -1571,6 +1577,56 @@ def daily_work():
             msg = '{} {} Setting new day=False'.format(cur_date(), now)
             print(msg)
             log_print('', '000000', msg)
+
+
+def resume_cancelled_buy():
+    global cancelled_buys
+    for acct in cancelled_buys:
+        buys = cancelled_buys[acct]
+        for o in buys:
+            stk_cd = o['stk_cd']
+            if stk_cd[0] == 'A':
+                stk_cd = stk_cd[1:]
+            stk_nm = o['stk_nm']
+            ord_uv = o['ord_pric']
+            ord_qty = o['ord_qty']
+            stex = 'SOR'
+            trde_tp = '0'
+            issue_buy_order(stk_nm, stk_cd, ord_uv, ord_qty, stex, trde_tp, acct)
+    '''
+    - acnt_no   계좌번호    String  N   20  
+- ord_no    주문번호    String  N   20  
+- mang_empno    관리사번    String  N   20  
+- stk_cd    종목코드    String  N   20  
+- tsk_tp    업무구분    String  N   20  
+- ord_stt   주문상태    String  N   20  
+- stk_nm    종목명 String  N   40  
+- ord_qty   주문수량    String  N   20  
+- ord_pric  주문가격    String  N   20  
+- oso_qty   미체결수량   String  N   20  
+- cntr_tot_amt  체결누계금액  String  N   20  
+- orig_ord_no   원주문번호   String  N   20  
+- io_tp_nm  주문구분    String  N   20  
+- trde_tp   매매구분    String  N   20  
+- tm    시간  String  N   20  
+- cntr_no   체결번호    String  N   20  
+- cntr_pric 체결가 String  N   20  
+- cntr_qty  체결량 String  N   20  
+- cur_prc   현재가 String  N   20  
+- sel_bid   매도호가    String  N   20  
+- buy_bid   매수호가    String  N   20  
+- unit_cntr_pric    단위체결가   String  N   20  
+- unit_cntr_qty 단위체결량   String  N   20  
+- tdy_trde_cmsn 당일매매수수료 String  N   20  
+- tdy_trde_tax  당일매매세금  String  N   20  
+- ind_invsr 개인투자자   String  N   20  
+- stex_tp   거래소구분   String  N   20  0 : 통합, 1 : KRX, 2 : NXT
+- stex_tp_txt   거래소구분텍스트    String  N   20  통합,KRX,NXT
+- sor_yn    SOR 여부값 String  N   20  Y,N
+- stop_pric 스톱가 String  N   20  스톱지정가주문 스톱가
+
+    :return: 
+    '''
 
 
 def clear_for_new_day():
@@ -2343,10 +2399,7 @@ def order_queued_buy(bqlen):
                 bq[0] = 9
                 trde_begin_h = 9
                 save_buy_queue_to_json()
-        if trde_begin_h == 8:
-            trde_end_h = 20
-        else:
-            trde_end_h = 16
+        trde_end_h = 20
 
         if now.hour >= trde_begin_h and now.hour < trde_end_h:  # trade_begin_hour
             stk_cd = bq[1]
@@ -2391,8 +2444,7 @@ def periodic_timer_handler():
         except Exception as e:
             print(f"Error running cleanup at 20:30: {e}")
             traceback.print_exc()
-
-    if now_hour == 23:
+    elif now_hour == 23:
         if now.minute == 0 and not calculate_pl_today:
             calculate_pl_today = True
             calculate_pl()
@@ -4549,7 +4601,7 @@ async def cancel_nxt_trade_endpoint():
     """Cancel NXT trades"""
     try:
         now = datetime.now()
-        cancel_krx_sell(now)
+        cancel_all_orders(now)
         return {"status": "success", "message": "Cancel NXT trade executed"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
