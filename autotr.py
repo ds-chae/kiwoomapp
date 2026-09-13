@@ -1261,9 +1261,8 @@ day_start_time = time(6, 0)  # 07:00
 nxt_start_time_0800 = time(8, 0)  # 07:00
 nxt_end_time_0849 = time(8, 49)  # 07:00
 krx_start_time_0851 = time(8,51)
-krx_end_time_1531 = time(15,31)
-krx_aft_time_1601 = time(16, 1)
-aft_fin_time_1800 = time(18, 0)
+krx_end_time_1530 = time(15,30)
+krx_aft_time_1600 = time(16, 0)
 nxt_fin_time_2000 = time(20, 0)
 day_change_time = time(23, 59)
 
@@ -1517,7 +1516,7 @@ get_miche_failed = True
 def daily_work():
     global new_day, current_status, now
     global nxt_start_time_0800, nxt_end_time_0849, krx_start_time_0851, nxt_cancelled, krx_after_state
-    global krx_end_time_1531, krx_aft_time_1601, nxt_fin_time_2000
+    global krx_end_time_1530, krx_aft_time_1600, nxt_fin_time_2000
     global stored_jango_data, stored_miche_data, get_miche_failed, working_status
     global previous_jango_data_simplified
 
@@ -1552,19 +1551,19 @@ def daily_work():
             nxt_cancelled = True
             log_print('', '000000', '1225 calling cancel_all_orders between(nxt_end_time, krx_start_time)')
             cancel_all_orders(now)
-    elif is_between(now, krx_start_time_0851, krx_end_time_1531):
+    elif is_between(now, krx_start_time_0851, krx_end_time_1530):
         current_status = 'KRX'
         log_print('', '000000', '1229 calling sell_jango is_between(now, krx_start_time, krx_end_time)')
         sell_jango(stored_jango_data, 'KRX')
         working_status='calling buy_cl KRX'
         buy_cl(now, 'KRX')
         resume_cancelled_buy()
-    elif is_between(now, krx_end_time_1531, krx_aft_time_1601):
+    elif is_between(now, krx_end_time_1530, krx_aft_time_1600):
         if krx_after_state == 0 :
-            log_print('', '000000', '1304 cancelling all sell orders is_between(now, krx_end_time_1531, krx_aft_time_1601)')
+            log_print('', '000000', '1304 cancelling all sell orders is_between(now, krx_end_time_1530, krx_aft_time_1600)')
             cancel_all_orders(now)
             krx_after_state = 1
-    elif is_between(now, krx_aft_time_1601, nxt_fin_time_2000):  # KRX 거래소 시작시간과 NXT 종료 시간 사이
+    elif is_between(now, krx_aft_time_1600, nxt_fin_time_2000):  # KRX 거래소 시작시간과 NXT 종료 시간 사이
         current_status = 'NXT'
         log_print('', '000000', '1234 calling sell_jango is_between(now, krx_end_time, nxt_fin_time)')
         sell_jango(stored_jango_data, 'NXT')
@@ -1636,7 +1635,7 @@ def resume_cancelled_buy():
 
 def clear_for_new_day():
     global now
-    global new_day, nxt_start_time, nxt_cancelled, krx_after_state #, krx_first
+    global new_day, nxt_start_time_0800, nxt_cancelled, krx_after_state #, krx_first
     global current_status, market_closed
     global upper_limits, today_yyyymmdd
     global bun_charts_lock, bun_charts
@@ -2475,7 +2474,7 @@ def periodic_timer_handler():
             set_new_day_true()
         elif equal_hh_mm(now_time, day_change_time) :
             set_new_day_false()
-        elif is_between(now, nxt_start_time, nxt_fin_time_2000):
+        elif is_between(now, nxt_start_time_0800, nxt_fin_time_2000):
             bqlen = len(buy_queue)
             if bqlen > 0 :
                 log_print('', '00000', 'call order_queued_buy')
@@ -3585,16 +3584,23 @@ def issue_buy_order(stk_nm, stk_cd, ord_uv, ord_qty, stex, trde_tp, account):
 
 
 def active_market():
+    global nxt_start_time_0800, nxt_end_time_0849, krx_start_time_0851, krx_start_time_0851, krx_end_time_1530
+    global nxt_fin_time_2000
+
     now = datetime.now()
-    if is_between(now, nxt_start_time, nxt_end_time):
-        return 'NXT'
-    if is_between(now, nxt_end_time, krx_start_time):  # NXT 끝나고 KRX 시작 전
+    if now < nxt_start_time_0800:
         return ''
-    if is_between(now, krx_start_time, krx_end_time_1531):
-        return 'KRX'
-    if is_between(now, krx_end_time_1531, nxt_fin_time_2000):  # KRX 거래소 시작시간과 NXT 종료 시간 사이
+    if now < nxt_end_time_0849 :
         return 'NXT'
-    return ''
+    if now < krx_start_time_0851 :  # NXT 끝나고 KRX 시작 전
+        return ''
+    if now < krx_end_time_1530 :
+        return 'KRX'
+    if now < krx_aft_time_1600 : #
+        return ''
+    if now < nxt_fin_time_2000 :  # KRX 거래소 시작시간과 NXT 종료 시간 사이
+        return 'KRX'
+    return '' # all market is closed
 
 
 buy_queue = []
