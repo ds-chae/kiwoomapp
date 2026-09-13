@@ -1035,8 +1035,7 @@ jango_token = {}
 def sell_jango(jango, market):
     global auto_sell_enabled, current_status, jango_token, now, working_status
     global new_day, interested_stocks, interested_stocks_lock
-    if not new_day:
-        return
+
     working_status = 'begin sell_jango()'
     for ACCT, j in jango.items():
         try:
@@ -1259,9 +1258,9 @@ def cancel_order_main(acct, now, access_token, stex, ord_no, stk_cd):
 # fn_kt10003(token=MY_ACCESS_TOKEN, data=params, cont_yn='Y', next_key='nextkey..')
 
 day_start_time = time(6, 0)  # 07:00
-nxt_start_time = time(8, 0)  # 07:00
-nxt_end_time = time(8, 49)  # 07:00
-krx_start_time = time(8,52)
+nxt_start_time_0800 = time(8, 0)  # 07:00
+nxt_end_time_0849 = time(8, 49)  # 07:00
+krx_start_time_0851 = time(8,51)
 krx_end_time_1531 = time(15,31)
 krx_aft_time_1601 = time(16, 1)
 aft_fin_time_1800 = time(18, 0)
@@ -1517,7 +1516,7 @@ get_miche_failed = True
 
 def daily_work():
     global new_day, current_status, now
-    global nxt_start_time, nxt_end_time, krx_start_time,nxt_cancelled, krx_after_state
+    global nxt_start_time_0800, nxt_end_time_0849, krx_start_time_0851, nxt_cancelled, krx_after_state
     global krx_end_time_1531, krx_aft_time_1601, nxt_fin_time_2000
     global stored_jango_data, stored_miche_data, get_miche_failed, working_status
     global previous_jango_data_simplified
@@ -1540,17 +1539,20 @@ def daily_work():
         log_print('', '000000', f"Error updating miche data: {e}")
         return
 
-    if is_between(now, nxt_start_time, nxt_end_time):
+    if not new_day:
+        return
+
+    if is_between(now, nxt_start_time_0800, nxt_end_time_0849):
         current_status = 'NXT'
         sell_jango(stored_jango_data, 'NXT')
         buy_cl(now, 'NXT')
-    elif is_between(now, nxt_end_time, krx_start_time): # NXT 끝나고 KRX 시작 전
+    elif is_between(now, nxt_end_time_0849, krx_start_time_0851): # NXT 끝나고 KRX 시작 전
         current_status = 'NXT->KRX'
         if not nxt_cancelled:
             nxt_cancelled = True
             log_print('', '000000', '1225 calling cancel_all_orders between(nxt_end_time, krx_start_time)')
             cancel_all_orders(now)
-    elif is_between(now, krx_start_time, krx_end_time_1531):
+    elif is_between(now, krx_start_time_0851, krx_end_time_1531):
         current_status = 'KRX'
         log_print('', '000000', '1229 calling sell_jango is_between(now, krx_start_time, krx_end_time)')
         sell_jango(stored_jango_data, 'KRX')
