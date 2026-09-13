@@ -2180,12 +2180,11 @@ def query_bun_charts(MY_ACCESS_TOKEN, cl_stocks):
         if 'stk_min_pole_chart_qry' in resp_json:
             bun = resp_json['stk_min_pole_chart_qry']
             updated_charts[stk_cd] = bun
-            time_module.sleep(1)
         else:
             return_msg = resp_json['return_msg']
             return_code = int(resp_json['return_code'])
             log_print('', stk_cd, f"Error getting bun_chart for {return_msg}")
-
+        time_module.sleep(2)
     with bun_charts_lock:
         bun_charts.update(updated_charts)
 
