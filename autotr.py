@@ -1022,7 +1022,7 @@ def test_ret_status(sell_buy, stk_cd, stk_nm, ret_status, ord_prc):
             wait_hour_change = True
         elif code == '505217':
             #  장 종료되었습니다. 이게 15:30에 발생하면 문제가 된다. 아직 시간외 주문이 남아있는데도, 이런 오류를 보내온다.
-            if now.time() > aft_fin_time_1800 :  # 시간외까지 끝난 후에야 market_closed를 설정한다.
+            if now.time() > nxt_fin_time_2000 :  # 시간외까지 끝난 후에야 market_closed를 설정한다.
                 market_closed[stk_cd] = True
         #elif code == '508749': # 주문단가가 시간외단일가 상한가를 초과합니다.)', 'return_code': 20}
         #    after_exceeded[stk_cd] = True # 장후 시간외 상한가 초과
