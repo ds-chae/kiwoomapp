@@ -1039,6 +1039,7 @@ def sell_jango(jango, market):
     working_status = 'begin sell_jango()'
     for ACCT, j in jango.items():
         try:
+            stk_cd = '000000'
             # Check auto sell enabled for this specific account
             # Mode can be NONE, BUY, SELL, BOTH
             mode = auto_sell_enabled.get(ACCT, 'NONE')
@@ -1050,6 +1051,8 @@ def sell_jango(jango, market):
 
             for indv in acnt_evlt_remn_indv_tot:
                 stk_cd = _normalize_stk_cd(indv.get('stk_cd', ''))
+                if not stk_cd:
+                    continue
                 stk_nm = indv.get('stk_nm', '')
                 with split_sell_lock:
                     has_split = split_sell_request.stock_code == stk_cd
@@ -1196,13 +1199,15 @@ def cancel_all_orders(now):
         if 'oso' in m:
             oso = m['oso'] # oso가 각 account의 미체결 정보
             for o in oso:
+                stk_cd = _normalize_stk_cd(o.get('stk_cd', ''))
+                if not stk_cd:
+                    continue
                 if stk_cd in interested_stocks:  # 관리 대상 종목인지 검사한다.
                     if o['io_tp_nm'] == '+매수':
-                        buys.append[o]
+                        buys.append(o)
                     if o['io_tp_nm'] == '-매도' or o['io_tp_nm'] == '+매수' :
                         stex = o['stex_tp_txt']
                         ord_no = o['ord_no']
-                        stk_cd = o['stk_cd']
                         log_print(acct, stk_cd, 'cancel sell order {} {}'.format(o['io_tp_nm'], ord_no))
                         cancel_order_main(acct, now, m['TOKEN'], stex, ord_no, stk_cd)
         cancelled_buys[acct] = buys
@@ -3587,7 +3592,7 @@ def active_market():
     global nxt_start_time_0800, nxt_end_time_0849, krx_start_time_0851, krx_start_time_0851, krx_end_time_1530
     global nxt_fin_time_2000
 
-    now = datetime.now()
+    now = datetime.now().time()
     if now < nxt_start_time_0800:
         return ''
     if now < nxt_end_time_0849 :
