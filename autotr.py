@@ -523,7 +523,7 @@ def round_trunc(dp):
 
 
 def is_between(now, start, end):
-    return start <= now.time() <= end
+    return start <= now.time() < end
 
 """             
                 {
@@ -1264,8 +1264,7 @@ def cancel_order_main(acct, now, access_token, stex, ord_no, stk_cd):
 
 day_start_time = time(6, 0)  # 07:00
 nxt_start_time_0800 = time(8, 0)  # 07:00
-nxt_end_time_0849 = time(8, 49)  # 07:00
-krx_start_time_0851 = time(8,51)
+krx_start_time_0850 = time(8,50)
 krx_end_time_1530 = time(15,30)
 krx_aft_time_1600 = time(16, 0)
 nxt_fin_time_2000 = time(20, 0)
@@ -1520,7 +1519,7 @@ get_miche_failed = True
 
 def daily_work():
     global new_day, current_status, now
-    global nxt_start_time_0800, nxt_end_time_0849, krx_start_time_0851, nxt_cancelled, krx_after_state
+    global nxt_start_time_0800, krx_start_time_0850, nxt_cancelled, krx_after_state
     global krx_end_time_1530, krx_aft_time_1600, nxt_fin_time_2000
     global stored_jango_data, stored_miche_data, get_miche_failed, working_status
     global previous_jango_data_simplified
@@ -1546,23 +1545,23 @@ def daily_work():
     if not new_day:
         return
 
-    if is_between(now, nxt_start_time_0800, nxt_end_time_0849):
+    if is_between(now, nxt_start_time_0800, krx_start_time_0850):
         current_status = 'NXT'
         sell_jango(stored_jango_data, 'NXT')
         buy_cl(now, 'NXT')
-    elif is_between(now, nxt_end_time_0849, krx_start_time_0851): # NXT 끝나고 KRX 시작 전
-        current_status = 'NXT->KRX'
+    elif is_between(now, krx_start_time_0850, krx_end_time_1530):
         if not nxt_cancelled:
+            current_status = 'NXT->KRX'
             nxt_cancelled = True
             log_print('', '000000', '1225 calling cancel_all_orders between(nxt_end_time, krx_start_time)')
             cancel_all_orders(now)
-    elif is_between(now, krx_start_time_0851, krx_end_time_1530):
-        current_status = 'KRX'
-        log_print('', '000000', '1229 calling sell_jango is_between(now, krx_start_time, krx_end_time)')
-        sell_jango(stored_jango_data, 'KRX')
-        working_status='calling buy_cl KRX'
-        buy_cl(now, 'KRX')
-        resume_cancelled_buy()
+        else:
+            current_status = 'KRX'
+            log_print('', '000000', '1229 calling sell_jango is_between(now, krx_start_time, krx_end_time)')
+            sell_jango(stored_jango_data, 'KRX')
+            working_status='calling buy_cl KRX'
+            buy_cl(now, 'KRX')
+            resume_cancelled_buy()
     elif is_between(now, krx_end_time_1530, krx_aft_time_1600):
         if krx_after_state == 0 :
             log_print('', '000000', '1304 cancelling all sell orders is_between(now, krx_end_time_1530, krx_aft_time_1600)')
@@ -2400,33 +2399,29 @@ def order_queued_buy(bqlen):
     global buy_queue
     for bidx in range(bqlen):
         bq = buy_queue[bidx]
-        trde_begin_h = bq[0]
-        stk_cd = bq[1]
-        if trde_begin_h == 8 :
-            if not nxt_tradable.get(stk_cd, True):
-                bq[0] = 9
-                trde_begin_h = 9
-                save_buy_queue_to_json()
+        stk_cd = bq['stk_cd']
+        trde_begin_hm = nxt_start_time_0800
+        if not nxt_tradable.get(stk_cd, True):
+            trde_begin_hm = krx_start_time_0850
         trde_end_h = 20
 
-        if now.hour >= trde_begin_h and now.hour < trde_end_h:  # trade_begin_hour
-            stk_cd = bq[1]
-            stk_nm = bq[2]
-            ord_uv = bq[3]
-            ord_qty = bq[4]
-            accounts = bq[5]
+        if now.time >= trde_begin_hm and now.hour < trde_end_h:  # trade_begin_hour
+            stk_cd = bq['stk_cd']
+            stk_nm = bq['stk_nm']
+            ord_uv = bq['ord_uv']
+            ord_qty = bq['ord_qty']
+            accounts = bq['accounts']
             stex = active_market() # bq[6]
-            trde_tp = bq[7]
+            trde_tp = bq['trde_tp']
             log_print('', stk_cd,
-                      f"Try buy queued orders {bq[0]} o'clock : {ord_qty} shares of {stk_nm or stk_cd} at {ord_uv}")
+                      f"Try buy queued orders {bq['trde_begin_h']} o'clock : {ord_qty} shares of {stk_nm or stk_cd} at {ord_uv}")
             results = call_issue_buy_order(stk_cd, stk_nm, ord_uv, ord_qty, accounts, stex, trde_tp)
             all_success = all(r.get('status') == 'success' for r in results)
-            if bq[0] == 8 and nxt_order_fail(stk_cd, results[0].get('ret_status', {})):
-                # set trade begin hour to 9
-                buy_queue[bidx][0] = 9
+            if trde_begin_hm.minute == 0 and nxt_order_fail(stk_cd, results[0].get('ret_status', {})):
+                # do not delete this entry
                 save_buy_queue_to_json()
             else:
-                # else delete that queued order
+                # nxt or krx order success, delete that queued order
                 del buy_queue[bidx]
                 save_buy_queue_to_json()
             break
@@ -3589,16 +3584,14 @@ def issue_buy_order(stk_nm, stk_cd, ord_uv, ord_qty, stex, trde_tp, account):
 
 
 def active_market():
-    global nxt_start_time_0800, nxt_end_time_0849, krx_start_time_0851, krx_start_time_0851, krx_end_time_1530
+    global nxt_start_time_0800, krx_start_time_0850, krx_end_time_1530
     global nxt_fin_time_2000
 
     now = datetime.now().time()
     if now < nxt_start_time_0800:
         return ''
-    if now < nxt_end_time_0849 :
+    if now < krx_start_time_0850 :  # NXT 끝나고 KRX 시작 전
         return 'NXT'
-    if now < krx_start_time_0851 :  # NXT 끝나고 KRX 시작 전
-        return ''
     if now < krx_end_time_1530 :
         return 'KRX'
     if now < krx_aft_time_1600 : #
@@ -3617,15 +3610,9 @@ def save_buy_queue_to_json():
     global buy_queue
     try:
         # Store as list-of-lists so entries stay mutable after reload
-        data = []
-        for bq in buy_queue:
-            try:
-                data.append(list(bq))
-            except TypeError:
-                continue
         with open(BUY_QUEUE_FILE, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-        print(f"Saved buy_queue to {BUY_QUEUE_FILE}: {len(data)} entries")
+            json.dump(buy_queue, f, indent=2, ensure_ascii=False)
+        print(f"Saved buy_queue to {BUY_QUEUE_FILE}: {len(buy_queue)} entries")
         return True
     except Exception as e:
         print(f"Error saving buy_queue: {e}")
@@ -3667,16 +3654,16 @@ def load_buy_queue_from_json():
                         accounts = [a.strip() for a in accounts.split(',') if a.strip()]
                     else:
                         accounts = list(accounts) if accounts else []
-                normalized.append([
-                    item.get('trade_begin_hour', 8),
-                    item.get('stock_code') or item.get('stk_cd') or '',
-                    item.get('stock_name') or item.get('stk_nm') or '',
-                    item.get('price', item.get('ord_uv', 0)),
-                    item.get('qty', item.get('ord_qty', 0)),
-                    accounts,
-                    item.get('market', item.get('stex', '')),
-                    item.get('trade_type', item.get('trde_tp', '0')),
-                ])
+                buy = {}
+                buy['trde_begin_h'] = item.get('trde_begin_h', 8)
+                buy['stk_cd'] = item.get('stock_code') or item.get('stk_cd') or ''
+                buy['stk_nm'] = item.get('stock_name') or item.get('stk_nm') or ''
+                buy['ord_uv'] = item.get('price', item.get('ord_uv', 0))
+                buy['ord_qty'] = item.get('qty', item.get('ord_qty', 0))
+                buy['accounts'] = accounts
+                buy['stex'] = item.get('market', item.get('stex', ''))
+                buy['trde_tp'] = item.get('trade_type', item.get('trde_tp', '0'))
+                normalized.append(buy)
         buy_queue = normalized
         print(f"Loaded buy_queue from {BUY_QUEUE_FILE}: {len(buy_queue)} entries")
     except Exception as e:
@@ -3690,35 +3677,8 @@ def format_queued_buy():
     global buy_queue
     formatted = []
     for idx, bq in enumerate(buy_queue):
-        try:
-            trade_begin_hour, stk_cd, stk_nm, ord_uv, ord_qty, accounts, stex, trde_tp = bq
-        except (TypeError, ValueError):
-            continue
-        if stk_cd and str(stk_cd)[0] == 'A':
-            stk_cd = str(stk_cd)[1:]
-        if not isinstance(accounts, list):
-            if isinstance(accounts, str):
-                accounts = [acc.strip() for acc in accounts.split(',') if acc.strip()]
-            else:
-                accounts = list(accounts) if accounts else []
-        try:
-            price = int(ord_uv)
-            qty = int(ord_qty)
-        except (TypeError, ValueError):
-            price = ord_uv
-            qty = ord_qty
-        formatted.append({
-            'queue_index': idx,
-            'trade_begin_hour': trade_begin_hour,
-            'stock_code': stk_cd or '',
-            'stock_name': stk_nm or '',
-            'price': price,
-            'qty': qty,
-            'amount': (price * qty) if isinstance(price, int) and isinstance(qty, int) else 0,
-            'accounts': accounts,
-            'market': stex or '',
-            'trade_type': trde_tp or '',
-        })
+        bq['idx'] = idx
+        formatted.append(bq)
     return formatted
 
 
@@ -3838,7 +3798,16 @@ async def buy_order_api(request: dict, proxy_path: str = "", token: str = Cookie
             accounts = list(key_list.keys())
         print('buy_order_api accounts={}'.format(accounts))
 
-        buy_queue.append([8, stk_cd, stk_nm, ord_uv, ord_qty, accounts, stex, trde_tp])
+        bq = {}
+        bq['trde_begin_h'] = 8
+        bq['stk_cd'] = stk_cd
+        bq['stk_nm'] = stk_nm
+        bq['ord_uv'] = ord_uv
+        bq['ord_qty'] = ord_qty
+        bq['accounts'] = accounts
+        bq['stex'] = stex
+        bq['trde_tp'] = trde_tp
+        buy_queue.append(bq)
         save_buy_queue_to_json()
         msg = f"Buy orders queued for {8} o'clock : {ord_qty} shares of {stk_nm or stk_cd} at {ord_uv}"
         log_print('', stk_cd, msg)
