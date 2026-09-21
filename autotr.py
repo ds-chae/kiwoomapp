@@ -2405,7 +2405,7 @@ def order_queued_buy(bqlen):
             trde_begin_hm = krx_start_time_0850
         trde_end_h = 20
 
-        if now.time >= trde_begin_hm and now.hour < trde_end_h:  # trade_begin_hour
+        if now.time() >= trde_begin_hm and now.hour < trde_end_h:  # trade_begin_hour
             stk_cd = bq['stk_cd']
             stk_nm = bq['stk_nm']
             ord_uv = bq['ord_uv']
