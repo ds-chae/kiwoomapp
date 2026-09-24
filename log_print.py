@@ -1,0 +1,4980 @@
+import traceback
+import traceback
+import copy
+import requests
+import json
+import os
+import mimetypes
+from datetime import datetime, timedelta, time, date
+
+# load_dotenv is not required, as it is called in au1001
+# from dotenv import load_dotenv
+from au1001 import get_token, get_key_list, get_one_token
+import time as time_module
+import threading
+import asyncio
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from fastapi import FastAPI, HTTPException, status, Cookie, Request, File, UploadFile
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, FileResponse
+import uvicorn
+from contextlib import asynccontextmanager
+import secrets
+import socket
+import uuid
+
+
+from ka10080 import get_bun_chart, get_price_index
+from ka10081 import get_day_chart
+from ka10100 import get_stockinfo, get_pl
+
+
+def get_bun_chart_throttled(MY_ACCESS_TOKEN, stk_cd, stk_nm):
+    """Call get_bun_chart then sleep 0.5s to throttle requests."""
+    bun = get_bun_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm)
+    time_module.sleep(0.5)
+    return bun
+
+
+def get_day_chart_throttled(MY_ACCESS_TOKEN, stk_cd, stk_nm):
+    day = get_day_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm)
+    time_module.sleep(0.5)
+    return day
+
+# Daily chart cache (filled by minute chart thread)
+daily_charts = {}  # {(stock_code, date_str_or_None): {data:any, ts:float}}
+daily_charts_lock = threading.Lock()
+DAILY_CHART_TTL_SECONDS = 15
+
+now = datetime.now()
+today_yyyymmdd = now.strftime("%Y%m%d")
+
+# Interested stocks list
+INTERESTED_STOCKS_FILE = 'interested_stocks.json'
+interested_stocks = {}
+interested_stocks_lock = threading.RLock()
+
+# Sell-exclude list: stocks that must NOT be auto-sold ({stock_code: stock_name})
+SELL_EXCLUDE_FILE = 'sell_exclude.json'
+sell_exclude = {}
+sell_exclude_lock = threading.RLock()
+
+# pctoken default params (used when interested-stocks is called with pctoken)
+PC_SETTINGS_FILE = 'pc_settings.json'
+pc_color = 'Y'
+pc_sellrate = 1.2
+pc_bamount = 500000
+pc_settings_lock = threading.RLock()
+
+# Jango data file
+JANGO_DATA_FILE = 'jango_data.json'
+
+# Temperature/fan sensor data
+TEMPERATURE_DIR = 'temperature'
+
+# Image uploads (multipart API)
+IMAGE_UPLOAD_DIR = os.path.join('uploads', 'images')
+MAX_IMAGE_UPLOAD_BYTES = 10 * 1024 * 1024
+IMAGE_CONTENT_TYPE_EXT = {
+    'image/jpeg': '.jpg',
+    'image/jpg': '.jpg',
+    'image/png': '.png',
+    'image/gif': '.gif',
+    'image/webp': '.webp',
+}
+MAX_IMAGE_STEM_LEN = 180
+UPLOAD_IMAGE_FILE_SUFFIXES = ('.jpg', '.jpeg', '.png', '.gif', '.webp')
+
+
+def _is_upload_image_filename(name: str) -> bool:
+    base = os.path.basename(name or '')
+    lower = base.lower()
+    return any(lower.endswith(s) for s in UPLOAD_IMAGE_FILE_SUFFIXES)
+
+
+def _list_upload_image_filenames() -> list[str]:
+    if not os.path.isdir(IMAGE_UPLOAD_DIR):
+        return []
+    out: list[str] = []
+    for fn in os.listdir(IMAGE_UPLOAD_DIR):
+        path = os.path.join(IMAGE_UPLOAD_DIR, fn)
+        if os.path.isfile(path) and _is_upload_image_filename(fn):
+            out.append(fn)
+    return out
+
+
+def _safe_image_stem_from_filename(filename: str) -> str:
+    """Basename stem only, safe for a single path segment (no slashes)."""
+    base = os.path.basename((filename or "").strip()) or "upload"
+    stem, _ = os.path.splitext(base)
+    parts = []
+    for ch in stem:
+        if ch.isalnum() or ch in "-_.":
+            parts.append(ch)
+        elif ch.isspace():
+            parts.append("_")
+        else:
+            parts.append("_")
+    stem = "".join(parts).strip("._")
+    stem = "_".join(s for s in stem.split("_") if s)
+    if not stem:
+        stem = "upload"
+    if len(stem) > MAX_IMAGE_STEM_LEN:
+        stem = stem[:MAX_IMAGE_STEM_LEN].rstrip("._") or "upload"
+    return stem
+
+
+def _allocate_image_store_path(stem: str, ext: str) -> tuple[str, str]:
+    """Pick a stored filename under IMAGE_UPLOAD_DIR; ext must start with '.'."""
+    os.makedirs(IMAGE_UPLOAD_DIR, exist_ok=True)
+    candidate = f"{stem}{ext}"
+    path = os.path.join(IMAGE_UPLOAD_DIR, candidate)
+    if not os.path.exists(path):
+        return candidate, path
+    candidate = f"{stem}_{uuid.uuid4().hex[:8]}{ext}"
+    path = os.path.join(IMAGE_UPLOAD_DIR, candidate)
+    return candidate, path
+
+
+# Authentication configuration
+LOGIN_USERNAME = os.getenv('LOGIN_USERNAME')
+LOGIN_PASSWORD = os.getenv('LOGIN_PASSWORD')
+SECRET_KEY = os.getenv('SECRET_KEY', secrets.token_urlsafe(32))
+TOKEN_EXPIRY_HOURS = 100
+env_pctoken = os.getenv('PCTOKEN')
+
+# In-memory token storage (in production, use Redis or database)
+active_tokens = {}
+upper_limits = {}
+
+key_list = get_key_list()
+order_count = {}
+
+old_sel_price = {}
+
+
+
+def get_order_count(ACCT, stk_cd):
+    global order_count
+    if ACCT in order_count:
+        oc_account = order_count[ACCT]
+        if stk_cd in oc_account:
+            return oc_account[stk_cd]
+    return 0
+
+
+def set_order_count(ACCT, stk_cd, amnt):
+    global order_count
+    if ACCT in order_count:
+        oc_account = order_count[ACCT]
+    else:
+        oc_account = {}
+    oc_account[stk_cd] = amnt
+    order_count[ACCT] = oc_account
+    print(f'updated order count for {stk_cd} = {order_count[ACCT][stk_cd]}')
+    pass
+
+def add_order_count(ACCT, stk_cd, amnt):
+    global order_count
+    if ACCT in order_count:
+        oc_account = order_count[ACCT]
+    else:
+        oc_account = {}
+    if stk_cd in oc_account:
+        oc_account[stk_cd] += amnt
+    else:
+        oc_account[stk_cd] = amnt
+    order_count[ACCT] = oc_account
+    print(f'updated order count for {stk_cd} = {order_count[ACCT][stk_cd]}')
+    pass
+
+
+# Global variable for tracking previous hour
+prev_hour = None
+# Global storage for jango data (updated by timer handler)
+stored_jango_data = {}
+
+# Global storage for previous jango data (simplified format: {stock_code: amount})
+previous_jango_data_simplified = {}
+
+# Global storage for miche data (updated by timer handler)
+stored_miche_data = {}
+
+# Global flag to track if cleanup has run today at 20:30
+cleanup_run_today = False
+calculate_pl_today = False
+
+new_day = False
+
+last_logs = {}
+
+def init_order_count():
+    global order_count, key_list
+
+    for key, value in key_list.items():
+        ACCT = value['ACCT']
+        order_count[ACCT] = {}
+
+
+init_order_count()
+
+
+# Get server IP address last digit for title
+def get_server_ip_last_digit():
+    """Get the last digit of the server's IP address"""
+    try:
+        # Connect to a remote address to determine local IP
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        # Extract last digit from IP address
+        last_digit = ip.split('.')[-1]
+        return last_digit
+    except Exception:
+        # Fallback if unable to get IP
+        return "?"
+
+# 일별잔고수익률
+def fn_ka01690(token, data, cont_yn='N', next_key=''):
+    # 1. 요청할 API URL
+    #host = 'https://mockapi.kiwoom.com' # 모의투자
+    host = 'https://api.kiwoom.com' # 실전투자
+    endpoint = '/api/dostk/acnt'
+    url =  host + endpoint
+
+    # 2. header 데이터
+    headers = {
+        'Content-Type': 'application/json;charset=UTF-8', # 컨텐츠타입
+        'authorization': f'Bearer {token}', # 접근토큰
+        'cont-yn': cont_yn, # 연속조회여부
+        'next-key': next_key, # 연속조회키
+        'api-id': 'ka01690', # TR명
+    }
+
+    # 3. http POST 요청
+    response = requests.post(url, headers=headers, json=data)
+
+    # 4. 응답 상태 코드와 데이터 출력
+    print('Code:', response.status_code)
+    print('Header:', json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4, ensure_ascii=False))
+    print('Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON 응답을 파싱하여 출력
+
+    return response.json()
+
+
+def print_acnt(ACCT, AK, SK):
+    acnt = []
+    # 1. 토큰 설정
+    MY_ACCESS_TOKEN = get_token(AK, SK) # 접근토큰
+
+    # 2. 요청 데이터
+    params = {
+        'qry_dt': datetime.now().strftime('%Y%m%d'),  # 조회일자 (오늘 날짜)
+    }
+
+    #print(f"ACCT={ACCT}")
+    # 3. API 실행
+    acct = fn_ka01690(token=MY_ACCESS_TOKEN, data=params)
+    acct['TOKEN'] = MY_ACCESS_TOKEN
+
+    return acct
+
+# next-key, cont-yn 값이 있을 경우
+    # fn_ka01690(token=MY_ACCESS_TOKEN, data=params, cont_yn='Y', next_key='nextkey..')
+
+def old_get_jango():
+    global key_list
+    jango = []
+    for k, key in key_list.items():
+        acct = key['ACCT']
+        j = print_acnt(acct, key['AK'], key['SK'])
+        j['ACCT'] = acct
+        jango[acct] = j
+
+    return jango
+
+
+
+# Gyeja pyungga jango
+def fn_kt00018(log_jango, token, data, cont_yn='N', next_key=''):
+    # 1. ¿äÃ»ÇÒ API URL
+    #host = 'https://mockapi.kiwoom.com' # ¸ðÀÇÅõÀÚ
+    host = 'https://api.kiwoom.com' # ½ÇÀüÅõÀÚ
+    endpoint = '/api/dostk/acnt'
+    url =  host + endpoint
+
+    # 2. header µ¥ÀÌÅÍ
+    headers = {
+        'Content-Type': 'application/json;charset=UTF-8', # ÄÁÅÙÃ÷Å¸ÀÔ
+        'authorization': f'Bearer {token}', # Á¢±ÙÅäÅ«
+        'cont-yn': cont_yn, # ¿¬¼ÓÁ¶È¸¿©ºÎ
+        'next-key': next_key, # ¿¬¼ÓÁ¶È¸Å°
+        'api-id': 'kt00018', # TR¸í
+    }
+
+    try:
+        response = requests.post(url, headers=headers, json=data)
+
+        if log_jango:
+            pass
+            #print('get_jango => Code: {}'.format(response.status_code))
+            #print('get_jango => Header:', json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4, ensure_ascii=False))
+            #print('get_jango => Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON ÀÀ´äÀ» ÆÄ½ÌÇÏ¿© Ãâ·Â
+            #print('get_jango => Finish:')
+            #print('')
+
+        return response.json()
+    except Exception as ex:
+        log_print('','000000', str(ex))
+        return {}
+
+get_jango_count = 0
+
+
+'''
+    {
+            "stk_cd": "A005930",
+            "stk_nm": "삼성전자",
+            "evltv_prft": "-00000000196888",
+            "prft_rt": "-52.71",
+            "pur_pric": "000000000124500",
+            "pred_close_pric": "000000045400",
+            "rmnd_qty": "000000000000003",
+            "trde_able_qty": "000000000000003",
+            "cur_prc": "000000059000",
+            "pred_buyq": "000000000000000",
+            "pred_sellq": "000000000000000",
+            "tdy_buyq": "000000000000000",
+            "tdy_sellq": "000000000000000",
+            "pur_amt": "000000000373500",
+            "pur_cmsn": "000000000000050",
+            "evlt_amt": "000000000177000",
+            "sell_cmsn": "000000000000020",
+            "tax": "000000000000318",
+            "sum_cmsn": "000000000000070",
+            "poss_rt": "2.12",
+            "crd_tp": "00",
+            "crd_tp_nm": "",
+            "crd_loan_dt": ""
+        },
+'''
+def get_jango(market = 'KRX'):
+    global get_jango_count, key_list, jango_token
+
+    log_jango = (get_jango_count == 0)
+
+    get_jango_count += 1
+    if get_jango_count >= 10 :
+        get_jango_count = 0
+
+    jango = {}
+    
+    # Prepare tasks for parallel execution
+    tasks = []
+    for k, key in key_list.items():
+        acct = key['ACCT']
+        MY_ACCESS_TOKEN = get_token(key['AK'], key['SK'])  # 접근토큰
+        jango_token[acct] = MY_ACCESS_TOKEN
+        tasks.append((acct, log_jango, market, MY_ACCESS_TOKEN))
+    
+    start = time_module.time()
+    # Execute all calls in parallel and wait for completion
+    with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
+        futures = {}
+        for acct, log_jango_val, market_val, token in tasks:
+            future = executor.submit(call_fn_kt00018, log_jango_val, market_val, acct, token)
+            futures[future] = acct
+        
+        # Wait for all tasks to complete and collect results
+        for future in as_completed(futures):
+            acct = futures[future]
+            try:
+                j = future.result()
+                # fn_kt00018 returns {} on exception (network/parse/etc.)
+                if not isinstance(j, dict):
+                    log_print('', '000000', f"get_jango: non-dict response for account {acct}, type={type(j)}")
+                    jango[acct] = {
+                        "return_code": -1,
+                        "return_msg": "invalid jango response type",
+                        "ACCT": acct,
+                    }
+                    continue
+                if len(j) == 0:
+                    log_print('', '000000', f"get_jango: empty dict for account {acct} (fn_kt00018 failed)")
+                    jango[acct] = {
+                        "return_code": -1,
+                        "return_msg": "empty jango response (fn_kt00018 exception)",
+                        "ACCT": acct,
+                    }
+                    continue
+                j['ACCT'] = acct
+                jango[acct] = j
+            except Exception as e:
+                print(f"Error getting jango for account {acct}: {e}")
+                traceback.print_exc()
+                # Create error response for this account
+                jango[acct] = {"return_code": -1, "return_msg": str(e), "ACCT": acct}
+
+    elapsed = time_module.time() - start
+    if log_jango:
+        pass
+        #print('get_jango => elapsed={:.3f} seconds'.format(elapsed))
+
+    return jango
+
+
+def is_jango_data_valid(jango_data):
+    """Return True only when every configured account has a successful jango response."""
+    if not jango_data or not isinstance(jango_data, dict):
+        return False
+    expected_accounts = {(key.get('ACCT') or '').strip() for key in key_list.values()}
+    expected_accounts.discard('')
+    if not expected_accounts:
+        return False
+    for acct in expected_accounts:
+        account = jango_data.get(acct)
+        if not isinstance(account, dict):
+            return False
+        if account.get('return_code') != 0:
+            return False
+    return True
+
+
+def apply_jango_data_update(new_jango_data):
+    """Update stored jango snapshots only when new data is fully valid."""
+    global stored_jango_data, previous_jango_data_simplified
+    if not is_jango_data_valid(new_jango_data):
+        log_print('', '000000', 'get_jango returned invalid/partial data; keeping previous holdings')
+        return False
+
+    current_stocks = extract_stock_codes_and_amounts(new_jango_data)
+    jango_data_changed = (previous_jango_data_simplified != current_stocks)
+    if jango_data_changed:
+        save_jango_data_to_json(current_stocks)
+        if previous_jango_data_simplified:
+            check_and_handle_sold_stocks(previous_jango_data_simplified, new_jango_data)
+        previous_jango_data_simplified = current_stocks.copy()
+
+    stored_jango_data = new_jango_data
+    return True
+
+
+def call_fn_kt00018(log_jango, market, ACCT, MY_ACCESS_TOKEN):
+    params = {
+        'qry_tp': '2', # 1:Hapsan, 2:Gaebyul
+        'dmst_stex_tp': market, # KRX, NXT
+    }
+    return fn_kt00018(log_jango, token=MY_ACCESS_TOKEN, data=params)
+
+    # next-key, cont-yn °ªÀÌ ÀÖÀ» °æ¿ì
+    # fn_kt00018(token=MY_ACCESS_TOKEN, data=params, cont_yn='Y', next_key='nextkey..')
+
+
+from fn_kt10000 import sell_order, buy_order
+
+def print_j(j):
+    #print(j)
+    TOKEN = j['TOKEN']
+    day_bal_rt = j['day_bal_rt']
+    #print(day_bal_rt)
+    for bal_rt in day_bal_rt:
+        #print(bal_rt)
+        if bal_rt['stk_nm'] == '박셀바이오':
+            print(bal_rt)
+            rmnd_qty = bal_rt['rmnd_qty']
+            ord_uv = '10560'
+            if rmnd_qty != '0':
+                trde_tp = '0' # 매매구분 0:보통 , 3:시장가 , 5:조건부지정가 , 81:장마감후시간외 , 61:장시작전시간외, 62:시간외단일가 , 6:최유리지정가 , 7:최우선지정가 , 10:보통(IOC) , 13:시장가(IOC) , 16:최유리(IOC) , 20:보통(FOK) , 23:시장가(FOK) , 26:최유리(FOK) , 28:스톱지정가,29:중간가,30:중간가(IOC),31:중간가(FOK)
+                stk_cd = bal_rt['stk_cd']
+                log_print('', stk_cd, 'sell_order NXT, qty={} price={}'.format(rmnd_qty, ord_uv))
+                ret_status = sell_order(TOKEN, dmst_stex_tp='NXT', stk_cd=stk_cd, ord_qty=rmnd_qty, ord_uv=ord_uv, trde_tp=trde_tp, cond_uv='')
+                print('sell_order_result')
+                print(ret_status)
+                rcde = ret_status['return_code']
+                #code = rmsg[7:13]
+                print(rcde)
+                if rcde == 0:
+                    return True
+    pass
+    return False
+
+def round_trunc(dp):
+    p = int(dp)
+    modulus = 1
+
+    if (p < 1000) :
+        modulus = 1 # 1, 000¿ø ¹Ì¸¸ 1¿ø 1¿ø 5¿ø
+    elif (p < 5000) :
+        modulus = 5 # // // 1, 000 ~ 5, 000¿ø ¹Ì¸¸ 5¿ø 5¿ø
+    elif (p < 10000) :
+        modulus = 10 #// 5, 000 ~ 10, 000¿ø ¹Ì¸¸ 10¿ø 10¿ø 10¿ø
+    elif (p < 50000) :
+        modulus = 50 # // 10, 000 ~ 50, 000¿ø ¹Ì¸¸ 50¿ø 50¿ø 50¿ø
+    elif (p < 100000) :
+        modulus = 100 # // 50, 000 ~ 100, 000¿ø ¹Ì¸¸ 100¿ø 100¿ø 100¿ø
+    elif (p < 500000) :
+        modulus = 500 # // 100, 000 ~ 500, 000¿ø ¹Ì¸¸ 500¿ø 500¿ø
+    else :
+        modulus = 1000
+
+    p = ( (p // modulus) + 1) * modulus
+    return p
+
+
+def is_between(now, start, end):
+    return start <= now.time() <= end
+
+"""             
+                {
+                    "stk_cd": "A005930",
+                    "stk_nm": "»ï¼ºÀüÀÚ",
+                    "evltv_prft": "-00000000196888",
+                    "prft_rt": "-52.71",
+                    "pur_pric": "000000000124500",
+                    "pred_close_pric": "000000045400",
+                    "rmnd_qty": "000000000000003",
+                    "": "000000000000003",
+                    "cur_prc": "000000059000",
+                    "pred_buyq": "000000000000000",
+                    "pred_sellq": "000000000000000",
+                    "tdy_buyq": "000000000000000",
+                    "tdy_sellq": "000000000000000",
+                    "pur_amt": "000000000373500",
+                    "pur_cmsn": "000000000000050",
+                    "evlt_amt": "000000000177000",
+                    "sell_cmsn": "000000000000020",
+                    "tax": "000000000000318",
+                    "sum_cmsn": "000000000000070",
+                    "poss_rt": "2.12",
+                    "crd_tp": "00",
+                    "crd_tp_nm": "",
+                    "crd_loan_dt": ""
+                },
+"""
+
+from ka10007 import fn_ka10007
+
+def get_upper_limit(MY_ACCESS_TOKEN, stk_cd):
+    global upper_limits
+    if stk_cd not in upper_limits:
+        params = {
+            'stk_cd': stk_cd,  # 종목코드 거래소별 종목코드 (KRX:039490,NXT:039490_NX,SOR:039490_AL)
+        }
+        try:
+            response = fn_ka10007(token=MY_ACCESS_TOKEN, data=params)
+            log_print('', stk_cd, 'calling fn_ka1007 in get_upper_limit succeeded')
+            rstk_cd = response.get('stk_cd', ' ')
+            if rstk_cd[0] == 'A':
+                rstk_cd = rstk_cd[1:]
+            if stk_cd == rstk_cd:
+                stk_data = response
+                upper_limits[stk_cd] = int(stk_data['upl_pric'])
+            else:
+                print('calling fn_ka1007 in get_upper_limit mismatch')
+                print('stk_cd in response is {}'.format(response['stk_cd']))
+                return 0
+        except Exception as ex:
+            print('calling fn_ka1007 in get_upper_limit failed')
+            print(ex)
+            return 0
+
+    return upper_limits[stk_cd]
+
+
+def cancel_different_sell_order(now, ACCT, stk_cd, stk_nm, new_price, skip_prices=None):
+    """Cancel open -매도 orders whose price differs from new_price.
+    Quantity is not compared: remaining ord_qty shrinks as fills succeed.
+    skip_prices: set of prices to leave alone (active split sells).
+    """
+    global stored_miche_data
+    cancel_count = 0
+    if skip_prices is None:
+        skip_prices = set()
+    miche = []
+    if ACCT in stored_miche_data:
+        if 'oso' in stored_miche_data[ACCT]:
+            miche = stored_miche_data[ACCT]['oso']
+    for m in miche:
+        #print('io_tp_nm=', m['io_tp_nm'])
+        if m['stk_cd'] == stk_cd and m['io_tp_nm']  == '-매도' :
+            oqty = m['ord_qty']
+            oqp = int(m['ord_pric'])
+            if oqp in skip_prices:
+                continue
+            if oqp != new_price:
+                result = cancel_order_main(ACCT, now, jango_token[ACCT], m['stex_tp_txt'], m['ord_no'], stk_cd)
+                log_print(ACCT, stk_cd, 'cancel_different_sell_order old price={}, new price={}, old_qty={}, result={}'.format(
+                          oqp, new_price, oqty, result))
+                cancel_count += 1
+    if cancel_count != 0:
+        log_print(ACCT, stk_cd, 'cancel_different_sell_order np={} count={}.'.format(new_price, cancel_count))
+    return cancel_count
+
+
+def get_low_after_high(stk_cd, stk_nm, chart):
+    chartlen = len(chart)
+    if chartlen < 416 :
+        log_print('', stk_cd, "get_low_after_high, chartlen < 416, return 0")
+        return 0
+
+    # find high
+    low_time = ''
+    high_index = 0
+    low_index = 0
+    high_price = 0
+    for i in range(416):
+        buntick = chart[i]
+        hpc = int(buntick['high_pric'])
+        if hpc < 0:
+            hpc = -hpc
+        if hpc > high_price:
+            high_index = i
+            high_price = hpc
+
+    # find lowest price after high price
+    low_price = int(chart[high_index]['high_pric'])
+    low_time = chart[high_index]['cntr_tm']
+    if low_price < 0:
+        low_price = -low_price
+    for hidx in range(high_index):
+        buntick = chart[hidx]
+        tlpc = int(buntick['low_pric'])
+        if tlpc < 0:
+            tlpc = -tlpc
+        if low_price >= tlpc:
+            low_price = tlpc
+            low_time = buntick['cntr_tm']
+
+    return low_price, low_time
+
+last_get_bun_time = {}
+
+
+def calculate_sell_price(ACCT, MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk_nm):
+    global bun_prices, last_get_bun_time
+
+    ord_uv = 0
+    if 'sellprice' in sell_cond:
+        ord_uv = int(sell_cond['sellprice'])
+    if ord_uv != 0:
+        return ord_uv
+
+    sellrate = float(sell_cond.get('sellrate', 0.0))
+    if sellrate != 0.0 :
+        # sellrate is stored as-is (percentage), divide by 100 for calculation
+        s_rate = sellrate / 100.0
+        s_price = pur_pric * (1.0 + s_rate)
+        s_price = round_trunc(s_price)
+        if s_price <= pur_pric:
+            return 0
+        log_print(ACCT, stk_cd, f'calculate_sell_price rate return {s_price}')
+        return s_price
+
+    sellgap = float(sell_cond.get('sellgap', '0.0')) / 100.
+    if sellgap != 0.0 :
+        try:
+            if not stk_cd in gap_prices:
+                gap_prices[stk_cd] = get_gap_price(MY_ACCESS_TOKEN, stk_cd, stk_nm)
+            gap_price = gap_prices[stk_cd]
+        except Exception as e1:
+            log_print('', stk_cd, f'calculate_sell_price get_gap_price gen Error {e1}')
+            return 0
+        #log_print(ACCT, stk_cd, f' before get_low_after_high')
+        last_get_bun_time[stk_cd] = now
+        # Try to use bun_charts dict first, otherwise call get_bun_chart
+        bun_chart = None
+        try:
+            with bun_charts_lock:
+                bun_chart = bun_charts.get(stk_cd)
+                bun_time = bun_times.get(stk_cd)
+        except:
+            pass
+        if bun_chart is None:
+            log_print('', stk_cd, f'calculate_sell_price before get_low_after_high, bun_chart is None, return 0')
+            return 0 # if bun_chart is not queried yet, return pric 0
+            # bun_chart = get_bun_chart(MY_ACCESS_TOKEN, stk_cd, stk_nm)
+
+        lowest, low_time = get_low_after_high(stk_cd, stk_nm, bun_chart)
+        log_print('', stk_cd, f' get_low_after_high {stk_nm} returns {lowest} last time bun_chart={bun_time}, low_time={low_time}')
+        if lowest != 0 :
+            gap = float(gap_price['gap']) * 2
+            cl_price = round_trunc(int(lowest + gap * sellgap))
+            log_print('', stk_cd, f' cl_price is {cl_price}, gap={gap}, lowest={lowest}, gaprate={sellgap}')
+            pp101 = round_trunc(int(pur_pric * 1.01))
+            if cl_price < pp101 :
+                cl_price = pp101
+                log_print('', stk_cd, f'calculate_sell_price set cl_price is to pp101={pp101}')
+            log_print('', stk_cd, f'calculate_sell_price return cl_price {cl_price}')
+            return cl_price
+
+    log_print('', stk_cd, f'calculate_sell_price at last returns 0')
+    return 0
+
+
+class SplitRequest:
+    def __init__(self, cd, q, p, _rate, n):
+        self.stock_code = cd
+        self.qty = int(q)
+        self.price = int(p)
+        self.rate = float(_rate)
+        self.name = n
+
+
+# Only one pending split-sell request exists at a time.
+# protected: stk_cd -> {ordered split prices}
+split_sell_request = SplitRequest('', 0, 0, 0, '')
+split_sell_protected = {}
+split_sell_lock = threading.RLock()
+
+
+def _get_split_sell_state(stk_cd):
+    """Return the pending request and protected prices."""
+    with split_sell_lock:
+        request = None
+        if split_sell_request.stock_code == stk_cd:
+            request = copy.deepcopy(split_sell_request)
+        protected = set(split_sell_protected.get(stk_cd) or set())
+    return request, protected
+
+
+def _record_split_sell_request(request: SplitRequest):
+    """Record one request. A new request replaces the previous pending one."""
+    global split_sell_request
+    with split_sell_lock:
+        split_sell_request = copy.deepcopy(request)
+
+
+def _drop_split_sell_request():
+    """Remove the pending request."""
+    global split_sell_request
+    with split_sell_lock:
+        split_sell_request.stock_code = ''
+
+
+def _finish_split_sell_order(stk_cd, ordered_qty: int, ordered_price: int):
+    """Protect the price and reduce the pending request quantity."""
+    global split_sell_protected
+    with split_sell_lock:
+        split_sell_protected.setdefault(stk_cd, set()).add(ordered_price)
+
+
+def _get_split_sell_protected(stk_cd):
+    global split_sell_protected
+    """Return protected prices for an already-normalized stk_cd."""
+    with split_sell_lock:
+        return set(split_sell_protected.get(stk_cd) or set())
+
+
+def _clear_split_sell_protected(stk_cd):
+    global split_sell_protected
+    """Clear protected prices for an already-normalized stk_cd."""
+    with split_sell_lock:
+        removed = set(split_sell_protected.pop(stk_cd, set()))
+    log_print('', stk_cd, f'cleared split sell protected prices={removed}')
+    return removed
+
+
+def _reset_split_sell_state_for_new_day():
+    """Clear pending requests and protected prices at day start."""
+    global split_sell_request, split_sell_protected
+    with split_sell_lock:
+        split_sell_request.stock_code = ''
+        split_sell_protected.clear()
+    log_print('', '000000', 'reset split sell state for new day')
+
+
+def _cancel_all_sell_orders_for_stock(stk_cd: str, skip_prices=None):
+    """Cancel open -매도 orders for stk_cd across all accounts.
+    skip_prices: set of prices not to cancel (existing split sells).
+    """
+    global stored_miche_data, jango_token
+    now_ts = datetime.now()
+    stk_norm = stk_cd
+    if skip_prices is None:
+        skip_prices = set()
+    results = []
+    stex_resolve = {"1": "KRX", "2": "NXT", "3": "SOR"}
+    if not isinstance(stored_miche_data, dict):
+        return results
+    for ACCT, miche in list(stored_miche_data.items()):
+        if not isinstance(miche, dict) or "oso" not in miche:
+            continue
+        access_token = jango_token.get(ACCT)
+        if not access_token:
+            continue
+        for m in (miche.get("oso") or []):
+            try:
+                if _normalize_stk_cd(m.get("stk_cd", "")) != stk_norm:
+                    continue
+                if (m.get("io_tp_nm") or "").strip() != "-매도":
+                    continue
+                try:
+                    if int(m.get("ord_pric", 0)) in skip_prices:
+                        continue
+                except (TypeError, ValueError):
+                    pass
+                ord_no = str(m.get("ord_no") or "").strip()
+                if not ord_no or not ord_no.lstrip("0"):
+                    continue
+                stex = (m.get("stex_tp_txt") or "").strip().upper()
+                if stex not in ("KRX", "NXT", "SOR"):
+                    stex = stex_resolve.get((m.get("stex_tp") or "").strip(), "SOR")
+                log_print(ACCT, stk_norm, f'_cancel_all_sell_orders_for_stock ord_no={ord_no}')
+                r = cancel_order_main(ACCT, now_ts, access_token, stex, ord_no, stk_norm)
+                results.append({"account": ACCT, "ord_no": ord_no, "result": r})
+            except Exception as ex:
+                log_print(ACCT, stk_norm, f'_cancel_all_sell_orders_for_stock error: {ex}')
+                results.append({"account": ACCT, "error": str(ex)})
+    return results
+
+
+def _resolve_sell_market_and_trde_tp(market, stk_cd):
+    """Return (market, trde_tp) or (None, None) if this market should be skipped."""
+    global market_closed, after_exceeded
+    trde_tp = '0'
+    nxt_yn = nxt_tradable.get(stk_cd, True)
+    if market == 'NXT':
+        if not nxt_yn:
+            return None, None
+    elif market == 'AFT':
+        if nxt_tradable.get(stk_cd, False):
+            market = 'NXT'
+        else:
+            if after_exceeded.get(stk_cd, False):
+                return None, None
+            market = 'KRX'
+            trde_tp = '62'
+    if market == 'KRX' and market_closed.get(stk_cd, False):
+        return None, None
+    if market == 'NXT' and market_closed.get(stk_cd, False):
+        return None, None
+    return market, trde_tp
+
+
+def call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond,
+                    allow_normal_sell=True):
+    global working_status, old_sel_price
+
+    trde_able_qty = indv.get("trde_able_qty", "0")
+    pur_pric_str = indv.get('pur_pric', '0')
+    pur_pric = int(pur_pric_str) if pur_pric_str else 0
+    trde_able_qty_int = _parse_qty_str(trde_able_qty)
+
+    upperlimit = get_upper_limit(MY_ACCESS_TOKEN, stk_cd)
+
+    # Execute the one pending split request before the normal sell.
+    split_req, _ = _get_split_sell_state(stk_cd)
+    if split_req:
+        split_qty = split_req.qty
+        split_price = split_req.price
+        split_rate = split_req.rate
+
+        if split_price <= 0 and split_rate != 0.0 and pur_pric > 0:
+            split_price = round_trunc(pur_pric * (1.0 + split_rate / 100.0))
+
+        if split_price > upperlimit :
+            log_print(ACCT, stk_cd, f'split sell {split_price} exceeds upper limit')
+        elif trde_able_qty_int <= 0:
+            log_print(ACCT, stk_cd, 'split sell request removed: trde_able_qty=0')
+        else:
+            resolved_market, trde_tp = _resolve_sell_market_and_trde_tp(market, stk_cd)
+            if resolved_market is None:
+                log_print(ACCT, stk_cd, 'resolved_market is NOne')
+            elif split_qty <= trde_able_qty_int :
+                log_print(ACCT, stk_cd, f'split sell_order market={resolved_market} qty={split_qty} price={split_price}')
+                ret_status = sell_order(
+                    MY_ACCESS_TOKEN, dmst_stex_tp=resolved_market, stk_cd=stk_cd,
+                    ord_qty=str(split_qty), ord_uv=str(split_price),
+                    trde_tp=trde_tp, cond_uv='')
+                log_print(ACCT, stk_cd, f'split ret_status={ret_status}')
+                test_ret_status('SELL', stk_cd, stk_nm, ret_status, split_price)
+                if isinstance(ret_status, dict) and _is_success_return_code(ret_status.get('return_code')):
+                    _finish_split_sell_order(stk_cd, split_qty, split_price)
+                    trde_able_qty_int -= split_qty
+            else :
+                pass
+
+    # beginning of normal sell
+    try:
+        sell_price = calculate_sell_price(ACCT, MY_ACCESS_TOKEN, pur_pric, sell_cond, stk_cd, stk_nm)
+        log_print(ACCT, stk_cd, f'919 calculate_sell_price = {sell_price}')
+        if sell_price == 0: # price is not calculated
+            return
+    except Exception as ex:
+        log_print(ACCT, stk_cd, f' Error in calculate_sell_price :{ex}')
+        return
+
+    if sell_price > upperlimit :
+        log_print(ACCT, stk_cd, f' {sell_price} exceed upper limit {upperlimit}')
+        return
+
+    # 기존 매도 주문의 가격이 새 것과 다르다면 기존 주문을 취소한다 (split 지정가 목록 제외)
+    protect_prices = _get_split_sell_protected(stk_cd)
+    cancel_count = cancel_different_sell_order(
+        now, ACCT, stk_cd, stk_nm, sell_price, skip_prices=protect_prices)
+    if cancel_count > 0 :
+        return # 만약 취소한 게 있으면 리턴
+
+    # 팔 게 없으면 리턴, 이것을 앞으로 옮기면 큰 일 난다. 취소가 발생하지 않는 문제 발생. 따라서 앞으로 이동하지 말것
+    if trde_able_qty_int == 0:
+        log_print(ACCT, stk_cd, f' in call_sell_order market={market}, trde_able_qty_int=0 return')
+        return
+    ord_qty = trde_able_qty_int
+
+    resolved_market, trde_tp = _resolve_sell_market_and_trde_tp(market, stk_cd)
+    if resolved_market is None:
+        if market == 'NXT':
+            log_print(ACCT, stk_cd, f' in call_sell_order skip {stk_nm}, not a NXT stock, market={market}')
+        elif market == 'AFT':
+            log_print(ACCT, stk_cd, f' in call_sell_order market={market}, exceeded upper limit return')
+        else:
+            log_print(ACCT, stk_cd, f'{stk_nm} Market is closed for this stock.')
+        return
+    market = resolved_market
+
+    oprice = old_sel_price.get(stk_cd, 0)
+    if oprice != sell_price:
+        log_print(ACCT, stk_cd, f'new sell price for {stk_nm} = {sell_price}  purchase price={pur_pric}')
+        old_sel_price[stk_cd] = sell_price
+
+    working_status = 'call sell_order()'
+    log_print(ACCT, stk_cd, f' sell_order market={market} qty={ord_qty} price={sell_price}')
+    ret_status = sell_order(MY_ACCESS_TOKEN, dmst_stex_tp=market, stk_cd=stk_cd,
+                            ord_qty=str(ord_qty), ord_uv=str(sell_price), trde_tp=trde_tp, cond_uv='')
+    log_print(ACCT, stk_cd, f' ret_status={ret_status}')
+    test_ret_status('SELL', stk_cd, stk_nm, ret_status, sell_price)
+
+
+wait_hour_change = False
+
+
+def _normalize_stk_cd(stk_cd) -> str:
+    """Normalize stock code across different API shapes.
+    - trim whitespace
+    - drop leading 'A'
+    - drop exchange suffix (e.g. '_NX') for dictionary keys
+    """
+    if stk_cd is None:
+        return ""
+    s = str(stk_cd).strip()
+    if s.startswith("A"):
+        s = s[1:]
+    if "_" in s:
+        s = s.split("_", 1)[0]
+    return s
+
+
+def _is_success_return_code(rc) -> bool:
+    """Kiwoom APIs in this codebase sometimes use int codes (0/200) or strings ('0'/'0000').
+    Treat common successful codes as success.
+    """
+    if rc is None:
+        return False
+    try:
+        if isinstance(rc, str):
+            rc_s = rc.strip()
+            if rc_s in {"0", "0000", "200"}:
+                return True
+            if rc_s.isdigit() and int(rc_s) == 0:
+                return True
+        if isinstance(rc, (int, float)):
+            rc_i = int(rc)
+            if rc_i in (0, 200):
+                return True
+    except Exception:
+        return False
+    return False
+
+def nxt_order_fail(stk_cd, ret_status):
+    global nxt_tradable
+    rmsg = ret_status.get('return_msg', '')
+    if len(rmsg) <= 13:
+        return False
+    code = rmsg[7:13]
+    if code == '507615':
+        nxt_tradable[stk_cd] = False
+        log_print('', stk_cd, 'nxt_order_fail buy 507615 NXT 거래불가. nxt_tradable=False')
+        return True
+    return False
+
+def test_ret_status(sell_buy, stk_cd, stk_nm, ret_status, ord_prc):
+    global now, wait_hour_change, nxt_tradable
+    if not isinstance(ret_status, dict):
+        return ''
+
+    rcde = ret_status.get('return_code')
+
+    rmsg = ret_status.get('return_msg', '')
+    if rmsg and len(rmsg) > 13:
+        code = rmsg[7:13]
+        if code == '571551': # '주문단가가 상한가를 초과합니다.'
+            upper_limits[stk_cd] = ord_prc - 1
+            log_print('', stk_cd, f'Setting upper limit to {ord_prc - 1}')
+        elif code == '507615':
+            log_print('', stk_cd, '{} 507615 NXT 거래불가'.format(sell_buy))
+            nxt_tradable[stk_cd] = False
+            print(stk_cd, '{} {} 507615 NXT 거래불가. nxt_tradable={}'.format(sell_buy, stk_nm, nxt_tradable[stk_cd]))
+        elif code == '571489':
+            set_new_day_false()
+            print('No trading day, set new_day to False')
+            log_print('', '000000', 'No trading day, set new_day to False')
+        elif code == '505182': # 장개시전입니다.)', 'return_code': 20}
+            print(rmsg)
+            wait_hour_change = True
+        elif code == '505217':
+            #  장 종료되었습니다.
+            market_closed[stk_cd] = True
+        elif code == '508749': # 주문단가가 시간외단일가 상한가를 초과합니다.)', 'return_code': 20}
+            after_exceeded[stk_cd] = True # 장후 시간외 상한가 초과
+
+        print(now, rcde)
+    return rcde
+
+jango_token = {}
+
+def sell_jango(jango, market):
+    global auto_sell_enabled, current_status, jango_token, now, working_status
+    global new_day, interested_stocks, interested_stocks_lock
+    if not new_day:
+        return
+    working_status = 'begin sell_jango()'
+    for ACCT, j in jango.items():
+        try:
+            # Check auto sell enabled for this specific account
+            # Mode can be NONE, BUY, SELL, BOTH
+            mode = auto_sell_enabled.get(ACCT, 'NONE')
+            sell_mode_on = mode in ['SELL', 'BOTH']
+
+            MY_ACCESS_TOKEN = jango_token[ACCT]
+
+            acnt_evlt_remn_indv_tot = j.get("acnt_evlt_remn_indv_tot", [])
+
+            for indv in acnt_evlt_remn_indv_tot:
+                stk_cd = _normalize_stk_cd(indv.get('stk_cd', ''))
+                stk_nm = indv.get('stk_nm', '')
+                with split_sell_lock:
+                    has_split = split_sell_request.stock_code == stk_cd
+                # A pending split request runs even if account auto-sell mode is off
+                if not sell_mode_on and not has_split:
+                    continue
+                # Skip stocks that are in the sell-exclude list (except a pending split)
+                if is_sell_excluded(stk_cd) and not has_split:
+                    log_print('', stk_cd, f'Skip auto-sell (sell-excluded): {stk_nm}')
+                    continue
+                sell_it = True
+                if market == 'NXT':
+                    if not nxt_tradable.get(stk_cd, True) :
+                        sell_it = False
+                        log_print('', stk_cd, f'Cannot sell {stk_nm} in NXT market')
+                elif market == 'AFT':
+                    if nxt_tradable.get(stk_cd, True) :
+                        sell_it = False
+                        log_print('', stk_cd, f'Cannot sell {stk_nm} in AFT market')
+
+                if sell_it:
+                    with interested_stocks_lock:
+                        sell_cond = copy.deepcopy(interested_stocks.get(stk_cd))
+                    if not sell_cond and not has_split:
+                        continue
+                    if not sell_cond:
+                        sell_cond = {}
+                    working_status = 'before call_sell_order {} {} {}'.format(market, stk_cd, stk_nm)
+                    call_sell_order(ACCT, MY_ACCESS_TOKEN, market, stk_cd, stk_nm, indv, sell_cond,
+                                    allow_normal_sell=sell_mode_on)
+        except Exception as ex:
+            log_print('', stk_cd, f'at 314 {working_status} {str(ex)}')
+            print(ex)
+    _drop_split_sell_request() # delete split sell request, call this at each sell_jango scope.
+    pass
+
+
+log_miche = False
+
+# 미체결요청
+def fn_ka10075(token, data, cont_yn='N', next_key=''):
+    global log_miche
+
+    # 1. 요청할 API URL
+    #host = 'https://mockapi.kiwoom.com' # 모의투자
+    host = 'https://api.kiwoom.com' # 실전투자
+    endpoint = '/api/dostk/acnt'
+    url =  host + endpoint
+
+    # 2. header 데이터
+    headers = {
+        'Content-Type': 'application/json;charset=UTF-8', # 컨텐츠타입
+        'authorization': f'Bearer {token}', # 접근토큰
+        'cont-yn': cont_yn, # 연속조회여부
+        'next-key': next_key, # 연속조회키
+        'api-id': 'ka10075', # TR명
+    }
+
+    # 3. http POST 요청
+    response = requests.post(url, headers=headers, json=data)
+    if log_miche:
+        # 4. 응답 상태 코드와 데이터 출력
+        print('Code:', response.status_code)
+        print('Header:', json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4, ensure_ascii=False))
+        print('Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON 응답을 파싱하여 출력
+    return response.json()
+
+
+# 실행 구간
+def get_miche():
+    global get_miche_failed, key_list
+
+    miche = {}
+    for k, key in key_list.items():
+        ACCT = key['ACCT']
+        MY_ACCESS_TOKEN = get_token(key['AK'], key['SK'])  # 접근토큰
+        # 2. 요청 데이터
+        params = {
+            'all_stk_tp': '0', # 전체종목구분 0:전체, 1:종목
+            'trde_tp': '0', # 매매구분 0:전체, 1:매도, 2:매수
+            'stk_cd': '', # 종목코드
+            'stex_tp': '0', # 거래소구분 0 : 통합, 1 : KRX, 2 : NXT
+        }
+
+        # 3. API 실행
+        m = fn_ka10075(token=MY_ACCESS_TOKEN, data=params)
+        m['ACCT'] = ACCT
+        m['TOKEN'] = MY_ACCESS_TOKEN
+        if 'oso' in m:
+            for order in m['oso']:
+                cur_prc = order.get('cur_prc', '0')
+                if cur_prc[0] == '-':
+                    order['cur_prc'] = cur_prc[1:]
+        miche[ACCT] = m
+
+    if get_miche_failed:
+        get_miche_failed = False
+        log_print('', '000000', f"get_miche recovered.")
+
+    return miche
+
+"""
+oso 미체결 LIST    N       
+- acnt_no   계좌번호    String  N   20  
+- ord_no    주문번호    String  N   20  
+- mang_empno    관리사번    String  N   20  
+- stk_cd    종목코드    String  N   20  
+- tsk_tp    업무구분    String  N   20  
+- ord_stt   주문상태    String  N   20  
+- stk_nm    종목명 String  N   40  
+- ord_qty   주문수량    String  N   20  
+- ord_pric  주문가격    String  N   20  
+- oso_qty   미체결수량   String  N   20  
+- cntr_tot_amt  체결누계금액  String  N   20  
+- orig_ord_no   원주문번호   String  N   20  
+- io_tp_nm  주문구분    String  N   20  
+- trde_tp   매매구분    String  N   20  
+- tm    시간  String  N   20  
+- cntr_no   체결번호    String  N   20  
+- cntr_pric 체결가 String  N   20  
+- cntr_qty  체결량 String  N   20  
+- cur_prc   현재가 String  N   20  
+- sel_bid   매도호가    String  N   20  
+- buy_bid   매수호가    String  N   20  
+- unit_cntr_pric    단위체결가   String  N   20  
+- unit_cntr_qty 단위체결량   String  N   20  
+- tdy_trde_cmsn 당일매매수수료 String  N   20  
+- tdy_trde_tax  당일매매세금  String  N   20  
+- ind_invsr 개인투자자   String  N   20  
+- stex_tp   거래소구분   String  N   20  0 : 통합, 1 : KRX, 2 : NXT
+- stex_tp_txt   거래소구분텍스트    String  N   20  통합,KRX,NXT
+- sor_yn    SOR 여부값 String  N   20  Y,N
+- stop_pric 스톱가 String  N   20  스톱지정가주문 스톱가
+"""
+
+# 매도를 무조건 취소한다.
+def cancel_krx_sell(now):
+    global interested_stocks
+    miche = get_miche()
+    for m in miche.values():
+        acct = m.get('ACCT', '')
+        if 'oso' in m:
+            oso = m['oso']
+            for o in oso:
+                if o['io_tp_nm'] == '-매도':
+                    stex = o['stex_tp_txt']
+                    ord_no = o['ord_no']
+                    stk_cd = o['stk_cd']
+                    if stk_cd in interested_stocks : # 관리 대상 종목인지 검사한다.
+                        log_print(acct, stk_cd, 'cancel sell order {} {}'.format(o['io_tp_nm'], ord_no))
+                        cancel_order_main(acct, now, m['TOKEN'], stex, ord_no, stk_cd)
+        pass
+
+
+# 주식 취소주문
+def fn_kt10003(now, token, data, cont_yn='N', next_key=''):
+    print("{} cancel order begin fn_kt10003".format(now))
+    # 1. 요청할 API URL
+    # host = 'https://mockapi.kiwoom.com' # 모의투자
+    host = 'https://api.kiwoom.com'  # 실전투자
+    endpoint = '/api/dostk/ordr'
+    url = host + endpoint
+
+    # 2. header 데이터
+    headers = {
+        'Content-Type': 'application/json;charset=UTF-8',  # 컨텐츠타입
+        'authorization': f'Bearer {token}',  # 접근토큰
+        'cont-yn': cont_yn,  # 연속조회여부
+        'next-key': next_key,  # 연속조회키
+        'api-id': 'kt10003',  # TR명
+    }
+
+    # 3. http POST 요청
+    response = requests.post(url, headers=headers, json=data)
+
+    # 4. 응답 상태 코드와 데이터 출력
+    print('Code:', response.status_code)
+    print('Header:',
+          json.dumps({key: response.headers.get(key) for key in ['next-key', 'cont-yn', 'api-id']}, indent=4,
+                     ensure_ascii=False))
+    print('Body:', json.dumps(response.json(), indent=4, ensure_ascii=False))  # JSON 응답을 파싱하여 출력
+    print("{} cancel order end fn_kt10003".format(now))
+
+    return response.json()
+
+def cancel_order_main(acct, now, access_token, stex, ord_no, stk_cd):
+    log_print(acct, stk_cd, 'cancel_order_main: ord_no={}'.format(ord_no))
+    # 2. 요청 데이터
+    params = {
+        'dmst_stex_tp': stex, # 'KRX',  # 국내거래소구분 KRX,NXT,SOR
+        'orig_ord_no': ord_no,  # 주문번호 (using ord_no as orig_ord_no for cancellation)
+        'stk_cd': stk_cd,  # 종목코드
+        'cncl_qty': '0',  # 취소수량 '0' 입력시 잔량 전부 취소
+    }
+
+    # 3. API 실행
+    return fn_kt10003(now, token=access_token, data=params)
+
+
+# next-key, cont-yn 값이 있을 경우
+# fn_kt10003(token=MY_ACCESS_TOKEN, data=params, cont_yn='Y', next_key='nextkey..')
+
+day_start_time = time(6, 0)  # 07:00
+nxt_start_time = time(8, 0)  # 07:00
+nxt_end_time = time(8, 49)  # 07:00
+krx_start_time = time(8,52)
+krx_end_time_1531 = time(15,31)
+krx_aft_time_1601 = time(16, 1)
+nxt_fin_time_2000 = time(20, 0)
+day_change_time = time(23, 59)
+
+new_day = False
+nxt_cancelled = False
+krx_after_state = 0
+nxt_tradable = {}
+market_closed = {}
+after_exceeded = {}  # 장후 시간외 상한가 초과
+
+
+def cur_date():
+    # Get today's date
+    today = date.today()
+
+    # Format the date as YYYYMMDD
+    formatted_date = today.strftime("%Y%m%d")
+
+    # Print the formatted date
+    return formatted_date
+
+
+def is_new_log(acct, stk_cd, msg):
+    global  last_logs
+    acct_logs = last_logs.get(acct, {})
+    logs = acct_logs.get(stk_cd, [])
+    if len(logs) == 0 :
+        logs.append(msg)
+    elif len(logs) == 1:
+        if logs[0] == msg:
+            return False
+        logs.append(msg)
+    elif len(logs) == 2:
+        if logs[0] == msg or logs[1] == msg:
+            return False
+        logs.append(msg)
+    elif len(logs) == 3:
+        if logs[0] == msg or logs[1] == msg or logs[2] == msg:
+            return False
+        logs.append(msg)
+    else : #  len(logs) > 2
+        if logs[0] == msg or logs[1] == msg or logs[2] == msg or logs[3] == msg:
+            return False
+        logs[0] = logs[1]
+        logs[1] = logs[2]
+        logs[2] = logs[3]
+        logs[3] = msg
+
+    acct_logs[stk_cd] = logs
+    last_logs[acct] = acct_logs
+    return True
+
+
+def log_print(acct, stk_cd, msg):
+    """Append log message to file: logs/yyyymmdd/stock_code_stock_name.txt"""
+    global today_yyyymmdd, interested_stocks, interested_stocks_lock
+    if acct == '':
+        acct = 'ALLACCT'
+
+    if not is_new_log(acct, stk_cd, msg):
+        return
+
+
+    try:
+        # Get yyyymmdd from global variable
+        yyyymmdd = today_yyyymmdd
+        
+        # Get stock name from interested_stocks if available, otherwise use get_stockname
+        stk_nm = get_stockinfo(stk_cd)['name']
+        if stk_nm == '':
+            stk_nm = stk_cd  # Fallback to stock code if get_stockname fails
+        
+        # Create directory structure if it doesn't exist
+        log_dir = os.path.join('logs', yyyymmdd)
+        os.makedirs(log_dir, exist_ok=True)
+        
+        # Create log file name: stock_code_stock_name.txt
+        log_filename = f"{stk_cd}_{stk_nm}.txt"
+        log_filepath = os.path.join(log_dir, log_filename)
+        
+        # Append message to log file with timestamp
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        log_line = f"[{timestamp}] {acct} {msg}\n"
+
+        with open(log_filepath, 'a', encoding='utf-8') as f:
+            f.write(log_line)
+            
+    except Exception as e:
+        # Don't fail silently, but don't crash the program either
+        print(f"Error in log_print for {stk_cd}: {e}")
+
+
+def buy_cl(now, stex):
+    global interested_stocks, gap_prices, bun_charts
+    global stored_jango_data, stored_miche_data, key_list
+
+    gap_prices = {} # clear on each call
+
+    for ACCT, key in key_list.items():
+        # Check auto sell enabled for this specific account
+        # Mode can be NONE, BUY, SELL, BOTH
+        mode = auto_sell_enabled.get(ACCT, 'NONE')
+        # buy_cl runs if mode is BUY or BOTH
+        if mode not in ['BUY', 'BOTH']:
+            continue
+
+        #ACCT = key['ACCT']
+        MY_ACCESS_TOKEN = get_token(key['AK'], key['SK'])  # 접근토큰
+        buy_cl_by_account(ACCT, MY_ACCESS_TOKEN, stex, '')
+
+gap_prices = {}
+
+def buy_cl_by_account(ACCT, MY_ACCESS_TOKEN, stex, stk_nm):
+    global working_status
+    global gap_prices, new_day, interested_stocks, interested_stocks_lock
+
+    try:
+        working_status = 'in buy_cl_by_account'
+        with interested_stocks_lock:
+            istk_items = list(interested_stocks.items())
+        for stk_cd, int_stock in istk_items:
+            btype = int_stock.get('btype', '')
+            if btype == 'CL':
+                if not stk_cd in gap_prices:
+                    gap_prices[stk_cd] = get_gap_price(MY_ACCESS_TOKEN, stk_cd, stk_nm)
+
+                buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_prices[stk_cd])
+            if not new_day:
+                break
+        pass
+    except Exception as ex:
+        print(ex)
+
+def buy_cl_stk_cd(stex, ACCT, MY_ACCESS_TOKEN, stk_cd, int_stock, gap_price):
+    global working_status, now, key_list
+    if not gap_price:
+        return
+    if stex == 'NXT' and not nxt_tradable.get(stk_cd, True) :
+        return
+
+    stk_nm = int_stock['stock_name']
+
+    working_status = 'in buy_cl_stk_cd'
+    if get_order_count(ACCT, stk_cd) >= 2:
+        return
+
+    bamount = int(int_stock.get('bamount', '0'))
+    if bamount <= 0 :
+        return
+
+    bsum = 0
+    myjango = stored_jango_data[ACCT] if (ACCT in stored_jango_data) else {}
+    if not 'acnt_evlt_remn_indv_tot' in myjango:
+        log_print(ACCT, stk_cd, f'no acnt_evlt_remn_indv_tot in myjango')
+        return
+    try:
+        acnt_evlt_remn_indv_tot = myjango['acnt_evlt_remn_indv_tot']
+        for eachjango in acnt_evlt_remn_indv_tot:
+            each_cd = eachjango['stk_cd']
+            if each_cd[0] == 'A':
+                each_cd = each_cd[1:]
+            if each_cd == stk_cd:
+                bsum += int(eachjango['pur_amt'])
+        miche = []
+        if ACCT in stored_miche_data:
+            if 'oso' in stored_miche_data[ACCT]:
+                miche = stored_miche_data[ACCT]['oso']
+        for m in miche:
+            #print('io_tp_nm=', m['io_tp_nm'])
+            if m['stk_cd'] == stk_cd and m['io_tp_nm']  == '+매수' :
+                oqty = m['ord_qty']
+                oqp = m['ord_pric']
+                bsum += int(oqty)*int(oqp)
+        scolor = int_stock['color']
+        if scolor == 'O':
+            bc2 = bamount * 1.5 * 0.85
+            bc1 = bamount * 0.5 * 0.85
+        else:
+            bc2 = bamount * 2 * 0.85
+            bc1 = bamount * 1 * 0.85
+        if bsum >= bc2:
+            add_order_count(ACCT, stk_cd, 2)
+            hold_count = 2
+        elif bsum >= bc1:
+            add_order_count(ACCT, stk_cd, 1)
+            hold_count = 1
+        else:
+            hold_count = 0
+
+        log_print(ACCT, stk_cd, 'ordered count for {} is {}, bsum={}'.format(ACCT, get_order_count(ACCT,stk_cd), bsum))
+        if get_order_count(ACCT, stk_cd) >= 2:
+            return
+
+        if not stk_cd in gap_prices:
+            log_print('', stk_cd, 'getting bun_chart or bun_price failed');
+            return
+
+        price_index = get_price_index(scolor)
+        trde_tp = '0'
+        if get_order_count(ACCT, stk_cd) < 1 and hold_count < 1 : # 보유량이 없고 주문 사실도 없다면
+            bp = gap_price['price'][price_index]
+            buy_rate = (float(gap_price.get('current_price', 0))-bp) / bp # 현재 가격과 매수 가격의 차이
+            if buy_rate >= 0.03 : # 매수 가격이랑 3%이상 차이가 난다면 매수 하지 않는다,
+                log_print('', stk_cd, f'gap over skip 1 for {stk_nm} {bp} {buy_rate:.3f}')
+            else:
+                ord_price = round_trunc(bp)
+                if scolor == 'O':
+                    ord_qty = int((bamount/2) // ord_price)
+                else:
+                    ord_qty = int(bamount // ord_price)
+                if ord_qty > 0 :
+                    #ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trade_tp=trde_tp, cond_uv='')
+                    log_print(ACCT, stk_cd, 'buy_order market={}, qty={} price={}'.format(stex, ord_qty, ord_price))
+                    ret_status = buy_order(MY_ACCESS_TOKEN, stk_nm, stex, stk_cd, str(ord_qty), str(ord_price), trde_tp=trde_tp, cond_uv='')
+                    log_print(ACCT, stk_cd, '1_buy_order_result: {}'.format(ret_status))
+                    tr = test_ret_status('BUY', stk_cd, stk_nm, ret_status, ord_price)
+                    if tr == 0 or tr == 20 or tr == 200 :
+                        add_order_count(ACCT, stk_cd, 1)
+                        log_print(ACCT, stk_cd, '1_buy_order_result success  : {}'.format(ret_status['return_msg']))
+                    else:
+                        log_print(ACCT, stk_cd, '1_buy_order_result failure : {}'.format(ret_status['return_msg']))
+                log_print(ACCT, stk_cd, 'price:{} current buy order for {} is {}'.format(ord_price, ACCT, get_order_count(ACCT,stk_cd)))
+        if hold_count >= 1 and get_order_count(ACCT, stk_cd) < 2: # 하나 보유하고 주문은 아직 둘이 아니면
+            bp = gap_price['price'][price_index+1]
+            buy_rate = (float(gap_price.get('current_price', 0))-bp) / bp # 현재 가격과 매수 가격의 차이
+            if buy_rate >= 0.03 : # 매수 가격이랑 3%이상 차이가 난다면 매수 하지 않는다,
+                log_print('', stk_cd, f'gap over skip 2 for {stk_nm} {bp} {buy_rate:.3f}')
+            else:
+                ord_price = round_trunc(bp)
+                ord_qty = int(bamount // ord_price)
+                # ret_status = buy_order(MY_ACCESS_TOKEN, stex, stk_cd, str(ord_qty), str(ord_price), trade_tp=trde_tp, cond_uv='')
+                if ord_qty > 0 :
+                    log_print(ACCT, stk_cd, 'buy_order market={}, qty={} price={}'.format(stex, ord_qty, ord_price))
+                    ret_status = buy_order(MY_ACCESS_TOKEN, stk_nm, stex, stk_cd, str(ord_qty), str(ord_price), trde_tp=trde_tp, cond_uv='')
+                    tr = test_ret_status('BUY', stk_cd, stk_nm, ret_status, ord_price)
+                    if tr == 0 or tr == 20 or tr == 200 :
+                        log_print(ACCT, stk_cd, '2_buy_order_result success : {}'.format(ret_status))
+                        add_order_count(ACCT, stk_cd, 1)
+                    else:
+                        log_print(ACCT, stk_cd, '2_buy_order_result failure : {}'.format(ret_status['return_msg']))
+                log_print(ACCT, stk_cd, 'price:{} current buy order for {} {} {} is {}'.format(ord_price, ACCT, stk_cd, stk_nm, get_order_count(ACCT,stk_cd)))
+    except Exception as ex:
+        print(f'Exception {str(ex)}')
+        log_print(ACCT, stk_cd, str(ex))
+    pass
+
+
+current_status = ''
+working_status = 'initial'
+get_miche_failed = True
+
+def daily_work():
+    global new_day, current_status, now
+    global nxt_start_time, nxt_end_time, krx_start_time,nxt_cancelled, krx_after_state
+    global krx_end_time_1531, krx_aft_time_1601, nxt_fin_time_2000
+    global stored_jango_data, stored_miche_data, get_miche_failed, working_status
+    global previous_jango_data_simplified
+
+    # Get new jango data
+    try:
+        new_jango_data = get_jango()
+    except Exception as e:
+        log_print('', '000000', f"Error updating jango data: {e}")
+        new_jango_data = None
+
+    if new_jango_data is not None:
+        apply_jango_data_update(new_jango_data)
+
+    try:
+        stored_miche_data = get_miche()
+        log_print('', '000000', f"1194 get_miche succeeded.")
+    except Exception as e:
+        get_miche_failed = True
+        log_print('', '000000', f"Error updating miche data: {e}")
+        return
+
+    if is_between(now, nxt_start_time, nxt_end_time):
+        current_status = 'NXT'
+        sell_jango(stored_jango_data, 'NXT')
+        buy_cl(now, 'NXT')
+    elif is_between(now, nxt_end_time, krx_start_time): # NXT 끝나고 KRX 시작 전
+        current_status = 'NXT->KRX'
+        if not nxt_cancelled:
+            nxt_cancelled = True
+            log_print('', '000000', '1225 calling cancel_krx_sell between(nxt_end_time, krx_start_time)')
+            cancel_krx_sell(now)
+    elif is_between(now, krx_start_time, krx_end_time_1531):
+        current_status = 'KRX'
+        log_print('', '000000', '1229 calling sell_jango is_between(now, krx_start_time, krx_end_time)')
+        sell_jango(stored_jango_data, 'KRX')
+        working_status='calling buy_cl KRX'
+        buy_cl(now, 'KRX')
+    elif is_between(now, krx_end_time_1531, krx_aft_time_1601):
+        if krx_after_state == 0 :
+            log_print('', '000000', '1304 cancelling all sell orders is_between(now, krx_end_time_1531, krx_aft_time_1601)')
+            cancel_krx_sell(now)
+            krx_after_state = 1
+    elif is_between(now, krx_aft_time_1601, nxt_fin_time_2000):  # KRX 거래소 시작시간과 NXT 종료 시간 사이
+        current_status = 'NXT'
+        log_print('', '000000', '1234 calling sell_jango is_between(now, krx_end_time, nxt_fin_time)')
+        sell_jango(stored_jango_data, 'NXT')
+        buy_cl(now, 'NXT')
+        sell_jango(stored_jango_data, 'AFT') # NXT 에서 안 팔린 거는 여기서 매도
+    else:
+        log_print('', '000000', '1244 OFF')
+        current_status = 'OFF'
+        if (new_day):
+            set_new_day_false()
+            msg = '{} {} Setting new day=False'.format(cur_date(), now)
+            print(msg)
+            log_print('', '000000', msg)
+
+
+def clear_for_new_day():
+    global now
+    global new_day, nxt_start_time, nxt_cancelled, krx_after_state #, krx_first
+    global current_status, market_closed
+    global upper_limits, today_yyyymmdd
+    global bun_charts_lock, bun_charts
+    global daily_charts_lock, daily_charts, last_logs
+    global after_exceeded, old_sel_price
+
+    today_yyyymmdd = now.strftime("%Y%m%d")
+    print('{} {} Setting new day=True'.format(cur_date(), now))
+    log_print('', '000000', 'clear_for_new_day Setting new day=True')
+    new_day = True
+    nxt_cancelled = False
+    krx_after_state = 0
+    #krx_first = False
+    current_status = 'NEW'
+    market_closed = {}
+    upper_limits = {}
+    init_order_count()
+    with bun_charts_lock:
+        bun_charts = {}
+    with daily_charts_lock:
+        daily_charts = {}
+    last_logs = {}
+    log_print('', '000000', 'cleared last_logs')
+    old_sel_price = {}
+    after_exceeded = {}  # 장후 시간외 상한가 초과
+    nxt_tradable = {}
+    _reset_split_sell_state_for_new_day()
+
+def set_new_day_true():
+    global new_day
+    global current_status
+    global upper_limits, access_token, now, today_yyyymmdd, last_logs
+
+    if new_day :
+        return
+    new_day = True
+
+    print(f'set_new_day_true {now} Setting new_day=True, clearing variables.')
+    log_print('ALLACCT', '000000', 'set_new_day_true Setting new_day=True, clearing variables.')
+    clear_for_new_day()
+
+def set_new_day_false():
+    global new_day
+    global current_status
+    global upper_limits, access_token, now, today_yyyymmdd, last_logs
+
+    if not new_day:
+        return
+    new_day = False
+    current_status = 'OFF'
+    print('{} new_day is switching OFF'.format(now))
+    log_print('ALLACCT','000000', ' new_day is switching OFF')
+
+
+# Global flag for auto sell - dictionary keyed by account
+AUTO_SELL_FILE = 'auto_sell_enabled.json'
+auto_sell_enabled = {}
+
+def load_dictionaries_from_json():
+    """Load auto_sell_enabled, and interested_stocks from JSON files"""
+    global auto_sell_enabled, interested_stocks, interested_stocks_lock
+    global sell_exclude, sell_exclude_lock
+    global pc_color, pc_sellrate, pc_bamount
+
+    # Load sell_exclude
+    if os.path.exists(SELL_EXCLUDE_FILE):
+        try:
+            with open(SELL_EXCLUDE_FILE, 'r', encoding='utf-8') as f:
+                loaded_exclude = json.load(f)
+            with sell_exclude_lock:
+                sell_exclude = loaded_exclude if isinstance(loaded_exclude, dict) else {}
+            print(f"Loaded sell_exclude from {SELL_EXCLUDE_FILE}: {sell_exclude}")
+        except Exception as e:
+            print(f"Error loading sell_exclude: {e}")
+            with sell_exclude_lock:
+                sell_exclude = {}
+    else:
+        with sell_exclude_lock:
+            sell_exclude = {}
+        print(f"Created new sell_exclude dictionary")
+
+    # Load pc settings (pctoken defaults)
+    if os.path.exists(PC_SETTINGS_FILE):
+        try:
+            with open(PC_SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                loaded_pc = json.load(f)
+            if isinstance(loaded_pc, dict):
+                with pc_settings_lock:
+                    if 'pc_color' in loaded_pc and loaded_pc['pc_color'] is not None:
+                        pc_color = str(loaded_pc['pc_color']).strip() or pc_color
+                    if 'pc_sellrate' in loaded_pc and loaded_pc['pc_sellrate'] is not None:
+                        try:
+                            pc_sellrate = float(loaded_pc['pc_sellrate'])
+                        except (ValueError, TypeError):
+                            pass
+                    if 'pc_bamount' in loaded_pc and loaded_pc['pc_bamount'] is not None:
+                        try:
+                            pc_bamount = int(float(loaded_pc['pc_bamount']))
+                        except (ValueError, TypeError):
+                            pass
+            print(f"Loaded pc settings from {PC_SETTINGS_FILE}: "
+                  f"color={pc_color}, sellrate={pc_sellrate}, bamount={pc_bamount}")
+        except Exception as e:
+            print(f"Error loading pc settings: {e}")
+    else:
+        save_pc_settings_to_json()
+        print(f"Created new pc settings file {PC_SETTINGS_FILE}")
+
+    # Load auto_sell_enabled
+    if os.path.exists(AUTO_SELL_FILE):
+        try:
+            with open(AUTO_SELL_FILE, 'r', encoding='utf-8') as f:
+                auto_sell_enabled = json.load(f)
+            
+            # Migration: Convert boolean values to strings
+            modified_migration = False
+            for acct, val in auto_sell_enabled.items():
+                if isinstance(val, bool):
+                    auto_sell_enabled[acct] = 'SELL' if val else 'NONE'
+                    modified_migration = True
+            
+            if modified_migration:
+                save_auto_sell_to_json()
+                print(f"Migrated auto_sell_enabled boolean values to strings")
+                
+            print(f"Loaded auto_sell_enabled from {AUTO_SELL_FILE}: {auto_sell_enabled}")
+        except Exception as e:
+            print(f"Error loading auto_sell_enabled: {e}")
+            auto_sell_enabled = {}
+    else:
+        auto_sell_enabled = {}
+        print(f"Created new auto_sell_enabled dictionary")
+
+    # Load interested_stocks
+    if os.path.exists(INTERESTED_STOCKS_FILE):
+        try:
+            with open(INTERESTED_STOCKS_FILE, 'r', encoding='utf-8') as f:
+                loaded = json.load(f)
+            with interested_stocks_lock:
+                interested_stocks = loaded
+            print(f"Loaded interested_stocks from {INTERESTED_STOCKS_FILE}: {interested_stocks}")
+        except Exception as e:
+            print(f"Error loading interested_stocks: {e}")
+            with interested_stocks_lock:
+                interested_stocks = {}
+    else:
+        with interested_stocks_lock:
+            interested_stocks = {}
+        print(f"Created new interested_stocks dictionary")
+
+    try:
+        with interested_stocks_lock:
+            snapshot = copy.deepcopy(interested_stocks)
+        modified = False
+        current_date = datetime.now().strftime("%Y%m%d")
+        for stk in snapshot:
+            log_print('ALLACCT', '000000', 'in loading interested_stocks, stk={}'.format(stk))
+            log_print('ALLACCT', stk, 'in loading interested_stocks, stk={}'.format(stk))
+            stock = snapshot[stk]
+            stk_nm = stock.get('stock_name', '')
+            log_print('', '000000', 'interested stock_name={}'.format(stk_nm))
+            if stk_nm == '':
+                log_print('', '000000','getting stock name for {}'.format(stk))
+                stk_nm = get_stockinfo(stk)['name']
+                stock['stock_name'] = stk_nm
+                modified = True
+            if 'color' in stock:
+                stock['color'] = color_kor_to_eng(stock['color'])
+            # Add rebound field if missing (percent, default 0.0)
+            if 'rebound' not in stock:
+                stock['rebound'] = 0.0
+                modified = True
+            else:
+                try:
+                    stock['rebound'] = float(stock.get('rebound', 0.0))
+                except (ValueError, TypeError):
+                    stock['rebound'] = 0.0
+                    modified = True
+            # Remove legacy persisted split-sell fields (one-shot only; not stored)
+            for _split_key in ('split_qty', 'split_price', 'split_rate',
+                               'split_anchor_rmnd', 'split_armed'):
+                if _split_key in stock:
+                    del stock[_split_key]
+                    modified = True
+            # Add yyyymmdd field if empty or missing
+            yyyymmdd = str(stock.get('yyyymmdd', ''))
+            if len(yyyymmdd) != 8 :
+                log_print('', stk, 'adding yyyymmdd from {} to {} for {}'.format(yyyymmdd, current_date, stk))
+                log_print('', '000000', 'adding yyyymmdd from {} to {} for {}'.format(yyyymmdd, current_date, stk))
+                stock['yyyymmdd'] = current_date
+                modified = True
+            log_print('', stk, 'in istk {} {} {}'.format(stock.get('btype', 'BT'), stock.get('color', 'NC'), stock.get('yyyymmdd', 'YMD')))
+
+        if modified:
+            with interested_stocks_lock:
+                interested_stocks = snapshot
+            save_interested_stocks_to_json()
+            print('interested_stocks is modified, thus saved')
+    except Exception as ex:
+        print('783', ex)
+        exit(0)
+
+    # Load persisted buy_queue
+    load_buy_queue_from_json()
+
+
+bun_charts = {}
+bun_charts_lock = threading.Lock()  # Lock for bun_charts dict
+bun_prices = {}
+bun_times = {}
+
+# fill minutes chart if btype is 'CL'
+"""
+def fill_charts_for_CL(MY_ACCESS_TOKEN):
+    global bun_charts, bun_charts_lock, interested_stocks
+    try:
+        for stk_cd, stock in interested_stocks.items():
+            btype = stock.get('btype', '')
+            if btype != 'CL':
+                continue
+            if stk_cd in bun_charts:
+                continue
+            stk_nm = stock['stock_name']
+            with bun_charts_lock:
+                bun_charts[stk_cd] = get_bun_chart_throttled(MY_ACCESS_TOKEN, stk_cd, stk_nm)
+    except Exception as ex:
+        print('806', ex)
+        exit(0)
+"""
+
+
+def save_auto_sell_to_json():
+    """Save auto_sell_enabled to JSON file"""
+    global auto_sell_enabled
+    try:
+        with open(AUTO_SELL_FILE, 'w', encoding='utf-8') as f:
+            json.dump(auto_sell_enabled, f, indent=2, ensure_ascii=False)
+        print(f"Saved auto_sell_enabled to {AUTO_SELL_FILE}")
+        return True
+    except Exception as e:
+        print(f"Error saving auto_sell_enabled: {e}")
+        return False
+
+
+def get_pc_settings_snapshot():
+    """Return a copy of current pc_* settings."""
+    with pc_settings_lock:
+        return {
+            'pc_color': pc_color,
+            'pc_sellrate': pc_sellrate,
+            'pc_bamount': pc_bamount,
+        }
+
+
+def save_pc_settings_to_json():
+    """Save pc_color / pc_sellrate / pc_bamount to JSON file"""
+    try:
+        data = get_pc_settings_snapshot()
+        with open(PC_SETTINGS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        print(f"Saved pc settings to {PC_SETTINGS_FILE}: {data}")
+        return True
+    except Exception as e:
+        print(f"Error saving pc settings: {e}")
+        return False
+
+
+def save_sell_exclude_to_json():
+    """Save sell_exclude to JSON file"""
+    global sell_exclude, sell_exclude_lock
+    try:
+        with sell_exclude_lock:
+            data = copy.deepcopy(sell_exclude)
+        with open(SELL_EXCLUDE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        print(f"Saved sell_exclude to {SELL_EXCLUDE_FILE}")
+        return True
+    except Exception as e:
+        print(f"Error saving sell_exclude: {e}")
+        return False
+
+
+def is_sell_excluded(stk_cd):
+    """Return True if the stock code is in the sell-exclude list."""
+    global sell_exclude, sell_exclude_lock
+    code = _normalize_stk_cd(stk_cd)
+    with sell_exclude_lock:
+        return code in sell_exclude
+
+
+def save_interested_stocks_to_json():
+    """Save interested_stocks to JSON file"""
+    global interested_stocks, interested_stocks_lock
+    try:
+        with interested_stocks_lock:
+            data = copy.deepcopy(interested_stocks)
+        with open(INTERESTED_STOCKS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        print(f"Saved interested_stocks to {INTERESTED_STOCKS_FILE}")
+        return True
+    except Exception as e:
+        print(f"Error saving interested_stocks: {e}")
+        return False
+
+def extract_stock_codes_and_amounts(jango_data):
+    """Extract stock codes and amounts from jango data: {account: {stock_code: amount}}"""
+    result = {}
+    for acct, account in jango_data.items():
+        if account.get("return_code") != 0:
+            continue
+        stocks = {}
+        for stock in account.get("acnt_evlt_remn_indv_tot", []):
+            stk_cd = stock.get('stk_cd', '')
+            if stk_cd:
+                if stk_cd[0] == 'A':
+                    stk_cd = stk_cd[1:]
+                stocks[stk_cd] = int(stock.get('rmnd_qty', '0'))
+        result[acct] = stocks
+    return result
+
+def save_jango_data_to_json(stock_data):
+    """Save jango data to JSON file: {account: {stock_code: amount}}"""
+    try:
+        with open(JANGO_DATA_FILE, 'w', encoding='utf-8') as f:
+            json.dump(stock_data, f, indent=2, ensure_ascii=False)
+        print(f"Saved jango data (stock codes and amounts) to {JANGO_DATA_FILE}")
+        return True
+    except Exception as e:
+        print(f"Error saving jango data: {e}")
+        return False
+
+def load_jango_data_from_json():
+    """Load jango data from JSON file: {account: {stock_code: amount}}"""
+    try:
+        if os.path.exists(JANGO_DATA_FILE):
+            with open(JANGO_DATA_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                # Ignore old format - if values are not dicts, return empty
+                if data and isinstance(next(iter(data.values())), dict):
+                    return {acct: {k: int(v) for k, v in stocks.items()} for acct, stocks in data.items()}
+                else:
+                    print(f"Old format in {JANGO_DATA_FILE}, ignoring")
+                    return {}
+        return {}
+    except Exception as e:
+        print(f"Error loading jango data: {e}")
+        return {}
+
+def get_stock_codes_from_jango(jango_data):
+    """Extract all stock codes from jango data (for backward compatibility)"""
+    account_stock_data = extract_stock_codes_and_amounts(jango_data)
+    # Aggregate all stock codes across all accounts
+    all_stock_codes = set()
+    for acct, stocks in account_stock_data.items():
+        all_stock_codes.update(stocks.keys())
+    return all_stock_codes
+
+def check_and_handle_sold_stocks(previous_jango_data, current_jango_data):
+    """Check if any stocks were sold and handle btype changes - account by account"""
+    global interested_stocks, interested_stocks_lock
+    
+    # previous_jango_data and current_jango_data are {account: {stock_code: amount}}
+    current_stocks = extract_stock_codes_and_amounts(current_jango_data) if current_jango_data else {}
+    previous_stocks = previous_jango_data if previous_jango_data else {}
+    
+    # Check account by account - find stocks that were sold in each account
+    sold_stocks = set()
+    for acct in previous_stocks:
+        prev_account_stocks = previous_stocks.get(acct, {})
+        curr_account_stocks = current_stocks.get(acct, {})
+        
+        # For each stock in this account, check if it was sold (prev > 0, curr == 0)
+        for stk_cd, prev_amt in prev_account_stocks.items():
+            curr_amt = curr_account_stocks.get(stk_cd, 0)
+            if prev_amt > 0 and curr_amt == 0:
+                sold_stocks.add(stk_cd)
+    
+    if not sold_stocks:
+        return
+    
+    print(f"Detected sold stocks: {sold_stocks}")
+    
+    # Check each sold stock
+    modified = False
+    for stk_cd in sold_stocks:
+        with interested_stocks_lock:
+            stock_info = interested_stocks.get(stk_cd)
+            if stock_info:
+                previous_btype = stock_info.get('btype', '')
+                # If previous btype was 'CL', change to 'SCL'
+                if previous_btype == 'CL':
+                    log_print('', stk_cd, f"Stock {stk_cd} was sold and had btype='CL', changing to 'SCL'")
+                    stock_info['btype'] = 'SCL'
+                    interested_stocks[stk_cd] = stock_info
+                    modified = True
+                
+        # Cancel buy orders for this stock
+        cancel_related_buy_order(stk_cd)
+    
+    # Save if modified
+    if modified:
+        save_interested_stocks_to_json()
+        log_print('', '000000', f"Stock {stk_cd} was sold and had btype='CL', changing to 'SCL'")
+        log_print('', '000000', "Updated interested_stocks after handling sold stocks")
+
+
+def get_account_holdings_stock_codes():
+    """Get set of all stock codes currently in account holdings"""
+    global stored_jango_data
+    holdings_stock_codes = set()
+    
+    try:
+        all_jango = stored_jango_data
+        if isinstance(all_jango, dict):
+            iterator = all_jango.values()
+        else:
+            iterator = all_jango
+        
+        for account in iterator:
+            if account.get("return_code") != 0:
+                continue
+            
+            acnt_evlt_remn_indv_tot = account.get("acnt_evlt_remn_indv_tot", [])
+            
+            for stock in acnt_evlt_remn_indv_tot:
+                stk_cd = stock.get('stk_cd', '')
+                # Remove 'A' prefix if present
+                if stk_cd and stk_cd[0] == 'A':
+                    stk_cd_clean = stk_cd[1:]
+                else:
+                    stk_cd_clean = stk_cd
+                
+                if stk_cd_clean:
+                    holdings_stock_codes.add(stk_cd_clean)
+    except Exception as e:
+        print(f"Error getting account holdings stock codes: {e}")
+    
+    return holdings_stock_codes
+
+def cleanup_old_interested_stocks():
+    """Delete interested stocks that are 10+ days old and not in account holdings"""
+    global interested_stocks, cleanup_run_today, interested_stocks_lock
+
+    log_print('', '000000', f"{cur_date()} Running cleanup of old interested stocks at 20:30...")
+    try:
+        # Get current date
+        current_date = datetime.now().date()
+        
+        # Get all stock codes in account holdings
+        holdings_stock_codes = get_account_holdings_stock_codes()
+        
+        # Track stocks to delete
+        stocks_to_delete = []
+        
+        # Iterate through interested_stocks (guarded)
+        with interested_stocks_lock:
+            for stock_code, stock_info in interested_stocks.items():
+                if stock_code in holdings_stock_codes:
+                    continue
+                yyyymmdd = stock_info.get('yyyymmdd', '')
+                # Skip if yyyymmdd is missing or invalid
+                if not yyyymmdd or len(yyyymmdd) != 8 or not yyyymmdd.isdigit():
+                    continue
+                
+                # Parse the date
+                try:
+                    stock_date = datetime.strptime(yyyymmdd, '%Y%m%d').date()
+                except ValueError:
+                    log_print('', '000000', f"Invalid date format in interested_stocks for {stock_code}: {yyyymmdd}")
+                    continue
+
+                days_passed = (current_date - stock_date).days # Calculate days passed
+                if days_passed >= 7: # Check if 10 days have passed
+                    stocks_to_delete.append(stock_code)
+                    log_print('', '000000', f"Marking {stock_code} ({stock_info.get('stock_name', '')}) for deletion: {days_passed} days old, not in holdings")
+        if stock_code in stored_jango_data:
+            del stocks_to_delete[stock_code]
+
+        # Delete marked stocks
+        if stocks_to_delete:
+            with interested_stocks_lock:
+                for stock_code in stocks_to_delete:
+                    if stock_code in interested_stocks:
+                        del interested_stocks[stock_code]
+                    log_print('', '000000', f"Deleted {stock_code} from interested_stocks (10+ days old, not in holdings)")
+            save_interested_stocks_to_json()
+            log_print('', '000000', f"Cleanup completed: deleted {len(stocks_to_delete)} old interested stocks")
+        else:
+            log_print('', '000000', "Cleanup completed: no old interested stocks to delete")
+        
+        # Mark cleanup as run today
+        cleanup_run_today = True
+        
+    except Exception as e:
+        log_print('', '000000', f"Error in cleanup_old_interested_stocks: {e}")
+        traceback.print_exc()
+
+# Background thread for periodic timer handler
+background_thread = None
+thread_stop_event = threading.Event()
+
+def background_timer_thread():
+    """Background thread that calls periodic_timer_handler every 1 second"""
+    global thread_stop_event, now
+    while not thread_stop_event.is_set():
+        try:
+            periodic_timer_handler()
+        except Exception as e:
+            log_print('', '000000', f"Error in periodic_timer_handler: {e}")
+
+        # Sleep for 1 second, but check stop event periodically
+        for _ in range(10):  # Check every 0.1 seconds for 1 second total
+            if thread_stop_event.is_set():
+                break
+            time_module.sleep(0.1)
+
+bun_charts_thread = None
+bun_charts_thread_stop_event = threading.Event()
+
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+def query_bun_charts(MY_ACCESS_TOKEN, cl_stocks):
+    if not cl_stocks:
+        return
+    bun_now = datetime.now()
+    for stk_cd, stk_nm in cl_stocks:
+        bun_times[stk_cd] = bun_now
+    # Query minutes charts in parallel (limit to 4 simultaneous threads)
+    max_workers = 4 # min(4, len(cl_stocks))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {}
+        for stk_cd, stk_nm in cl_stocks:
+            future = executor.submit(get_bun_chart_throttled, MY_ACCESS_TOKEN, stk_cd, stk_nm)
+            futures[future] = stk_cd
+
+        # Collect results and update bun_charts dict
+        updated_charts = {}
+        for future in as_completed(futures):
+            stk_cd = futures[future]
+            try:
+                bun_chart = future.result()
+                updated_charts[stk_cd] = bun_chart
+            except Exception as e:
+                log_print('', '00000', f"Error getting bun_chart for {stk_cd}: {e}")
+                print(f"{now} Error getting bun_chart for {stk_cd}: {e}")
+
+    with bun_charts_lock:
+        bun_charts.update(updated_charts)
+
+
+
+def query_day_charts(MY_ACCESS_TOKEN, cl_stocks):
+    if not cl_stocks:
+        return
+    max_workers = min(4, len(cl_stocks))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {}
+        for stk_cd, stk_nm in cl_stocks:
+            future = executor.submit(get_day_chart_throttled, MY_ACCESS_TOKEN, stk_cd, stk_nm)
+            futures[future] = stk_cd
+
+        updated_daily_charts = {}
+        for future in as_completed(futures):
+            stk_cd = futures[future]
+            try:
+                day_chart = future.result()
+                updated_daily_charts[stk_cd] = day_chart
+            except Exception as e:
+                print(f"Error getting day_chart for {stk_cd}: {e}")
+
+        with daily_charts_lock:
+            now_ts = time_module.time()
+            for _stk, _day in updated_daily_charts.items():
+                daily_charts[_stk] = {'data': _day, 'ts': now_ts}
+
+
+def update_bun_charts_thread():
+    """Background thread that updates bun_charts dict in parallel for stocks with btype 'CL'"""
+    global bun_charts, bun_charts_lock, interested_stocks, bun_charts_thread_stop_event, interested_stocks_lock
+    while not bun_charts_thread_stop_event.is_set():
+        # Get token for API calls
+        try:
+            MY_ACCESS_TOKEN = get_one_token()
+        except Exception as ex:
+            log_print('', '000000', str(ex))
+            pass
+        if MY_ACCESS_TOKEN:
+            # Get list of stocks with btype 'CL'
+            cl_stocks = []
+            # Snapshot interested_stocks under lock, then release before API calls
+            with interested_stocks_lock:
+                istk_items = list(interested_stocks.items())
+            for stk_cd, stock in istk_items:
+                if stock.get('btype', '').endswith('CL'):
+                    stk_nm = stock.get('stock_name', '')
+                    if stk_nm:
+                        cl_stocks.append((stk_cd, stk_nm))
+
+            query_bun_charts(MY_ACCESS_TOKEN, cl_stocks)
+            query_day_charts(MY_ACCESS_TOKEN, cl_stocks)
+
+        # Sleep for 15 seconds before next update
+        for _ in range(150):  # Check every 0.1 seconds for 15 seconds total
+            if bun_charts_thread_stop_event.is_set():
+                break
+            time_module.sleep(0.1)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan event handler for startup and shutdown"""
+    global stored_jango_data, stored_miche_data, background_thread, thread_stop_event
+    global previous_jango_data_simplified, bun_charts_thread, bun_charts_thread_stop_event
+    global now
+
+    # Startup
+    print("Starting application...")
+    # Initialize stored jango data - first try to load from file, then update
+    log_print('', '000000', f'from lifespan calling set_new_day_true at {now}')
+    set_new_day_true()
+    calculate_pl()
+
+    try:
+        load_dictionaries_from_json()
+        print("Dictionaries loaded successfully")
+    except Exception as e:
+        print(f"Error loading dictionaries: {e}")
+
+    #fill_charts_for_CL(get_one_token()) # bun_charts is filled by thread.
+
+    print("Initializing jango data...")
+    # Load previous jango data from file
+    previous_jango_data_simplified = load_jango_data_from_json()
+    
+    try:
+        init_jango_data = get_jango('KRX')
+        print("KRX jango data initialized")
+        print(init_jango_data)
+        if apply_jango_data_update(init_jango_data):
+            print('{} jango initialized.'.format(now))
+        else:
+            print('Jango initialization skipped due to invalid/partial response')
+    except Exception as e:
+        print(f"Error initializing KRX jango data: {e}")
+    
+    # Initialize stored miche data by calling once immediately (non-blocking, allow failure)
+    print("Initializing miche data...")
+    try:
+        stored_miche_data = get_miche()
+        print("Miche data initialized")
+    except Exception as e:
+        get_miche_failed = True
+        print(f"Error initializing miche data: {e}")
+        stored_miche_data = []
+
+    # Start background thread for periodic timer handler
+    print("Starting background timer thread...")
+    try:
+        thread_stop_event.clear()
+        background_thread = threading.Thread(
+            target=background_timer_thread,
+            daemon=False,  # Non-daemon thread for better debug mode support
+            name="PeriodicTimerThread"
+        )
+        background_thread.start()
+        print("Background timer thread started successfully")
+    except Exception as e:
+        print(f"Error starting background timer thread: {e}")
+        # Don't raise - allow app to start even if thread fails
+    
+    # Start bun_charts update thread
+    print("Starting bun_charts update thread...")
+    try:
+        bun_charts_thread_stop_event.clear()
+        bun_charts_thread = threading.Thread(
+            target=update_bun_charts_thread,
+            daemon=False,
+            name="BunChartsUpdateThread"
+        )
+        bun_charts_thread.start()
+        print("Bun charts update thread started successfully")
+    except Exception as e:
+        print(f"Error starting bun_charts update thread: {e}")
+    
+    os.makedirs(IMAGE_UPLOAD_DIR, exist_ok=True)
+    print("Application startup complete")
+    yield
+    
+    # Shutdown
+    print("Shutting down application...")
+    
+    # Stop bun_charts update thread
+    print("Stopping bun_charts update thread...")
+    try:
+        bun_charts_thread_stop_event.set()
+        if bun_charts_thread and bun_charts_thread.is_alive():
+            bun_charts_thread.join(timeout=5)
+            if bun_charts_thread.is_alive():
+                print("Warning: Bun charts thread did not stop within timeout")
+            else:
+                print("Bun charts thread stopped successfully")
+    except Exception as e:
+        print(f"Error stopping bun_charts thread: {e}")
+    
+    # Stop background timer thread
+    try:
+        if background_thread and background_thread.is_alive():
+            print("Stopping background timer thread...")
+            thread_stop_event.set()
+            background_thread.join(timeout=5.0)
+            if background_thread.is_alive():
+                print("Warning: Background thread did not stop within timeout")
+            else:
+                print("Background timer thread stopped successfully")
+    except Exception as e:
+        print(f"Error stopping background timer thread: {e}")
+    print("Application shutdown complete")
+
+# FastAPI app
+app = FastAPI(lifespan=lifespan)
+
+
+def save_total_pl(yyyymmdd, total_pl):
+    """Save total_pl to pl/yyyymmdd.json"""
+    try:
+        pl_dir = 'pl'
+        os.makedirs(pl_dir, exist_ok=True)
+        pl_filepath = os.path.join(pl_dir, f'{yyyymmdd}.json')
+        with open(pl_filepath, 'w', encoding='utf-8') as f:
+            json.dump(total_pl, f, indent=2, ensure_ascii=False)
+        print(f"Saved total_pl to {pl_filepath}")
+    except Exception as e:
+        print(f"Error saving total_pl: {e}")
+
+
+def calculate_pl():
+    global today_yyyymmdd
+
+    total_pl = {}
+    key_list = get_key_list()
+    tdy_dt = today_yyyymmdd
+    for k, key in key_list.items():
+        ACCT = key['ACCT']
+        MY_ACCESS_TOKEN = get_token(key['AK'], key['SK'])  # 접근토큰
+        pl = get_pl(ACCT, MY_ACCESS_TOKEN, tdy_dt)
+        total_pl[ACCT] = pl
+    save_total_pl(today_yyyymmdd, total_pl)
+
+def order_queued_buy(bqlen):
+    global buy_queue
+    for bidx in range(bqlen):
+        bq = buy_queue[bidx]
+        trde_begin_h = bq[0]
+        stk_cd = bq[1]
+        if trde_begin_h == 8 :
+            if not nxt_tradable.get(stk_cd, True):
+                bq[0] = 9
+                trde_begin_h = 9
+                save_buy_queue_to_json()
+        if trde_begin_h == 8:
+            trde_end_h = 20
+        else:
+            trde_end_h = 16
+
+        if now.hour >= trde_begin_h and now.hour < trde_end_h:  # trade_begin_hour
+            stk_cd = bq[1]
+            stk_nm = bq[2]
+            ord_uv = bq[3]
+            ord_qty = bq[4]
+            accounts = bq[5]
+            stex = active_market() # bq[6]
+            trde_tp = bq[7]
+            log_print('', stk_cd,
+                      f"Try buy queued orders {bq[0]} o'clock : {ord_qty} shares of {stk_nm or stk_cd} at {ord_uv}")
+            results = call_issue_buy_order(stk_cd, stk_nm, ord_uv, ord_qty, accounts, stex, trde_tp)
+            all_success = all(r.get('status') == 'success' for r in results)
+            if bq[0] == 8 and nxt_order_fail(stk_cd, results[0].get('ret_status', {})):
+                # set trade begin hour to 9
+                buy_queue[bidx][0] = 9
+                save_buy_queue_to_json()
+            else:
+                # else delete that queued order
+                del buy_queue[bidx]
+                save_buy_queue_to_json()
+            break
+
+
+def equal_hh_mm(t1, t2):
+    return t1.hour == t2.hour and t1.minute == t2.minute
+
+
+def periodic_timer_handler():
+    """Periodic timer event handler that runs the trading loop logic"""
+    global prev_hour, new_day, stored_jango_data, stored_miche_data, working_status, now, cleanup_run_today
+    global wait_hour_change, calculate_pl_today, new_day, day_change_time
+
+    now = datetime.now()
+    now_hour = now.hour
+    now_time = now.time()
+    # Check if it's 20:30 and cleanup hasn't run today
+    if now_hour == 20 and now.minute == 30 and not cleanup_run_today:
+        try:
+            log_print('', '000000', f"{cur_date()} Running cleanup of old interested stocks at 20:30...")
+            cleanup_old_interested_stocks()
+        except Exception as e:
+            print(f"Error running cleanup at 20:30: {e}")
+            traceback.print_exc()
+
+    if now_hour == 23:
+        if now.minute == 0 and not calculate_pl_today:
+            calculate_pl_today = True
+            calculate_pl()
+        elif now.minute == 50 :
+            new_day = False
+
+    # Reset cleanup flag at midnight (00:00)
+    if now_hour == 0 and now.minute == 0:
+        cleanup_run_today = False
+        calculate_pl_today = False
+
+    if prev_hour is not None and now_hour != prev_hour:
+        if wait_hour_change:
+            log_print('', '000000', '{} Hour change from {} to {}'.format(cur_date(), prev_hour, now_hour))
+            wait_hour_change = False
+    prev_hour = now_hour
+    if wait_hour_change: # 장 개시 전이면 한시간씩 기다린다.
+        return
+
+    try:
+        if equal_hh_mm(now_time, day_start_time) and not new_day :
+            log_print('', '000000', f'calling set_new_day_true at {now}')
+            set_new_day_true()
+        elif equal_hh_mm(now_time, day_change_time) :
+            set_new_day_false()
+        elif is_between(now, nxt_start_time, nxt_fin_time_2000):
+            bqlen = len(buy_queue)
+            if bqlen > 0 :
+                log_print('', '00000', 'call order_queued_buy')
+                order_queued_buy(bqlen)
+            daily_work()
+    except Exception as ex:
+        log_print('', '00000', str(ex))
+        log_print('', '000000', 'Exception currrent status={}'.format(working_status))
+
+def format_account_data():
+    """Format account data for display in UI"""
+    global stored_jango_data
+    global interested_stocks, interested_stocks_lock
+    try:
+        # Determine which market is active based on current time
+        now = datetime.now()
+
+        # Get holdings from stored data for active market only
+        all_jango = stored_jango_data
+        if isinstance(all_jango, dict):
+            iterator = all_jango.values()
+        else:
+            iterator = all_jango
+            
+        formatted_data = []
+        seen_keys = set()  # Track unique combinations of account and stock_code
+        with interested_stocks_lock:
+            interested_snapshot = copy.deepcopy(interested_stocks)
+
+        for account in iterator:
+            if account.get("return_code") != 0:
+                continue
+            
+            acct_no = account.get('ACCT', '')
+            acnt_evlt_remn_indv_tot = account.get("acnt_evlt_remn_indv_tot", [])
+            
+            for stock in acnt_evlt_remn_indv_tot:
+                stk_cd = stock.get('stk_cd', '')
+                # Remove 'A' prefix if present
+                if stk_cd and stk_cd[0] == 'A':
+                    stk_cd_clean = stk_cd[1:]
+                else:
+                    stk_cd_clean = stk_cd
+                
+                stk_nm = stock.get('stk_nm', '')
+                trde_able_qty = stock.get('trde_able_qty', '0')
+                # Remove leading zeros from trde_able_qty
+                try:
+                    if trde_able_qty and len(trde_able_qty) > 4:
+                        trde_able_qty = str(int(trde_able_qty[4:].lstrip('0') or '0'))
+                    else:
+                        trde_able_qty = str(int(trde_able_qty.lstrip('0') or '0'))
+                except:
+                    trde_able_qty = '0'
+                
+                rmnd_qty = stock.get('rmnd_qty', '0')
+                # Remove leading zeros from rmnd_qty
+                try:
+                    if rmnd_qty and len(rmnd_qty) > 4:
+                        rmnd_qty = str(int(rmnd_qty[4:].lstrip('0') or '0'))
+                    else:
+                        rmnd_qty = str(int(rmnd_qty.lstrip('0') or '0'))
+                except:
+                    rmnd_qty = '0'
+                
+                pur_pric = stock.get('pur_pric', '0')
+                pur_pric_float = float(pur_pric) if pur_pric else 0.0
+                
+                cur_prc = int(stock.get('cur_prc', '0'))
+                if cur_prc < 0 :
+                    cur_prc = -cur_prc
+                cur_prc_float = float(cur_prc)
+                
+                prft_rt = stock.get('prft_rt', '0')
+                prft_rt_float = float(prft_rt) if prft_rt else 0.0
+
+                evltv_prft_raw = stock.get('evltv_prft', '0')
+                try:
+                    evltv_prft_int = int(evltv_prft_raw)
+                except (ValueError, TypeError):
+                    evltv_prft_int = 0
+                profit_loss_str = f"₩{evltv_prft_int:+,}"
+                
+                # Get preset sell price and rate from sell_prices dictionary
+                price_part = '-'
+                rate_part = '-'
+                
+                sell_cond = interested_snapshot.get(stk_cd_clean)
+                if sell_cond:
+                    
+                    if 'sellprice' in sell_cond:
+                        try:
+                            price_val = int(sell_cond['sellprice'])
+                            price_part = f"{price_val}"
+                        except (ValueError, TypeError):
+                            pass
+                    
+                    if 'sellrate' in sell_cond:
+                        try:
+                            # sellrate is stored as-is (percentage), display directly
+                            rate_val = float(sell_cond['sellrate'])
+                            rate_part = f"{rate_val:+.2f}%"
+                        except (ValueError, TypeError):
+                            pass
+
+                # Combine price and rate
+                preset_prc_rate = f"{price_part} / {rate_part}"
+                
+                # Create unique key from account and stock_code
+                unique_key = f"{acct_no}_{stk_cd_clean}"
+                
+                # Only add if not already seen (deduplicate by account and stock_code)
+                if unique_key not in seen_keys:
+                    seen_keys.add(unique_key)
+                    # Format avg_buy_price / cur_prc
+                    if pur_pric_float > 0 and cur_prc_float > 0:
+                        avg_buy_price_display = f"{pur_pric_float:,.0f} / {cur_prc_float:,.0f}"
+                    elif pur_pric_float > 0:
+                        avg_buy_price_display = f"{pur_pric_float:,.0f} / -"
+                    elif cur_prc_float > 0:
+                        avg_buy_price_display = f"- / {cur_prc_float:,.0f}"
+                    else:
+                        avg_buy_price_display = '-'
+                    
+                    formatted_data.append({
+                        'account': acct_no,
+                        'stock_code': stk_cd_clean,
+                        'stock_name': stk_nm,
+                        'tradeable_qty': trde_able_qty,
+                        'rmnd_qty': rmnd_qty,
+                        'avg_buy_price': avg_buy_price_display,
+                        'profit_rate': f"{prft_rt_float:+.2f}%",
+                        'profit_loss': profit_loss_str,
+                        'preset_prc_rate': preset_prc_rate
+                    })
+        
+        return formatted_data
+    except Exception as e:
+        print(f"Error formatting account data: {e}")
+        log_print('', '000000', f"Error formatting account data: {e}")
+        return []
+
+
+# Authentication functions
+def create_token() -> str:
+    """Create a new authentication token"""
+    token = secrets.token_urlsafe(32)
+    expiry = datetime.now() + timedelta(hours=TOKEN_EXPIRY_HOURS)
+    active_tokens[token] = {
+        'expiry': expiry,
+        'created': datetime.now()
+    }
+    print('token={}'.format(token))
+    return token
+
+def verify_token(token: str) -> bool:
+    """Verify if a token is valid"""
+    if not token or token not in active_tokens:
+        print('invalid token={}'.format(token))
+        return False
+    
+    token_data = active_tokens[token]
+    if datetime.now() > token_data['expiry']:
+        # Token expired, remove it
+        del active_tokens[token]
+        return False
+    
+    return True
+
+def cleanup_expired_tokens():
+    """Remove expired tokens from memory"""
+    now = datetime.now()
+    expired_tokens = [token for token, data in active_tokens.items() if now > data['expiry']]
+    for token in expired_tokens:
+        del active_tokens[token]
+
+async def get_current_user(token: str = Cookie(None, alias="stoken")):
+    """Dependency to get current authenticated user"""
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    if not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    return {"authenticated": True}
+
+
+def load_text_file(fn):
+    with open(fn, "rt", encoding='utf8') as inf:
+        text = inf.read()
+        return text
+
+def get_conn_base_dir() -> str:
+    """Directory for connection config files.
+    Linux: /home/cds
+    Windows: c:/temp
+    """
+    if os.name == "nt":
+        return "c:/temp"
+    return "/home/cds"
+
+def get_conn_file_path(filename: str) -> str:
+    base = get_conn_base_dir()
+    return os.path.join(base, filename)
+
+def read_conn_file_or_empty(filename: str) -> str:
+    path = get_conn_file_path(filename)
+    if not os.path.isfile(path):
+        return ""
+    with open(path, "rt", encoding="utf8") as inf:
+        return inf.read()
+
+
+# Login page
+@app.get("/login", response_class=HTMLResponse)
+@app.get("/login/", response_class=HTMLResponse)
+@app.get("/stock/login", response_class=HTMLResponse)
+@app.get("/stock/login/", response_class=HTMLResponse)
+async def login_page():
+    """Display login page"""
+    ip_suffix = get_server_ip_last_digit()
+    html_content = load_text_file('./login.html')
+    html_content = html_content.replace('{IP_SUFFIX}', ip_suffix)
+    return HTMLResponse(content=html_content)
+
+# Login API endpoint
+@app.post("/api/login")
+@app.post("/{proxy_path:path}/api/login")
+async def login(request: dict, proxy_path: str = ""):
+    """Handle login and issue token"""
+    cleanup_expired_tokens()
+    
+    username = request.get('username', '')
+    password = request.get('password', '')
+    
+    if username == LOGIN_USERNAME and password == LOGIN_PASSWORD:
+        token = create_token()
+        # Set cookie server-side using the SAME token as JSON response
+        # This ensures both cookie and JSON have the same token value
+        response = JSONResponse(content={
+            "status": "success",
+            "message": "Login successful",
+            "token": token
+        })
+        response.set_cookie(
+            key="stoken",
+            value=token,  # Use the SAME token
+            path="/",
+            max_age=24 * 60 * 60,  # 24 hours
+            httponly=False,  # Allow JavaScript access
+            samesite="lax"  # Better mobile compatibility
+        )
+        return response
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password"
+        )
+
+# Logout endpoint
+@app.post("/api/logout")
+@app.post("/{proxy_path:path}/api/logout")
+async def logout(token: str = Cookie(None, alias="stoken")):
+    """Handle logout by invalidating token"""
+    if token and token in active_tokens:
+        del active_tokens[token]
+    response = RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
+    response.delete_cookie(key="stoken", path="/")
+    return {"status": "success", "message": "Logged out successfully"}
+
+# Root redirect to login
+@app.get("/")
+async def root_redirect():
+    """Redirect root to login"""
+    return RedirectResponse(url="./login", status_code=status.HTTP_302_FOUND)
+
+@app.get("/stock", response_class=HTMLResponse)
+@app.get("/stock/", response_class=HTMLResponse)
+async def root(token: str = Cookie(None, alias="stoken")):
+    """Display account information UI"""
+    # Check authentication
+    if not token or not verify_token(token):
+        # Redirect to login - use /stock/login if accessed through proxy
+        return RedirectResponse(url="/stock/login", status_code=status.HTTP_302_FOUND)
+    
+    account_data = format_account_data()
+    ip_suffix = get_server_ip_last_digit()
+    
+    html_content = load_text_file('./autotr.html')
+    html_content = html_content.replace('{IP_SUFFIX}', ip_suffix)
+    return html_content
+
+
+@app.get("/images", response_class=HTMLResponse)
+async def images_gallery_page_root(token: str = Cookie(None, alias="stoken")):
+    if not token or not verify_token(token):
+        return RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
+    ip_suffix = get_server_ip_last_digit()
+    html_content = load_text_file("./images_gallery.html")
+    html_content = html_content.replace("{IP_SUFFIX}", ip_suffix)
+    return HTMLResponse(content=html_content)
+
+
+@app.get("/stock/images", response_class=HTMLResponse)
+async def images_gallery_page_stock(token: str = Cookie(None, alias="stoken")):
+    if not token or not verify_token(token):
+        return RedirectResponse(url="/stock/login", status_code=status.HTTP_302_FOUND)
+    ip_suffix = get_server_ip_last_digit()
+    html_content = load_text_file("./images_gallery.html")
+    html_content = html_content.replace("{IP_SUFFIX}", ip_suffix)
+    return HTMLResponse(content=html_content)
+
+@app.get("/conn", response_class=HTMLResponse)
+async def conn_files_page_root(token: str = Cookie(None, alias="stoken")):
+    if not token or not verify_token(token):
+        return RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
+    ip_suffix = get_server_ip_last_digit()
+    html_content = load_text_file("./conn_files.html")
+    html_content = html_content.replace("{IP_SUFFIX}", ip_suffix)
+    return HTMLResponse(content=html_content)
+
+@app.get("/stock/conn", response_class=HTMLResponse)
+async def conn_files_page_stock(token: str = Cookie(None, alias="stoken")):
+    if not token or not verify_token(token):
+        return RedirectResponse(url="/stock/login", status_code=status.HTTP_302_FOUND)
+    ip_suffix = get_server_ip_last_digit()
+    html_content = load_text_file("./conn_files.html")
+    html_content = html_content.replace("{IP_SUFFIX}", ip_suffix)
+    return HTMLResponse(content=html_content)
+
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_page_root(token: str = Cookie(None, alias="stoken")):
+    if not token or not verify_token(token):
+        return RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
+    ip_suffix = get_server_ip_last_digit()
+    html_content = load_text_file("./settings.html")
+    html_content = html_content.replace("{IP_SUFFIX}", ip_suffix)
+    return HTMLResponse(content=html_content)
+
+
+@app.get("/stock/settings", response_class=HTMLResponse)
+async def settings_page_stock(token: str = Cookie(None, alias="stoken")):
+    if not token or not verify_token(token):
+        return RedirectResponse(url="/stock/login", status_code=status.HTTP_302_FOUND)
+    ip_suffix = get_server_ip_last_digit()
+    html_content = load_text_file("./settings.html")
+    html_content = html_content.replace("{IP_SUFFIX}", ip_suffix)
+    return HTMLResponse(content=html_content)
+
+@app.get("/api/conn-files")
+@app.get("/stock/api/conn-files")
+async def get_conn_files_api(proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
+    """Read allowip.txt, allowcon.txt and logs.txt from configured directory."""
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+    try:
+        allowip_text = read_conn_file_or_empty("allowip.txt")
+        allowcon_text = read_conn_file_or_empty("allowcon.txt")
+        logs_text = read_conn_file_or_empty("logs.txt")
+        return {
+            "status": "success",
+            "data": {
+                "base_dir": get_conn_base_dir(),
+                "allowip": allowip_text,
+                "allowcon": allowcon_text,
+                "logs": logs_text,
+            }
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.post("/api/conn-files")
+@app.post("/stock/api/conn-files")
+async def modify_conn_files_api(request: dict, proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
+    """Modify allowip.txt, allowcon.txt and logs.txt in configured directory."""
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+    try:
+        allowip_text = request.get("allowip")
+        allowcon_text = request.get("allowcon")
+        logs_text = request.get("logs")
+        if allowip_text is None or allowcon_text is None or logs_text is None:
+            return {"status": "error", "message": "allowip, allowcon and logs are required"}
+
+        base_dir = get_conn_base_dir()
+        os.makedirs(base_dir, exist_ok=True)
+
+        allowip_path = get_conn_file_path("allowip.txt")
+        allowcon_path = get_conn_file_path("allowcon.txt")
+        logs_path = get_conn_file_path("logs.txt")
+
+        with open(allowip_path, "wt", encoding="utf8") as outf:
+            outf.write(str(allowip_text))
+        with open(allowcon_path, "wt", encoding="utf8") as outf:
+            outf.write(str(allowcon_text))
+        with open(logs_path, "wt", encoding="utf8") as outf:
+            outf.write(str(logs_text))
+
+        return {
+            "status": "success",
+            "message": "Connection files modified successfully",
+            "data": {
+                "base_dir": base_dir,
+                "allowip_path": allowip_path,
+                "allowcon_path": allowcon_path,
+                "logs_path": logs_path,
+            }
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/accounts")
+@app.get("/stock/api/accounts")
+async def get_accounts_api(proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
+    """API endpoint to get list of available accounts"""
+    # Check authentication
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+    try:
+        accounts = list(key_list.keys())
+        return {"status": "success", "data": accounts}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.get("/api/account-data")
+@app.get("/stock/api/account-data")
+async def get_account_data_api(proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
+    """API endpoint to get account data as JSON"""
+    # Check authentication
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+    account_data = await asyncio.to_thread(format_account_data)
+    current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    return {"status": "success", "data": account_data, "timestamp": current_time, "current_status": current_status}
+
+@app.get("/api/miche-data")
+@app.get("/stock/api/miche-data")
+async def get_miche_data_api(proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
+    """API endpoint to get miche (unexecuted orders) data as JSON"""
+    # Check authentication
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+    global stored_miche_data, buy_queue
+    current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    return {
+        "status": "success",
+        "data": stored_miche_data,
+        "timestamp": current_time,
+        "queued_buy": format_queued_buy(),
+    }
+
+
+@app.delete("/api/queued-buy/{queue_index}")
+@app.delete("/{proxy_path:path}/api/queued-buy/{queue_index}")
+async def delete_queued_buy_api(queue_index: int, proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
+    """API endpoint to remove a queued buy order"""
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    return delete_queued_buy(queue_index)
+
+
+stex_map = {"1": "KRX", "2": "NXT", "3": "SOR"}
+
+@app.post("/api/cancel-order")
+@app.post("/stock/api/cancel-order")
+async def cancel_order_api(request: dict, proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
+    global key_list, stex_map, stored_miche_data
+    """API endpoint to cancel an order"""
+    # Check authentication
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+
+    def _resolve_cancel_exchange(acct_no: str, orig_ord_no: str, stock_code: str) -> str:
+        """Resolve exchange (KRX/NXT/SOR) from stored miche data if possible."""
+        global stored_miche_data, stex_map
+        miche = stored_miche_data.get(acct_no) if isinstance(stored_miche_data, dict) else None
+        oso = miche.get("oso", []) if isinstance(miche, dict) else []
+        for o in oso:
+            try:
+                if o.get("ord_no") == orig_ord_no and o.get("stk_cd") == stock_code:
+                    stex_tp_txt = (o.get("stex_tp_txt") or "").strip().upper()
+                    if stex_tp_txt in {"KRX", "NXT", "SOR"}:
+                        return stex_tp_txt
+                    stex_tp = (o.get("stex_tp") or "").strip()
+                    if stex_tp in stex_map:
+                        return stex_map[stex_tp]
+            except Exception:
+                continue
+        return ""
+
+    try:
+        acct = (request.get("acct") or "").strip()  # Account number
+        stex = request.get("stex")  # 'KRX'/'NXT'/'SOR' or stex_tp ('0','1','2','3')
+        stex = stex.strip() if isinstance(stex, str) else ""
+        ord_no = str(request.get("ord_no") or "").strip()
+        stk_cd = str(request.get("stk_cd") or "").strip()
+
+        log_print(acct, stk_cd, "cancel_order_api ord_no={}".format(ord_no))
+        if not all([acct, ord_no, stk_cd]):
+            return {"status": "error", "message": "Missing required parameters"}
+
+        # Validate order number - check if it's not empty or all zeros
+        ord_no_clean = ord_no.strip().lstrip("0") if ord_no else ""
+        if not ord_no_clean:
+            return {"status": "error", "message": "Invalid order number (empty or zeros)"}
+
+        # Retrieve token from backend using account number
+        access_token = None
+        for k, key in key_list.items():
+            if (key.get("ACCT") or "").strip() == acct:
+                access_token = get_token(key["AK"], key["SK"])
+                break
+
+        if not access_token:
+            return {"status": "error", "message": "Account not found or unable to retrieve token"}
+
+        # Remove 'A' prefix from stock code if present
+        if stk_cd and stk_cd[0] == "A":
+            stk_cd = stk_cd[1:]
+
+        # Resolve exchange
+        stex_upper = stex.upper() if stex else ""
+        if stex_upper in {"KRX", "NXT", "SOR"}:
+            stex = stex_upper
+        else:
+            # If UI sends numeric stex_tp, map it. Treat '0'(통합) as unknown and try to resolve from miche.
+            if stex in stex_map:
+                stex = stex_map[stex]
+            else:
+                resolved = _resolve_cancel_exchange(acct, ord_no, stk_cd)
+                if resolved:
+                    stex = resolved
+                else:
+                    return {"status": "error", "message": "Unable to resolve exchange for cancellation (stex)"}
+
+        now = datetime.now()
+        log_print(acct, stk_cd, 'cancel from WEB market={} order={}'.format(stex, ord_no))
+        result = cancel_order_main(acct, now, access_token, stex, ord_no, stk_cd)
+
+        return {"status": "success", "message": "Order cancellation requested", "data": result}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+# 손절(CUT): 주당 손실(매수가 대비 현재가 + 매도 수수료 0.23%) 계산에 사용
+CUT_TRADING_FEE_RATE = 0.0023
+
+
+def cancel_all_buy_sell_orders_for_stock(stk_cd: str):
+    """모든 계좌에서 해당 종목의 미체결 +매수 / -매도 주문을 취소한다."""
+    global stored_miche_data, jango_token
+    now = datetime.now()
+    stk_norm = _normalize_stk_cd(stk_cd)
+    results = []
+    stex_resolve = {"1": "KRX", "2": "NXT", "3": "SOR"}
+    if not isinstance(stored_miche_data, dict):
+        return results
+    for ACCT, miche in list(stored_miche_data.items()):
+        if not isinstance(miche, dict) or "oso" not in miche:
+            continue
+        oso = miche.get("oso") or []
+        access_token = jango_token.get(ACCT)
+        if not access_token:
+            continue
+        for m in oso:
+            try:
+                mstk = _normalize_stk_cd(m.get("stk_cd", ""))
+                if mstk != stk_norm:
+                    continue
+                io_nm = (m.get("io_tp_nm") or "").strip()
+                if io_nm not in ("+매수", "-매도"):
+                    continue
+                ord_no = str(m.get("ord_no") or "").strip()
+                if not ord_no or not ord_no.lstrip("0"):
+                    continue
+                stex = (m.get("stex_tp_txt") or "").strip().upper()
+                if stex not in ("KRX", "NXT", "SOR"):
+                    stex_tp = (m.get("stex_tp") or "").strip()
+                    stex = stex_resolve.get(stex_tp, "SOR")
+                log_print(ACCT, stk_norm, "cancel_all_buy_sell_orders_for_stock {} ord_no={}".format(io_nm, ord_no))
+                r = cancel_order_main(ACCT, now, access_token, stex, ord_no, stk_norm)
+                results.append({"account": ACCT, "ord_no": ord_no, "side": io_nm, "result": r})
+            except Exception as ex:
+                log_print(ACCT, stk_norm, "cancel_all_buy_sell_orders_for_stock error: {}".format(ex))
+                results.append({"account": ACCT, "error": str(ex)})
+    return results
+
+
+def _parse_qty_str(qty_raw):
+    """format_account_data 와 동일한 방식으로 잔고 수량 문자열을 정수로 변환."""
+    if qty_raw is None:
+        return 0
+    s = str(qty_raw).strip()
+    try:
+        if s and len(s) > 4:
+            return int(s[4:].lstrip("0") or "0")
+        return int(s.lstrip("0") or "0")
+    except (ValueError, TypeError):
+        return 0
+
+
+def _find_holding_indv_for_cut(acct_no: str, stk_cd_norm: str, jango_snapshot: dict):
+    """잔고 스냅샷에서 계좌·종목에 해당하는 한 줄을 찾는다."""
+    if not isinstance(jango_snapshot, dict):
+        log_print('', '000000', 'jango_snapshot is not an instance')
+        return None
+    acct_jango = jango_snapshot.get(acct_no)
+    if not isinstance(acct_jango, dict):
+        log_print('', '000000', 'acct_jango is not an instance')
+        return None
+    # Some responses use int 0, others string "0"/"0000"/"200"
+    if not _is_success_return_code(acct_jango.get("return_code")):
+        log_print('', '000000', 'jango return_code is not a success')
+        return None
+    rows = acct_jango.get("acnt_evlt_remn_indv_tot") or []
+    for indv in rows:
+        if _normalize_stk_cd(indv.get("stk_cd", "")) == stk_cd_norm:
+            return indv
+    log_print('', '000000', f'No stock for {stk_cd_norm} is found in account {acct_no}')
+    return None
+
+
+def _stop_loss_cut_sync(request: dict):
+    """
+    손절(CUT) 단일 API (sync):
+    1) sell price / sell rate / sell gap 을 0으로 저장
+    2) 해당 종목 미체결 매수·매도 주문 취소
+    3) 손절 금액·매수가·현재가·수수료 0.23% 로 매도 수량 산출 후 지정가 매도
+    """
+    global stored_miche_data, old_sel_price, interested_stocks, interested_stocks_lock
+    global stored_jango_data
+    try:
+        stock_code = (request.get("stock_code") or "").strip()
+        stock_name = (request.get("stock_name") or "").strip()
+        try:
+            stop_loss_amount = float(request.get("stop_loss_amount"))
+        except (TypeError, ValueError):
+            stop_loss_amount = 0.0
+
+        if not stock_code:
+            return {"status": "error", "message": "stock_code is required"}
+        log_print('', stock_code, f"Loss cut trying {stop_loss_amount}")
+
+        # 1) 매도 규칙만 0으로 (stime·bamount 등 기존 필드는 유지)
+        updated_interested = False
+        stock_name_resolved = stock_name.strip() if stock_name else ""
+        with interested_stocks_lock:
+            if stock_code in interested_stocks:
+                st = interested_stocks[stock_code]
+                if not stock_name_resolved:
+                    stock_name_resolved = (st.get("stock_name") or "").strip()
+                st["sellprice"] = "0"
+                st["sellrate"] = 0.0
+                st["sellgap"] = "0"
+                updated_interested = True
+        if updated_interested:
+            if not stock_name_resolved:
+                stock_name_resolved = get_stockinfo(stock_code).get("name", "")
+                with interested_stocks_lock:
+                    if stock_code in interested_stocks:
+                        interested_stocks[stock_code]["stock_name"] = stock_name_resolved
+            elif stock_name:
+                with interested_stocks_lock:
+                    if stock_code in interested_stocks:
+                        interested_stocks[stock_code]["stock_name"] = stock_name_resolved
+            if not save_interested_stocks_to_json():
+                return {"status": "error", "message": "Failed to save interested stocks (sell settings)"}
+
+        # 2) 미체결 매수·매도 취소
+        cancel_results = cancel_all_buy_sell_orders_for_stock(stock_code)
+
+        # 3) 모든 계좌에 동일하게 CUT 적용
+        per_account_results = []
+        any_success = False
+        attempted_accounts = 0
+        target_accounts = list(key_list.keys())
+        for account in target_accounts:
+            indv = _find_holding_indv_for_cut(account, stock_code, stored_jango_data)
+            if not indv:
+                per_account_results.append({
+                    "account": account,
+                    "status": "skipped",
+                    "message": "No holding row for account/stock",
+                })
+                log_print(account, stock_code, "No holding row for account/stock")
+                continue
+
+            pur_pric_str = indv.get("pur_pric", "0")
+            try:
+                pur_pric = float(pur_pric_str) if pur_pric_str else 0.0
+            except (ValueError, TypeError):
+                pur_pric = 0.0
+
+            cur_prc = int(indv.get("cur_prc", "0") or "0")
+            if cur_prc < 0:
+                cur_prc = -cur_prc
+            cur_prc_f = float(cur_prc)
+            trde_able = _parse_qty_str(indv.get("trde_able_qty", "0"))
+            stk_nm = (indv.get("stk_nm") or stock_name or "").strip()
+
+            if pur_pric <= 0 or cur_prc_f <= 0:
+                per_account_results.append({
+                    "account": account,
+                    "status": "error",
+                    "message": "Invalid average buy price or current price in holdings",
+                })
+                log_print(account, stock_code, "Invalid average buy price or current price in holdings")
+                continue
+            if trde_able <= 0:
+                per_account_results.append({
+                    "account": account,
+                    "status": "skipped",
+                    "message": "Tradeable quantity is 0",
+                })
+                log_print(account, stock_code, "Tradeable quantity is 0")
+                continue
+
+            # 주당 손절비용(원): (매수가-현재가) + (현재가*수수료)
+            # N = 목표 손절액 / 주당 손절비용
+            loss_per_share = (pur_pric - cur_prc_f) + (cur_prc_f * CUT_TRADING_FEE_RATE)
+            if loss_per_share <= 0:
+                per_account_results.append({
+                    "account": account,
+                    "status": "skipped",
+                    "message": "Computed loss per share is not positive",
+                    "pur_pric": pur_pric,
+                    "cur_prc": cur_prc_f,
+                    "loss_per_share": loss_per_share,
+                })
+                log_print(account, stock_code, "Computed loss per share is not positive")
+                continue
+
+            qty_raw = int(stop_loss_amount // loss_per_share)
+            qty = min(qty_raw, trde_able)
+            if qty <= 0:
+                per_account_results.append({
+                    "account": account,
+                    "status": "skipped",
+                    "message": "Computed sell quantity is 0",
+                    "loss_per_share": loss_per_share,
+                    "tradeable_qty": trde_able,
+                })
+                log_print(account, stock_code, "Computed sell quantity is 0")
+                continue
+
+            access_token = jango_token.get(account)
+            if not access_token:
+                per_account_results.append({
+                    "account": account,
+                    "status": "error",
+                    "message": "Unable to resolve access token for account",
+                })
+                log_print(account, stock_code, "Unable to resolve access token for account")
+                continue
+
+            # 손절 계산 후, 이미 확보한 현재가(cur_prc) 기준 지정가(호가단위 반영)로 매도
+            cut_sell_price = round_trunc(cur_prc)
+            if cut_sell_price <= 0:
+                per_account_results.append({
+                    "account": account,
+                    "status": "error",
+                    "message": "Invalid cut sell price",
+                })
+                log_print(account, stock_code, "Invalid cut sell price")
+                continue
+
+            attempted_accounts += 1
+            attempted_accounts += 1
+            ret_status = sell_order(
+                access_token,
+                dmst_stex_tp="SOR",
+                stk_cd=stock_code,
+                ord_qty=str(qty),
+                ord_uv=str(cut_sell_price),
+                trde_tp="0",
+                cond_uv="",
+            )
+            log_print(
+                account,
+                stock_code,
+                "stop_loss_cut limit sell_order price={} qty={} ret={}".format(cut_sell_price, qty, ret_status),
+            )
+
+            ok_sell = False
+            if isinstance(ret_status, dict):
+                ok_sell = _is_success_return_code(ret_status.get("return_code"))
+            if ok_sell:
+                any_success = True
+
+            per_account_results.append({
+                "account": account,
+                "status": "success" if ok_sell else "error",
+                "message": "CUT order placed" if ok_sell else (ret_status.get("return_msg") if isinstance(ret_status, dict) else "Sell order failed"),
+                "stop_loss_amount": stop_loss_amount,
+                "loss_per_share": loss_per_share,
+                "requested_qty": qty_raw,
+                "sell_qty": qty,
+                "tradeable_qty": trde_able,
+                "pur_pric": pur_pric,
+                "cur_prc": cur_prc_f,
+                "cut_sell_price": cut_sell_price,
+                "sell_order_type": "limit",
+                "sell_result": ret_status,
+                "stock_name": stk_nm,
+            })
+
+        if attempted_accounts == 0:
+            return {
+                "status": "error",
+                "message": "손절 대상을 가진 계정이 없습니다.",
+                "data": {
+                    "settings_cleared": True,
+                    "cancelled_orders": cancel_results,
+                    "per_account": per_account_results,
+                },
+            }
+
+        return {
+            "status": "success" if any_success else "error",
+            "message": "CUT applied to all accounts",
+            "data": {
+                "settings_cleared": True,
+                "cancelled_orders": cancel_results,
+                "target_accounts": target_accounts,
+                "attempted_accounts": attempted_accounts,
+                "per_account": per_account_results,
+            },
+        }
+    except Exception as e:
+        traceback.print_exc()
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/stop-loss-cut")
+@app.post("/{proxy_path:path}/api/stop-loss-cut")
+async def stop_loss_cut_api(request: dict, proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    return await asyncio.to_thread(_stop_loss_cut_sync, request)
+
+
+def _split_sell_execute_sync(request: dict):
+    """Cancel existing sells, then record one request for the next sell cycle."""
+    global interested_stocks, interested_stocks_lock
+    try:
+        stock_code = _normalize_stk_cd(request.get("stock_code", ""))
+        stock_name = (request.get("stock_name") or "").strip()
+        if not stock_code:
+            return {"status": "error", "message": "stock_code is required"}
+
+        try:
+            split_request = SplitRequest(stock_code,
+                                         request.get("split_qty", 0), request.get("split_price", 0),
+                                        request.get("split_rate", 0), stock_name )
+        except (TypeError, ValueError):
+            log_print('', '000000', "Invalid split sell values")
+            return {"status": "error", "message": "Invalid split sell values"}
+
+        log_print('', stock_code,
+                  f'split sell request {stock_name} qty={split_request.qty} '
+                  f'prc={split_request.price} rate={split_request.rate}')
+        if split_request.qty <= 0:
+            return {"status": "error", "message": "Split Qty must be > 0"}
+        if split_request.price <= 0 and split_request.rate == 0.0:
+            return {"status": "error", "message": "Split Price or Rate is required"}
+
+        if not stock_name:
+            with interested_stocks_lock:
+                st0 = interested_stocks.get(stock_code) or {}
+                stock_name = (st0.get("stock_name") or "").strip()
+            if not stock_name:
+                stock_name = get_stockinfo(stock_code).get("name", "")
+        split_request.name = stock_name
+
+        protected = _get_split_sell_protected(stock_code)
+        cancel_results = _cancel_all_sell_orders_for_stock(stock_code, skip_prices=protected)
+        _record_split_sell_request(split_request)
+
+        log_print('', stock_code,
+                  f'split sell recorded qty={split_request.qty} '
+                  f'price={split_request.price} rate={split_request.rate} '
+                  f'canceled={len(cancel_results)} '
+                  f'protected={protected}')
+
+        return {
+            "status": "success",
+            "message": "Split sell recorded; will run on the next sell cycle",
+            "data": {
+                "split_qty": split_request.qty,
+                "split_price": split_request.price,
+                "split_rate": split_request.rate,
+                "protect_prices": sorted(protected),
+                "canceled_orders": cancel_results,
+            },
+        }
+    except Exception as e:
+        exmsg = str(e)
+        log_print('', '000000', f'3342 {exmsg}')
+        return {"status": "error", "message": exmsg }
+
+
+@app.post("/api/split-sell")
+@app.post("/{proxy_path:path}/api/split-sell")
+async def split_sell_api(request: dict, proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    return await asyncio.to_thread(_split_sell_execute_sync, request)
+
+
+@app.get("/api/split-sell-protected/{stock_code}")
+@app.get("/{proxy_path:path}/api/split-sell-protected/{stock_code}")
+async def get_split_sell_protected_api(
+        stock_code: str, proxy_path: str = "",
+        token: str = Cookie(None, alias="stoken")):
+    """Return protected split-sell prices for one stock."""
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    stk_cd = _normalize_stk_cd(stock_code)
+    prices = sorted(_get_split_sell_protected(stk_cd))
+    return {
+        "status": "success",
+        "data": {"stock_code": stk_cd, "prices": prices},
+    }
+
+
+@app.delete("/api/split-sell-protected/{stock_code}")
+@app.delete("/{proxy_path:path}/api/split-sell-protected/{stock_code}")
+async def clear_split_sell_protected_api(
+        stock_code: str, proxy_path: str = "",
+        token: str = Cookie(None, alias="stoken")):
+    """Clear protected split-sell prices for one stock."""
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    stk_cd = _normalize_stk_cd(stock_code)
+    removed = sorted(_clear_split_sell_protected(stk_cd))
+    return {
+        "status": "success",
+        "message": "Split sell protected prices cleared",
+        "data": {"stock_code": stk_cd, "removed_prices": removed},
+    }
+
+
+def cancel_related_buy_order(stk_cd):
+    global stored_miche_data, jango_token
+    now = datetime.now()
+    cancel_count = 0
+    for ACCT, miche in stored_miche_data.items():
+        if 'oso' in miche:
+            oso = miche['oso']
+            for m in oso:
+                #print('io_tp_nm=', m['io_tp_nm'])
+                if m['stk_cd'] == stk_cd and m['io_tp_nm']  == '+매수' :
+                    log_print(ACCT, stk_cd, 'cancel_related_buy_order {}'.format(m['ord_no']))
+                    result = cancel_order_main(ACCT, now, jango_token[ACCT], m['stex_tp_txt'], m['ord_no'], stk_cd)
+                    print('cancel_related_buy_order ', result)
+                    log_print(ACCT, stk_cd, 'cancel_related_buy_order {}'.format(result))
+                    cancel_count += 1
+    return cancel_count
+
+
+def issue_buy_order(stk_nm, stk_cd, ord_uv, ord_qty, stex, trde_tp, account):
+    """Issue buy order for a specific account"""
+    global key_list
+    
+    if not account:
+        return {"status": "error", "message": "Account parameter is required"}
+    
+    # Find specific account
+    if account not in key_list:
+        return {"status": "error", "message": f"Account {account} not found"}
+    
+    key = key_list[account]
+    access_token = get_token(account, key['AK'], key['SK'])
+
+    if not access_token:
+        return {"status": "error", "message": "Unable to retrieve token"}
+
+    # Convert price and amount to strings (as expected by buy_order)
+    ord_uv_str = str(ord_uv)
+    ord_qty_str = str(ord_qty)
+
+    log_print(account, stk_cd, 'issue buy order for account {}: {}, {}, {}, {}, {}'.format(account, ord_uv_str, ord_uv, ord_qty, stex, trde_tp))
+
+    # Place buy order
+    ret_status = buy_order(
+        MY_ACCESS_TOKEN=access_token,
+        stk_nm=stk_nm,
+        dmst_stex_tp=stex,
+        stk_cd=stk_cd,
+        ord_qty=ord_qty_str,
+        ord_uv=ord_uv_str,
+        trde_tp=trde_tp,
+        cond_uv=''
+    )
+
+    log_print(account, stk_cd, 'buy_order_result for account {}: {}'.format(account, ret_status))
+
+    # Check return status
+    if isinstance(ret_status, dict):
+        rcde = ret_status.get('return_code')
+        rmsg = ret_status.get('return_msg', '')
+        if not _is_success_return_code(rcde):
+            return {"status": "error", "message": f"Buy order failed: {rmsg}", "return_code": rcde}
+    return ret_status
+
+
+def active_market():
+    now = datetime.now()
+    if is_between(now, nxt_start_time, nxt_end_time):
+        return 'NXT'
+    if is_between(now, nxt_end_time, krx_start_time):  # NXT 끝나고 KRX 시작 전
+        return ''
+    if is_between(now, krx_start_time, krx_end_time_1531):
+        return 'KRX'
+    if is_between(now, krx_end_time_1531, nxt_fin_time_2000):  # KRX 거래소 시작시간과 NXT 종료 시간 사이
+        return 'NXT'
+    return ''
+
+
+buy_queue = []
+BUY_QUEUE_FILE = 'buy_queue.json'
+
+
+def save_buy_queue_to_json():
+    """Persist buy_queue to BUY_QUEUE_FILE."""
+    global buy_queue
+    try:
+        # Store as list-of-lists so entries stay mutable after reload
+        data = []
+        for bq in buy_queue:
+            try:
+                data.append(list(bq))
+            except TypeError:
+                continue
+        with open(BUY_QUEUE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        print(f"Saved buy_queue to {BUY_QUEUE_FILE}: {len(data)} entries")
+        return True
+    except Exception as e:
+        print(f"Error saving buy_queue: {e}")
+        traceback.print_exc()
+        return False
+
+
+def load_buy_queue_from_json():
+    """Load buy_queue from BUY_QUEUE_FILE at startup."""
+    global buy_queue
+    if not os.path.exists(BUY_QUEUE_FILE):
+        buy_queue = []
+        print(f"No {BUY_QUEUE_FILE}; starting with empty buy_queue")
+        return
+    try:
+        with open(BUY_QUEUE_FILE, 'r', encoding='utf-8') as f:
+            loaded = json.load(f)
+        if not isinstance(loaded, list):
+            print(f"Invalid buy_queue file format; starting empty")
+            buy_queue = []
+            return
+        normalized = []
+        for item in loaded:
+            if isinstance(item, list) and len(item) >= 8:
+                entry = list(item[:8])
+                # Ensure accounts is a list
+                accounts = entry[5]
+                if not isinstance(accounts, list):
+                    if isinstance(accounts, str):
+                        accounts = [a.strip() for a in accounts.split(',') if a.strip()]
+                    else:
+                        accounts = list(accounts) if accounts else []
+                    entry[5] = accounts
+                normalized.append(entry)
+            elif isinstance(item, dict):
+                accounts = item.get('accounts', [])
+                if not isinstance(accounts, list):
+                    if isinstance(accounts, str):
+                        accounts = [a.strip() for a in accounts.split(',') if a.strip()]
+                    else:
+                        accounts = list(accounts) if accounts else []
+                normalized.append([
+                    item.get('trade_begin_hour', 8),
+                    item.get('stock_code') or item.get('stk_cd') or '',
+                    item.get('stock_name') or item.get('stk_nm') or '',
+                    item.get('price', item.get('ord_uv', 0)),
+                    item.get('qty', item.get('ord_qty', 0)),
+                    accounts,
+                    item.get('market', item.get('stex', '')),
+                    item.get('trade_type', item.get('trde_tp', '0')),
+                ])
+        buy_queue = normalized
+        print(f"Loaded buy_queue from {BUY_QUEUE_FILE}: {len(buy_queue)} entries")
+    except Exception as e:
+        print(f"Error loading buy_queue: {e}")
+        traceback.print_exc()
+        buy_queue = []
+
+
+def format_queued_buy():
+    """Format buy_queue entries for API/UI display."""
+    global buy_queue
+    formatted = []
+    for idx, bq in enumerate(buy_queue):
+        try:
+            trade_begin_hour, stk_cd, stk_nm, ord_uv, ord_qty, accounts, stex, trde_tp = bq
+        except (TypeError, ValueError):
+            continue
+        if stk_cd and str(stk_cd)[0] == 'A':
+            stk_cd = str(stk_cd)[1:]
+        if not isinstance(accounts, list):
+            if isinstance(accounts, str):
+                accounts = [acc.strip() for acc in accounts.split(',') if acc.strip()]
+            else:
+                accounts = list(accounts) if accounts else []
+        try:
+            price = int(ord_uv)
+            qty = int(ord_qty)
+        except (TypeError, ValueError):
+            price = ord_uv
+            qty = ord_qty
+        formatted.append({
+            'queue_index': idx,
+            'trade_begin_hour': trade_begin_hour,
+            'stock_code': stk_cd or '',
+            'stock_name': stk_nm or '',
+            'price': price,
+            'qty': qty,
+            'amount': (price * qty) if isinstance(price, int) and isinstance(qty, int) else 0,
+            'accounts': accounts,
+            'market': stex or '',
+            'trade_type': trde_tp or '',
+        })
+    return formatted
+
+
+def delete_queued_buy(queue_index: int):
+    """Remove one entry from buy_queue by index."""
+    global buy_queue
+    try:
+        idx = int(queue_index)
+    except (TypeError, ValueError):
+        return {"status": "error", "message": "Invalid queue index"}
+    if idx < 0 or idx >= len(buy_queue):
+        return {"status": "error", "message": f"Queue index {idx} not found"}
+    removed = buy_queue.pop(idx)
+    save_buy_queue_to_json()
+    try:
+        trade_begin_hour, stk_cd, stk_nm, ord_uv, ord_qty, accounts, stex, trde_tp = removed
+        log_print('', stk_cd or '', f"Deleted queued buy #{idx}: {ord_qty} shares of {stk_nm or stk_cd} at {ord_uv}")
+    except (TypeError, ValueError):
+        log_print('', '000000', f"Deleted queued buy #{idx}")
+    return {
+        "status": "success",
+        "message": "Queued buy removed",
+        "queued_buy": format_queued_buy(),
+    }
+
+
+def call_issue_buy_order(stk_cd, stk_nm, ord_uv, ord_qty, accounts, stex, trde_tp):
+    stex = 'SOR' # 20260602 매수 주문은 그냥 SOR가 낫지 않은가 생각, 시간외 매수 주문은 안 하니까.
+    results = []
+    for account in accounts:
+        try:
+            ret_status = issue_buy_order(stk_nm, stk_cd, ord_uv, ord_qty, stex, trde_tp, account=account)
+            log_print(account, stk_cd, ret_status)
+            rc = ret_status.get('return_code') if isinstance(ret_status, dict) else None
+            ok = _is_success_return_code(rc)
+            results.append({
+                'account': account,
+                'status': 'success' if ok else 'error',
+                'ret_status': ret_status
+            })
+            if not ok:
+                return results
+        except Exception as e:
+            msg = 'buy_order_api exception for account {}: {}'.format(account, e)
+            log_print('', msg)
+            print(msg)
+            results.append({
+                'account': account,
+                'status': 'error',
+                'message': str(e)
+            })
+            return results
+    return results
+
+@app.post("/api/buy-order")
+@app.post("/stock/api/buy-order")
+async def buy_order_api(request: dict, proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
+    global buy_queue
+    """API endpoint to place a buy order for specified accounts"""
+    # Check authentication
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+
+    try:
+        stk_cd = request.get('stock_code')
+        stk_nm = request.get('stock_name')
+        ord_uv = int(request.get('price'))  # Order price
+        qty_raw = request.get('qty', None)
+        ord_qty = None
+        ord_amount = 0
+
+        # Prefer explicit qty (share quantity) when provided
+        if qty_raw is not None and str(qty_raw).strip() != '':
+            try:
+                qty_val = int(float(qty_raw))
+            except (ValueError, TypeError):
+                return {"status": "error", "message": "qty must be an integer"}
+            if qty_val <= 0:
+                return {"status": "error", "message": "qty must be greater than 0"}
+            ord_qty = qty_val
+            ord_amount = ord_qty * ord_uv
+        else:
+            ord_amount = int(request.get('amount'))
+            if ord_amount < 1000: # 1000이하의 금액이 들어오면 10,000을 곱해준다.
+                log_print('', stk_cd, 'buy amount = {}, less than 1000'.format(ord_amount))
+                ord_amount *= 10000
+                log_print('', stk_cd, 'buy amount = changed to {}, less than 1000'.format(ord_amount))
+            ord_qty = ord_amount // ord_uv
+        accounts = request.get('accounts', [])  # List of accounts
+
+        #stex = 'SOR' # 20260409 this make many problems
+        stex = active_market()
+        #if stex == '':
+        #    return {"status": "error", "message": "Market is not active."}
+
+        trde_tp = '0'
+
+        now = datetime.now()
+
+        if not all([stk_cd, ord_uv, ord_qty]):
+            return {"status": "error", "message": "Missing required parameters: stock_code, price, and amount or qty"}
+
+        if ord_uv <= 0:
+            return {"status": "error", "message": "Price must be greater than 0"}
+        if ord_qty <= 0:
+            return {"status": "error", "message": "Quantity must be greater than 0"}
+
+        # Remove 'A' prefix from stock code if present
+        if stk_cd[0] == 'A':
+            stk_cd = stk_cd[1:]
+
+        # If no accounts specified, use all accounts
+        if not accounts or len(accounts) == 0:
+            accounts = list(key_list.keys())
+        print('buy_order_api accounts={}'.format(accounts))
+
+        buy_queue.append([8, stk_cd, stk_nm, ord_uv, ord_qty, accounts, stex, trde_tp])
+        save_buy_queue_to_json()
+        msg = f"Buy orders queued for {8} o'clock : {ord_qty} shares of {stk_nm or stk_cd} at {ord_uv}"
+        log_print('', stk_cd, msg)
+        return {
+            'status': 'success',
+            'message': msg
+        }
+
+    except Exception as e:
+        print('buy_order_api exception: {}'.format(e))
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/sell-prices")
+@app.get("/{proxy_path:path}/api/sell-prices")
+async def get_sell_prices_api(proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
+    """API endpoint to get sell prices"""
+    # Check authentication
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+    sell_prices = {}
+    current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    return {"status": "success", "data": sell_prices, "timestamp": current_time}
+
+@app.delete("/api/sell-prices/{stock_code}")
+@app.delete("/{proxy_path:path}/api/sell-prices/{stock_code}")
+async def delete_sell_prices_api(stock_code: str, proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
+    """API endpoint to delete sell price/rate entry completely"""
+    # Check authentication
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+    global interested_stocks, interested_stocks_lock
+    print('2797')
+    try:
+        if not stock_code:
+            return {"status": "error", "message": "stock_code is required"}
+
+        print('2802')
+        # Delete the entire entry regardless of its contents
+        with interested_stocks_lock:
+            if stock_code in interested_stocks:
+                interested_stocks[stock_code]['sellprice'] = '0'
+                interested_stocks[stock_code]['sellrate'] = 0
+                found = True
+            else:
+                found = False
+
+        if found:
+            # Save to file
+            if save_interested_stocks_to_json():
+                return {"status": "success", "message": f"Sell price/rate deleted for {stock_code}"}
+            else:
+                return {"status": "error", "message": "Failed to save to file"}
+        else:
+            return {"status": "error", "message": f"Stock code {stock_code} not found"}
+    except Exception as e:
+        print('2814')
+        return {"status": "error", "message": str(e)}
+
+@app.get("/api/auto-sell")
+@app.get("/stock/api/auto-sell")
+async def get_auto_sell_api(proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
+    """API endpoint to get auto sell flag status for all accounts"""
+    # Check authentication
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+    global auto_sell_enabled
+    return {"status": "success", "data": auto_sell_enabled}
+
+@app.post("/api/auto-sell")
+@app.post("/stock/api/auto-sell")
+async def set_auto_sell_api(request: dict, proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
+    """API endpoint to set auto sell flag for a specific account"""
+    # Check authentication
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+    global auto_sell_enabled
+    try:
+        account = request.get('account')
+        enabled = request.get('enabled')
+        
+        if account is None:
+            return {"status": "error", "message": "Missing 'account' parameter"}
+        if enabled is None:
+            return {"status": "error", "message": "Missing 'enabled' parameter"}
+        
+        # Validate mode
+        valid_modes = ['NONE', 'BUY', 'SELL', 'BOTH']
+        if enabled not in valid_modes:
+            return {"status": "error", "message": f"Invalid mode. Must be one of {valid_modes}"}
+            
+        auto_sell_enabled[account] = enabled
+        # Save to file
+        if save_auto_sell_to_json():
+            return {"status": "success", "enabled": auto_sell_enabled[account], "message": f"Auto trade set to {auto_sell_enabled[account]} for account {account}"}
+        else:
+            return {"status": "error", "message": "Failed to save auto sell status to file"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/pc-settings")
+@app.get("/stock/api/pc-settings")
+async def get_pc_settings_api(token: str = Cookie(None, alias="stoken")):
+    """Return current pc_color / pc_sellrate / pc_bamount."""
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+    return {"status": "success", "data": get_pc_settings_snapshot()}
+
+
+@app.post("/api/pc-settings")
+@app.post("/stock/api/pc-settings")
+async def set_pc_settings_api(request: dict, token: str = Cookie(None, alias="stoken")):
+    """Update and persist pc_color / pc_sellrate / pc_bamount."""
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+    global pc_color, pc_sellrate, pc_bamount
+    try:
+        if not isinstance(request, dict):
+            return {"status": "error", "message": "Invalid request body"}
+
+        new_color = request.get('pc_color', request.get('color'))
+        new_sellrate = request.get('pc_sellrate', request.get('sellrate'))
+        new_bamount = request.get('pc_bamount', request.get('bamount'))
+
+        with pc_settings_lock:
+            if new_color is not None:
+                color_s = str(new_color).strip()
+                if not color_s:
+                    return {"status": "error", "message": "pc_color is empty"}
+                pc_color = color_kor_to_eng(color_s)
+            if new_sellrate is not None:
+                try:
+                    pc_sellrate = float(new_sellrate)
+                except (ValueError, TypeError):
+                    return {"status": "error", "message": "pc_sellrate must be a number"}
+            if new_bamount is not None:
+                try:
+                    pc_bamount = int(float(new_bamount))
+                except (ValueError, TypeError):
+                    return {"status": "error", "message": "pc_bamount must be an integer"}
+
+        if save_pc_settings_to_json():
+            data = get_pc_settings_snapshot()
+            return {"status": "success", "data": data, "message": "Settings saved"}
+        return {"status": "error", "message": "Failed to save settings to file"}
+    except Exception as e:
+        traceback.print_exc()
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/interested-stocks")
+@app.get("/{proxy_path:path}/api/interested-stocks")
+async def get_interested_stocks_api(proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
+    """API endpoint to get interested stocks list"""
+    # Check authentication
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+    global interested_stocks, interested_stocks_lock
+    current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    with interested_stocks_lock:
+        data = copy.deepcopy(interested_stocks)
+    return {"status": "success", "data": data, "timestamp": current_time}
+
+
+@app.get("/api/sell-exclude")
+@app.get("/{proxy_path:path}/api/sell-exclude")
+async def get_sell_exclude_api(proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
+    """API endpoint to get the sell-exclude list ({stock_code: stock_name})"""
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+    global sell_exclude, sell_exclude_lock
+    current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    with sell_exclude_lock:
+        data = copy.deepcopy(sell_exclude)
+    return {"status": "success", "data": data, "timestamp": current_time}
+
+
+@app.post("/api/sell-exclude")
+@app.post("/{proxy_path:path}/api/sell-exclude")
+async def add_sell_exclude_api(request: dict, proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
+    """API endpoint to add a stock to the sell-exclude list"""
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+    return await asyncio.to_thread(_add_sell_exclude_sync, request)
+
+
+def _add_sell_exclude_sync(request: dict):
+    global sell_exclude, sell_exclude_lock
+    try:
+        stock_code = _normalize_stk_cd((request.get('stock_code') or '').strip())
+        stock_name = (request.get('stock_name') or '').strip()
+        if not stock_code:
+            return {"status": "error", "message": "stock_code is required"}
+        if not stock_name:
+            try:
+                stock_name = get_stockinfo(stock_code).get('name', '')
+            except Exception:
+                stock_name = ''
+        with sell_exclude_lock:
+            sell_exclude[stock_code] = stock_name
+        if save_sell_exclude_to_json():
+            log_print('', stock_code, f"Added to sell-exclude list: {stock_name}")
+            with sell_exclude_lock:
+                data = copy.deepcopy(sell_exclude)
+            return {"status": "success", "message": f"Stock {stock_code} added to sell-exclude list", "data": data}
+        return {"status": "error", "message": "Failed to save sell-exclude list"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.delete("/api/sell-exclude/{stock_code}")
+@app.delete("/{proxy_path:path}/api/sell-exclude/{stock_code}")
+async def delete_sell_exclude_api(stock_code: str, proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
+    """API endpoint to remove a stock from the sell-exclude list"""
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+    return await asyncio.to_thread(_delete_sell_exclude_sync, stock_code)
+
+
+def _delete_sell_exclude_sync(stock_code: str):
+    global sell_exclude, sell_exclude_lock
+    try:
+        code = _normalize_stk_cd((stock_code or '').strip())
+        if not code:
+            return {"status": "error", "message": "stock_code is required"}
+        with sell_exclude_lock:
+            exists = code in sell_exclude
+            if exists:
+                del sell_exclude[code]
+        if not exists:
+            return {"status": "error", "message": f"Stock code {code} not found in sell-exclude list"}
+        if save_sell_exclude_to_json():
+            return {"status": "success", "message": f"Stock {code} removed from sell-exclude list"}
+        return {"status": "error", "message": "Failed to save sell-exclude list"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+'''
+@app.middleware("http")
+async def print_all_headers(request: Request, call_next):
+    headers_dict = dict(request.headers)
+
+    print("===== REQUEST HEADERS =====")
+    print(headers_dict)
+    print("===========================")
+    body_bytes = await request.body()
+
+    if body_bytes:
+        try:
+            body = json.loads(body_bytes)
+            print("===== REQUEST JSON BODY =====")
+            print(body)
+            print("============================")
+        except json.JSONDecodeError:
+            print("===== REQUEST BODY (non-JSON) =====")
+            print(body_bytes)
+
+    async def receive():
+        return {
+            "type": "http.request",
+            "body": body_bytes,
+            "more_body": False,
+        }
+
+    request._receive = receive
+    return await call_next(request)
+'''
+
+
+def  color_kor_to_eng(color):
+    if color == '빨':
+        return 'R'
+    if color == '주':
+        return 'O'
+    if color == '노':
+        return 'Y'
+    if color == '초':
+        return 'G'
+    if color == '파':
+        return 'B'
+    if color == '남':
+        return 'D'
+    if color == '보':
+        return 'V'
+
+    return color
+
+
+def clear_ordered_count(stk_cd):
+    global key_list
+    for key, value in key_list.items():
+        ACCT = value['ACCT']
+        set_order_count(ACCT, stk_cd, 0)
+
+
+def set_interested_rate(stock_code, stock_name='', color=None,
+                    btype='', bamount='0',
+                    stime='', yyyymmdd='', sellprice='0',
+                    sellrate=0.0, sellgap='0', clrate=None,
+                    rebound=None, is_pctoken=False):
+    global interested_stocks, interested_stocks_lock, pc_color, pc_bamount, pc_sellrate
+    if is_pctoken:
+        color = pc_color
+        bamount = pc_bamount
+        sellrate = pc_sellrate
+    else:
+        log_print('', stock_code, 'pctoken False stime = {}, yyyymmdd = {}'.format(stime, yyyymmdd))
+
+    try:
+        need_cancel_old_buy = False
+        need_clear_ordered_count = False
+
+        if not stock_name or stock_name == '':
+            stock_name = get_stockinfo(stock_code)['name']
+
+        if color and color == 'DELETE':
+            cancel_related_buy_order(stock_code)
+            with interested_stocks_lock:
+                if stock_code in interested_stocks:
+                    del interested_stocks[stock_code]
+        else:
+            # Add or update the stock in interested list
+            old_btype = ''
+            with interested_stocks_lock:
+                if stock_code not in interested_stocks:
+                    stock = {}
+                else:
+                    stock = interested_stocks[stock_code]
+                    old_btype = stock.get('btype', '')
+            stock['stock_name'] = stock_name.strip()
+            if color :
+                color = color_kor_to_eng(color)
+                stock['color'] = color.strip()
+
+            if btype :
+                if btype == 'CL':
+                    need_clear_ordered_count = True
+                else: # btype != 'CL'
+                    if old_btype == 'CL':
+                        need_cancel_old_buy = True
+                stock['btype'] = btype.strip()
+
+            if bamount is not None:
+                try:
+                    bamount_int = int(bamount)
+                    stock['bamount'] = bamount_int
+                except (ValueError, TypeError):
+                    pass
+
+            if stime == None or stime == '':
+                stime = datetime.now().strftime("%Y%m%d%H%M%S")
+                log_print('', stock_code, 'Filling empty stime to {}'.format(stime))
+            stock['stime'] = stime
+
+            ymd_in = '' if yyyymmdd is None else str(yyyymmdd).strip()
+            if len(ymd_in) == 8 and ymd_in.isdigit():
+                yyyymmdd = ymd_in
+            else:
+                prev = stock.get('yyyymmdd', '')
+                prev_s = str(prev).strip() if prev is not None else ''
+                if len(prev_s) == 8 and prev_s.isdigit():
+                    yyyymmdd = prev_s
+                    log_print('', stock_code, 'Using existing yyyymmdd {} (param empty/invalid)'.format(yyyymmdd))
+                else:
+                    yyyymmdd = today_yyyymmdd
+                    log_print('', stock_code, 'Filling empty yyyymmdd to {}'.format(yyyymmdd))
+            stock['yyyymmdd'] = yyyymmdd
+
+            stock['sellprice'] = sellprice
+            if is_pctoken:
+                if float(stock.get('sellrate', 0)) == 0.0:
+                    log_print('', stock_code, f'pctoken True sellrate {sellrate} stime = {stime}, yyyymmdd = {yyyymmdd}')
+                    try:
+                        sr = float(sellrate)
+                    except (ValueError, TypeError):
+                        sr = 0.0
+                    stock['sellrate'] = sr if sr != 0.0 else 1.2
+            else:
+                stock['sellrate'] = sellrate
+            if int(sellgap) > 60:
+                stock['sellgap'] = '60'
+            else:
+                stock['sellgap'] = sellgap
+            if not 'clprice' in stock:
+                stock['clprice'] = '0'
+            if clrate is not None and str(clrate).strip() != '':
+                try:
+                    stock['clrate'] = int(clrate)
+                except (ValueError, TypeError):
+                    pass
+            elif 'clrate' not in stock:
+                stock['clrate'] = 0
+
+            # rebound is a percent value; default 0.0
+            if rebound is not None and str(rebound).strip() != '':
+                try:
+                    stock['rebound'] = float(rebound)
+                except (ValueError, TypeError):
+                    if 'rebound' not in stock:
+                        stock['rebound'] = 0.0
+            elif 'rebound' not in stock:
+                stock['rebound'] = 0.0
+
+            # Drop legacy split-sell keys if present (not persisted)
+            for _split_key in ('split_qty', 'split_price', 'split_rate',
+                               'split_anchor_rmnd', 'split_armed'):
+                stock.pop(_split_key, None)
+
+            with interested_stocks_lock:
+                is_new = stock_code not in interested_stocks
+                interested_stocks[stock_code] = stock
+            if is_new:
+                log_print('', stock_code, 'new interested stock {}'.format(stock_code))
+            if need_cancel_old_buy :
+                # Cancel buy orders for this stock
+                cancel_related_buy_order(stock_code)
+            if need_clear_ordered_count :
+                clear_ordered_count(stock_code)
+
+        # Save to file
+        if save_interested_stocks_to_json():
+            with interested_stocks_lock:
+                data = copy.deepcopy(interested_stocks)
+            return {"status": "success", "message": f"Stock {stock_code} added/updated in interested list",
+                "data": data}
+        else:
+            return {"status": "error", "message": "Failed to save to file"}
+    except Exception as ex :
+        traceback.print_exc()
+        return {"status": "error", "message": str(ex) }
+
+
+@app.post("/api/interested-stocks")
+@app.post("/{proxy_path:path}/api/interested-stocks")
+async def add_interested_stock_api(request: dict, proxy_path: str = "",
+                                   token: str = Cookie(None, alias="stoken"),
+                                   pctoken: str | None = Cookie(default=None),):
+    global env_pctoken
+    """API endpoint to add a stock to interested stocks list"""
+    f = False
+    # Check authentication
+    if f:
+        if token:
+            print('token={}'.format(token))
+        if pctoken:
+            print('pctoken={}'.format(pctoken))
+
+    if pctoken and pctoken == env_pctoken:
+        is_pctoken = True
+    else:
+        is_pctoken = False
+        if not token or not verify_token(token):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Not authenticated"
+            )
+
+    global interested_stocks
+    try:
+        stock_code = request.get('stock_code')
+        stock_name = request.get('stock_name')
+        color = request.get('color')
+        btype = request.get('btype')
+        bamount = request.get('bamount')
+        stime = request.get('stime')
+        yyyymmdd = request.get('yyyymmdd')
+        sellprice = request.get('sellprice', '0')
+        sellrate = float(request.get('sellrate', '0'))
+        sellgap = request.get('sellgap', '0')
+        clrate = request.get('clrate')
+        rebound = request.get('rebound', None)
+
+        if not stock_code:
+            return {"status": "error", "message": "stock_code is required"}
+
+        return await asyncio.to_thread(
+            set_interested_rate,
+            stock_code, stock_name, color=color,
+            btype=btype, bamount=bamount,
+            stime=stime, yyyymmdd=yyyymmdd, sellprice=sellprice,
+            sellrate=sellrate, sellgap=sellgap, clrate=clrate,
+            rebound=rebound, is_pctoken=is_pctoken,
+        )
+    except Exception as e:
+        print('Exception-> {}'.format(e))
+        return {"status": "error", "message": str(e)}
+
+@app.delete("/api/interested-stocks/{stock_code}")
+@app.delete("/{proxy_path:path}/api/interested-stocks/{stock_code}")
+async def delete_interested_stock_api(stock_code: str, proxy_path: str = "", token: str = Cookie(None, alias="stoken")):
+    """API endpoint to remove a stock from interested stocks list"""
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+    return await asyncio.to_thread(_delete_interested_stock_sync, stock_code)
+
+
+def _delete_interested_stock_sync(stock_code: str):
+    global interested_stocks, interested_stocks_lock
+    try:
+        if not stock_code:
+            return {"status": "error", "message": "stock_code is required"}
+
+        cancel_related_buy_order(stock_code)
+
+        with interested_stocks_lock:
+            exists = stock_code in interested_stocks
+            if exists:
+                del interested_stocks[stock_code]
+
+        if not exists:
+            return {"status": "error", "message": f"Stock code {stock_code} not found in interested list"}
+
+        if save_interested_stocks_to_json():
+            return {"status": "success", "message": f"Stock {stock_code} removed from interested list"}
+        return {"status": "error", "message": "Failed to save to file"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+def get_gap_price(token_for_api, stk_cd, stk_nm):
+    data = None
+    with daily_charts_lock:
+        entry = daily_charts.get(stk_cd)
+        if not entry:
+            return {}
+        data = copy.deepcopy(entry.get('data'))
+    if not data:
+        return {}
+
+    day_data = data.get('stk_dt_pole_chart_qry', [])
+    if not day_data:
+        return {}
+
+    try:
+        # Get latest day's closing price
+        latest = day_data[0]  # Latest is first in response
+        cur_prc = latest.get('cur_prc', '0')
+        current_price = abs(int(cur_prc))
+
+        # Get last 16 days
+        high_16 = 0
+        high_index = 0
+        high_date = ''
+        if len(day_data) < 16 :
+            return {}
+
+        for data_idx in range(16) :
+            day = day_data[data_idx]
+            high_pric = int(day.get('high_pric', '0'))
+            if high_pric < 0:
+                high_pric = -high_pric
+            if high_pric > high_16:
+                high_16 = high_pric
+                high_index = data_idx
+                high_date = day['dt']
+
+        low_16 = float('inf')
+        last_16_days = day_data[high_index:high_index+16]
+        for day in last_16_days:
+            low_pric = int(day.get('low_pric', '0'))
+            if low_pric < 0:
+                low_pric = -low_pric
+            if low_pric < low_16:
+                low_16 = low_pric
+                low_date = day['dt']
+
+        # Calculate yellow line price: high - (high - low) * 4 / 10
+        gap = (high_16 - low_16) / 10
+        yellow_line_price = int(high_16 - gap * 4)
+
+        # Calculate gap rate: (current price - yellow price) / gap
+        gap_rate = ((current_price - yellow_line_price) / gap) * 100 if gap > 0 else 0
+
+        gap_price = {}
+        gap_price['high_16'] = high_16
+        gap_price['low_16'] = low_16
+        gap_price['yellow_line_price'] = yellow_line_price
+        gap_price['current_price'] = current_price
+        gap_price['gap'] = gap
+        gap_price['gap_rate'] = gap_rate
+        gap_price['high_date'] = high_date
+        gap_price['low_date'] = low_date
+        gap_price['price'] = [high_16 - gap * i for i in range(10)]
+
+        return gap_price
+    except Exception as ex:
+        print('get_gap_price exception {}'.format(str(ex)))
+        return {}
+
+@app.get("/api/stock-price-info/{stock_code}")
+@app.get("/stock/api/stock-price-info/{stock_code}")
+async def get_stock_price_info(stock_code: str, token: str = Cookie(None, alias="stoken")):
+    """Get 16-day high/low, yellow line price, current price, and gap rate for a stock"""
+    # Check authentication
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+    
+    # Get current price from jango data
+    # Get token for API call
+    token_for_api = get_one_token()
+    gap_price = get_gap_price(token_for_api, stock_code, '')
+
+    return {
+        "status": "success",
+        "data": {
+            "stock_code": stock_code,
+            "high_16": gap_price['high_16'],
+            "low_16": gap_price['low_16'],
+            "yellow_line_price": gap_price['yellow_line_price'],
+            "current_price": gap_price['current_price'],
+            "gap": gap_price['gap'],
+            "gap_rate": gap_price['gap_rate'],
+            "high_date": gap_price['high_date'],
+            "low_date": gap_price['low_date'],
+        }
+    }
+
+
+@app.post("/api/upload-image")
+@app.post("/stock/api/upload-image")
+async def upload_image_api(
+    file: UploadFile = File(...),
+    proxy_path: str = "",
+    token: str = Cookie(None, alias="stoken"),
+    pctoken: str = Cookie(default=None),
+    ):
+    global env_pctoken
+    """API endpoint to add a stock to interested stocks list"""
+
+    if pctoken and pctoken == env_pctoken:
+        pass
+    else:
+        if not token or not verify_token(token):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Not authenticated"
+            )
+
+    ct = (file.content_type or "").split(";")[0].strip().lower()
+    ext = IMAGE_CONTENT_TYPE_EXT.get(ct)
+    if not ext:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unsupported or missing image content type (use JPEG, PNG, GIF, or WebP)",
+        )
+    contents = await file.read()
+    if len(contents) > MAX_IMAGE_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File too large (max {MAX_IMAGE_UPLOAD_BYTES // (1024 * 1024)} MB)",
+        )
+    stem = _safe_image_stem_from_filename(file.filename or "upload")
+    stored_name, out_path = _allocate_image_store_path(stem, ext)
+    with open(out_path, "wb") as out_f:
+        out_f.write(contents)
+    rel_path = os.path.join(IMAGE_UPLOAD_DIR.replace("\\", "/"), stored_name)
+    original = os.path.basename(file.filename or "upload")
+    return {
+        "status": "success",
+        "stored_filename": stored_name,
+        "original_filename": original,
+        "size": len(contents),
+        "content_type": ct,
+        "path": rel_path,
+    }
+
+
+@app.get("/api/upload-images")
+@app.get("/stock/api/upload-images")
+async def list_upload_images_api(
+    proxy_path: str = "",
+    token: str = Cookie(None, alias="stoken"),
+):
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    names = _list_upload_image_filenames()
+    names.sort(key=lambda s: s.lower())
+    return {"status": "success", "data": names}
+
+
+@app.get("/api/upload-images/{filename}/file")
+@app.get("/stock/api/upload-images/{filename}/file")
+async def serve_upload_image_file(
+    filename: str,
+    proxy_path: str = "",
+    token: str = Cookie(None, alias="stoken"),
+):
+    if not token or not verify_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    safe = os.path.basename(filename)
+    if not _is_upload_image_filename(safe):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Not found",
+        )
+    path = os.path.join(IMAGE_UPLOAD_DIR, safe)
+    if not os.path.isfile(path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Not found",
+        )
+    media_type, _ = mimetypes.guess_type(path)
+    return FileResponse(path, media_type=media_type or "application/octet-stream")
+
+
+@app.get("/health")
+async def health():
+    return {"status": "healthy"}
+
+@app.get("/jango")
+async def get_jango_endpoint(market: str = 'KRX'):
+    """Get account balance and holdings from stored data"""
+    global stored_jango_data
+    try:
+        result = stored_jango_data
+        return {"status": "success", "data": result}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.get("/miche")
+async def get_miche_endpoint():
+    """Get unexecuted orders"""
+    try:
+        result = get_miche()
+        return {"status": "success", "data": result}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.post("/cancel-nxt-trade")
+async def cancel_nxt_trade_endpoint():
+    """Cancel NXT trades"""
+    try:
+        now = datetime.now()
+        cancel_krx_sell(now)
+        return {"status": "success", "message": "Cancel NXT trade executed"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+
+
+def _to_float(v):
+    try:
+        return float(str(v).strip())
+    except Exception:
+        return None
+
+
+def _read_temperature_data(limit=3000):
+    """Read saved temperature/fan samples from TEMPERATURE_DIR.
+    Filenames are yyyymmddhhmmss.txt; content is JSON {temperature, fan}.
+    Returns a chronologically sorted list of {t, temperature, fan}.
+    """
+    out = []
+    try:
+        if not os.path.isdir(TEMPERATURE_DIR):
+            return out
+        files = [f for f in os.listdir(TEMPERATURE_DIR) if f.lower().endswith('.txt')]
+        files.sort()
+        if limit and len(files) > limit:
+            files = files[-limit:]
+        for fname in files:
+            stem = fname[:-4]
+            # Label from the filename timestamp (yyyymmddhhmmss)
+            label = stem
+            if len(stem) >= 14 and stem[:14].isdigit():
+                s = stem[:14]
+                label = f"{s[0:4]}-{s[4:6]}-{s[6:8]} {s[8:10]}:{s[10:12]}:{s[12:14]}"
+            temperature = None
+            t2 = None
+            fan = None
+            try:
+                with open(os.path.join(TEMPERATURE_DIR, fname), 'r', encoding='utf-8') as f:
+                    content = f.read().strip()
+                if content:
+                    try:
+                        obj = json.loads(content)
+                        if isinstance(obj, dict):
+                            temperature = _to_float(obj.get('temperature'))
+                            t2 = _to_float(obj.get('t2'))
+                            fan = _to_float(obj.get('fan'))
+                    except Exception:
+                        # Fallback: "temperature,fan" plain text
+                        parts = content.replace('\n', ',').split(',')
+                        if len(parts) >= 1:
+                            temperature = _to_float(parts[0])
+                        if len(parts) >= 2:
+                            fan = _to_float(parts[1])
+            except Exception:
+                continue
+            out.append({'t': label, 'temperature': temperature, 't2': t2, 'fan': fan})
+    except Exception:
+        traceback.print_exc()
+    return out
+
+
+@app.post("/temperature")
+@app.post("/stock/temperature")
+async def post_temperature(request: Request):
+    """Receive {fan, temperature} and store it as ./temperature/yyyymmddhhmmss.txt."""
+    fan = None
+    temperature = None
+    t2 = None
+    # Try JSON body first, then form, then query params.
+    try:
+        data = await request.json()
+        if isinstance(data, dict):
+            fan = data.get('fan')
+            temperature = data.get('temperature')
+            t2 = data.get('t2')
+    except Exception:
+        pass
+    if fan is None and temperature is None:
+        try:
+            form = await request.form()
+            fan = form.get('fan')
+            temperature = form.get('temperature')
+            t2 = form.get('t2')
+        except Exception:
+            pass
+    qp = request.query_params
+    if fan is None:
+        fan = qp.get('fan')
+    if temperature is None:
+        temperature = qp.get('temperature')
+    if t2 is None:
+        t2 = qp.get('t2')
+
+    now = datetime.now()
+    fname = now.strftime('%Y%m%d%H%M%S') + '.txt'
+    try:
+        os.makedirs(TEMPERATURE_DIR, exist_ok=True)
+        record = {
+            'temperature': _to_float(temperature),
+            't2': _to_float(t2),
+            'fan': _to_float(fan),
+            'time': now.strftime('%Y-%m-%d %H:%M:%S'),
+        }
+        with open(os.path.join(TEMPERATURE_DIR, fname), 'w', encoding='utf-8') as f:
+            json.dump(record, f)
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
+    return {"status": "success", "file": fname,
+            "temperature": record['temperature'], "fan": record['fan']}
+
+
+@app.get("/temperature", response_class=HTMLResponse)
+@app.get("/stock/temperature", response_class=HTMLResponse)
+async def temperature_page():
+    """Render temperature (top) and fan (bottom) line charts from stored data."""
+    data = _read_temperature_data()
+    data_json = json.dumps(data)
+    html_content = """
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>온도 / 팬 모니터</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #f0f2f5; color: #222; padding: 12px; }
+        .header { display: flex; align-items: center; justify-content: space-between;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff;
+            padding: 14px 20px; border-radius: 10px; margin-bottom: 14px; }
+        .header h1 { font-size: 20px; }
+        .header .sub { font-size: 13px; opacity: 0.9; margin-top: 4px; }
+        .header a { color: #fff; text-decoration: none; background: rgba(255,255,255,0.2);
+            padding: 8px 14px; border-radius: 6px; font-size: 13px; }
+        .header a:hover { background: rgba(255,255,255,0.35); }
+        .panel { background: #fff; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            margin-bottom: 16px; overflow: hidden; }
+        .panel-title { font-size: 15px; font-weight: 600; color: #333;
+            padding: 12px 16px; border-bottom: 1px solid #eee; background: #fafbfc; }
+        .chart-row { display: flex; align-items: stretch; }
+        .axis-canvas { flex: 0 0 auto; display: block; background: #fff; z-index: 2; }
+        .chart-scroll { flex: 1 1 auto; overflow-x: auto; overflow-y: hidden; }
+        .chart-scroll canvas { display: block; }
+        .status-msg { padding: 30px; text-align: center; color: #888; font-size: 14px; }
+        .temp-chart-wrap { height: 280px; }
+        .t2-chart-wrap { height: 280px; }
+        .fan-chart-wrap { height: 120px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div>
+            <h1>온도 / 팬 모니터</h1>
+            <div class="sub" id="subtitle"></div>
+        </div>
+        <a href="javascript:location.reload()">새로고침</a>
+    </div>
+
+    <div id="status" class="status-msg" style="display:none;">저장된 데이터가 없습니다.</div>
+
+    <div id="charts">
+        <div class="panel">
+            <div class="panel-title">온도 (Temperature)</div>
+            <div class="chart-row temp-chart-wrap">
+                <canvas id="temp-axis" class="axis-canvas"></canvas>
+                <div class="chart-scroll" id="temp-scroll"><canvas id="temp-chart"></canvas></div>
+            </div>
+        </div>
+        <div class="panel">
+            <div class="panel-title">t2</div>
+            <div class="chart-row t2-chart-wrap">
+                <canvas id="t2-axis" class="axis-canvas"></canvas>
+                <div class="chart-scroll" id="t2-scroll"><canvas id="t2-chart"></canvas></div>
+            </div>
+        </div>
+        <div class="panel">
+            <div class="panel-title">팬 (Fan)</div>
+            <div class="chart-row fan-chart-wrap">
+                <canvas id="fan-axis" class="axis-canvas"></canvas>
+                <div class="chart-scroll" id="fan-scroll"><canvas id="fan-chart"></canvas></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const DATA = __DATA__;
+
+        function setCanvasSize(canvas, width) {
+            const wrap = canvas.parentElement;
+            canvas.height = wrap.clientHeight;
+            canvas.width = Math.max(width, wrap.clientWidth);
+        }
+
+        // Indices where a new clock-hour starts (based on "YYYY-MM-DD HH...").
+        function hourBoundaries(labels) {
+            const res = [];
+            let prev = null;
+            for (let i = 0; i < labels.length; i++) {
+                const key = (labels[i] || '').toString().slice(0, 13); // "YYYY-MM-DD HH"
+                if (key && key !== prev) { res.push({ i: i, key: key }); prev = key; }
+            }
+            return res;
+        }
+
+        const AXIS_W = 56;   // fixed left column width (holds Y-axis labels)
+
+        // Integer degree ticks covering [lo, hi]. Always returns at least one value.
+        function degreeTicks(lo, hi) {
+            let start = Math.floor(lo);
+            let end = Math.ceil(hi);
+            if (end < start) end = start;
+            if (end === start) { start -= 1; end += 1; }  // ensure at least two ticks
+            const vals = [];
+            for (let v = start; v <= end; v++) vals.push(v);
+            return vals;
+        }
+
+        // Draw the fixed Y-axis (kept pinned while the body scrolls).
+        function drawAxis(axisId, height, top, chartH, lo, hi, range, opts) {
+            const axis = document.getElementById(axisId);
+            if (!axis) return;
+            axis.width = AXIS_W; axis.height = height;
+            const actx = axis.getContext('2d');
+            actx.clearRect(0, 0, AXIS_W, height);
+            actx.fillStyle = '#fff'; actx.fillRect(0, 0, AXIS_W, height);
+            const yAt = v => top + chartH - (v - lo) / range * chartH;
+            actx.textAlign = 'right'; actx.textBaseline = 'middle';
+            actx.font = '11px Arial';
+            let labelVals;
+            if (opts.fixed01) labelVals = [0, 1];
+            else if (opts.fixedY) labelVals = opts.fixedY;
+            else labelVals = degreeTicks(lo, hi);
+            labelVals.forEach(val => {
+                const y = Math.round(yAt(val)) + 0.5;
+                // Skip ticks that fall outside the plot area (with small margin)
+                if (y < top - 2 || y > top + chartH + 2) return;
+                actx.strokeStyle = '#999'; actx.beginPath();
+                actx.moveTo(AXIS_W - 6, y); actx.lineTo(AXIS_W - 0.5, y); actx.stroke();
+                actx.fillStyle = '#333'; actx.fillText(String(val), AXIS_W - 10, y);
+            });
+            // Vertical axis line on the right edge of the fixed column
+            actx.strokeStyle = '#999'; actx.lineWidth = 1; actx.beginPath();
+            actx.moveTo(AXIS_W - 0.5, top); actx.lineTo(AXIS_W - 0.5, top + chartH); actx.stroke();
+        }
+
+        function renderChart(canvasId, values, labels, opts) {
+            opts = opts || {};
+            const canvas = document.getElementById(canvasId);
+            const ctx = canvas.getContext('2d');
+            const spacing = opts.spacing || 1;   // 1 pixel per data point
+            const left = 6, right = 20, top = 16, bottom = 42;
+            const n = values.length;
+            const chartW = Math.max(1, (n - 1)) * spacing;
+            setCanvasSize(canvas, left + chartW + right);
+            const chartH = canvas.height - top - bottom;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            if (n === 0) return;
+
+            let lo, hi;
+            if (opts.fixed01) {
+                // Always show both 0 and 1 regions, expand vertically so the
+                // 0/1 gridlines and points are never clipped at the edges.
+                lo = -0.25; hi = 1.25;
+            } else if (opts.fixedY) {
+                // Fixed Y labels/range — do not derive from data
+                lo = opts.fixedY[0];
+                hi = opts.fixedY[opts.fixedY.length - 1];
+            } else {
+                lo = Infinity; hi = -Infinity;
+                values.forEach(v => { if (v != null) { lo = Math.min(lo, v); hi = Math.max(hi, v); } });
+                (opts.extraSeries || []).forEach(s => s.values.forEach(v => { if (v != null) { lo = Math.min(lo, v); hi = Math.max(hi, v); } }));
+                if (lo === Infinity) { lo = 0; hi = 1; }
+                if (lo === hi) { lo -= 1; hi += 1; }
+                const pad = (hi - lo) * 0.1; lo -= pad; hi += pad;
+            }
+            const range = hi - lo;
+            const yAt = v => top + chartH - (v - lo) / range * chartH;
+            const xAt = i => left + i * spacing;
+
+            // Fixed Y-axis (pinned, always visible during horizontal scroll)
+            if (opts.axisId) drawAxis(opts.axisId, canvas.height, top, chartH, lo, hi, range, opts);
+
+            // Vertical gridlines: one per clock-hour
+            const bounds = hourBoundaries(labels);
+            ctx.lineWidth = 1;
+            ctx.font = '9px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+            bounds.forEach(b => {
+                const x = Math.round(xAt(b.i)) + 0.5;
+                const hh = b.key.slice(11, 13);
+                ctx.strokeStyle = (hh === '00') ? '#cfcfcf' : '#ececec';
+                ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, top + chartH); ctx.stroke();
+                ctx.fillStyle = '#999';
+                ctx.fillText(hh === '00' ? b.key.slice(5, 10) : hh + ':00', x, top + chartH + 6);
+            });
+
+            // Horizontal gridlines (labels are drawn on the fixed axis canvas)
+            if (opts.fixed01) {
+                [0, 1].forEach(val => {
+                    const y = Math.round(yAt(val)) + 0.5;
+                    ctx.strokeStyle = '#dcdcdc'; ctx.beginPath();
+                    ctx.moveTo(left, y); ctx.lineTo(left + chartW, y); ctx.stroke();
+                });
+            } else if (opts.fixedY) {
+                opts.fixedY.forEach(val => {
+                    const y = Math.round(yAt(val)) + 0.5;
+                    ctx.strokeStyle = (val % 5 === 0) ? '#d5d5d5' : '#f0f0f0';
+                    ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(left + chartW, y); ctx.stroke();
+                });
+            } else {
+                // One horizontal line per 1 degree (same ticks as Y-axis labels)
+                degreeTicks(lo, hi).forEach(val => {
+                    const y = Math.round(yAt(val)) + 0.5;
+                    if (y < top - 2 || y > top + chartH + 2) return;
+                    ctx.strokeStyle = (val % 5 === 0) ? '#d5d5d5' : '#f0f0f0';
+                    ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(left + chartW, y); ctx.stroke();
+                });
+            }
+
+            // Bottom axis line
+            ctx.strokeStyle = '#ddd'; ctx.lineWidth = 1; ctx.beginPath();
+            ctx.moveTo(left, top + chartH + 0.5); ctx.lineTo(left + chartW, top + chartH + 0.5); ctx.stroke();
+
+            // Line
+            ctx.strokeStyle = opts.color || '#e53935';
+            ctx.lineWidth = opts.fixed01 ? 2 : 1.4;
+            ctx.beginPath();
+            let started = false;
+            for (let i = 0; i < n; i++) {
+                const v = values[i];
+                if (v == null) { started = false; continue; }
+                const x = xAt(i), y = yAt(v);
+                if (!started) { ctx.moveTo(x, y); started = true; }
+                else if (opts.step) { ctx.lineTo(x, yAt(values[i - 1] != null ? values[i - 1] : v)); ctx.lineTo(x, y); }
+                else { ctx.lineTo(x, y); }
+            }
+            ctx.stroke();
+
+            // Points (only when there is enough horizontal room)
+            if (spacing >= 4) {
+                ctx.fillStyle = opts.color || '#e53935';
+                for (let i = 0; i < n; i++) {
+                    const v = values[i];
+                    if (v == null) continue;
+                    ctx.beginPath(); ctx.arc(xAt(i), yAt(v), 2, 0, Math.PI * 2); ctx.fill();
+                }
+            }
+
+            // Additional overlaid series drawn in the same plot area
+            (opts.extraSeries || []).forEach(s => {
+                const sv = s.values;
+                ctx.strokeStyle = s.color; ctx.lineWidth = 1.4;
+                ctx.beginPath();
+                let st = false;
+                for (let i = 0; i < sv.length; i++) {
+                    const v = sv[i];
+                    if (v == null) { st = false; continue; }
+                    const x = xAt(i), y = yAt(v);
+                    if (!st) { ctx.moveTo(x, y); st = true; } else { ctx.lineTo(x, y); }
+                }
+                ctx.stroke();
+                if (spacing >= 4) {
+                    ctx.fillStyle = s.color;
+                    for (let i = 0; i < sv.length; i++) {
+                        const v = sv[i];
+                        if (v == null) continue;
+                        ctx.beginPath(); ctx.arc(xAt(i), yAt(v), 2, 0, Math.PI * 2); ctx.fill();
+                    }
+                }
+            });
+
+            const wrap = canvas.parentElement;
+            wrap.scrollLeft = wrap.scrollWidth;
+        }
+
+        function renderAll() {
+            if (!DATA.length) {
+                document.getElementById('status').style.display = 'block';
+                document.getElementById('charts').style.display = 'none';
+                return;
+            }
+            const labels = DATA.map(d => d.t);
+            const temps = DATA.map(d => (d.temperature === null ? null : d.temperature));
+            const t2s = DATA.map(d => (d.t2 === null || d.t2 === undefined ? null : d.t2 + 15));
+            const fans = DATA.map(d => (d.fan === null ? null : d.fan));
+            document.getElementById('subtitle').textContent =
+                '샘플 ' + DATA.length + '개 · 최근 ' + (labels[labels.length - 1] || '');
+            syncingScroll = true;
+            renderChart('temp-chart', temps, labels, {
+                color: '#e53935', spacing: 1, axisId: 'temp-axis',
+                fixedY: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+            });
+            renderChart('t2-chart', t2s, labels, { color: '#1e88e5', spacing: 1, axisId: 't2-axis' });
+            renderChart('fan-chart', fans, labels, { color: '#1e88e5', spacing: 1, fixed01: true, step: true, axisId: 'fan-axis' });
+            // Keep all charts scrolled to the same (rightmost) position after redraw
+            const scrolls = [
+                document.getElementById('temp-scroll'),
+                document.getElementById('t2-scroll'),
+                document.getElementById('fan-scroll')
+            ];
+            const end = Math.max(0, ...scrolls.map(s => s.scrollWidth - s.clientWidth));
+            scrolls.forEach(s => { s.scrollLeft = end; });
+            syncingScroll = false;
+        }
+
+        // Synchronize horizontal scroll across temperature, t2, and fan charts
+        let syncingScroll = false;
+        function bindScrollSync() {
+            const scrolls = [
+                document.getElementById('temp-scroll'),
+                document.getElementById('t2-scroll'),
+                document.getElementById('fan-scroll')
+            ];
+            scrolls.forEach(src => {
+                src.addEventListener('scroll', () => {
+                    if (syncingScroll) return;
+                    syncingScroll = true;
+                    scrolls.forEach(dst => { if (dst !== src) dst.scrollLeft = src.scrollLeft; });
+                    syncingScroll = false;
+                });
+            });
+        }
+        bindScrollSync();
+
+        let resizeTimer = null;
+        window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(renderAll, 200); });
+        renderAll();
+    </script>
+</body>
+</html>
+"""
+    html_content = html_content.replace('__DATA__', data_json)
+    return HTMLResponse(content=html_content)
+
+
+# Proxy endpoint for datagather service
+@app.api_route("/stock/data/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+async def proxy_to_datagather(path: str, request: Request):
+    """
+    Proxy requests from /stock/data/* to datagather service on port 8007.
+    Example: /stock/data/api/status -> http://localhost:8007/api/status
+    """
+    # Target URL for datagather service
+    target_url = f"http://localhost:8007/{path}"
+    
+    # Get query parameters
+    query_params = dict(request.query_params)
+    
+    # Get request body if present
+    body = None
+    try:
+        body = await request.body()
+    except:
+        pass
+    
+    # Get headers (excluding host and other problematic headers)
+    headers = dict(request.headers)
+    headers.pop('host', None)
+    headers.pop('content-length', None)
+    
+    try:
+        # Forward the request to datagather service
+        if request.method == "GET":
+            response = requests.get(target_url, params=query_params, headers=headers, timeout=10)
+        elif request.method == "POST":
+            response = requests.post(target_url, params=query_params, data=body, headers=headers, timeout=10)
+        elif request.method == "PUT":
+            response = requests.put(target_url, params=query_params, data=body, headers=headers, timeout=10)
+        elif request.method == "DELETE":
+            response = requests.delete(target_url, params=query_params, headers=headers, timeout=10)
+        elif request.method == "PATCH":
+            response = requests.patch(target_url, params=query_params, data=body, headers=headers, timeout=10)
+        else:
+            return {"status": "error", "message": f"Unsupported method: {request.method}"}
+        
+        # Return the response from datagather
+        # Check if response is HTML
+        if 'text/html' in response.headers.get('content-type', ''):
+            return HTMLResponse(content=response.text, status_code=response.status_code)
+        else:
+            # Return JSON or other content
+            return JSONResponse(content=response.json() if response.headers.get('content-type', '').startswith('application/json') else {"data": response.text}, status_code=response.status_code)
+            
+    except requests.exceptions.ConnectionError:
+        return JSONResponse(content={"status": "error", "message": "Data gather service is not available"}, status_code=503)
+    except requests.exceptions.Timeout:
+        return JSONResponse(content={"status": "error", "message": "Request to data gather service timed out"}, status_code=504)
+    except Exception as e:
+        return JSONResponse(content={"status": "error", "message": f"Proxy error: {str(e)}"}, status_code=500)
+
+
+# 실행 구간
+if __name__ == '__main__':
+    now = datetime.now()
+    print(equal_hh_mm(now.time(), now.time()))
+    uvicorn.run(app, host="0.0.0.0", port=8006, access_log=False)
