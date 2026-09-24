@@ -14,10 +14,11 @@ import uvicorn
 import csv
 import numpy as np
 import cv2
+from oauthlib.openid.connect.core.grant_types import refresh_token
 
 from ka10081 import get_day_chart
 from ka10080 import get_bun_chart, fn_ka10080
-from au1001 import get_one_token
+from au1001 import get_one_token, refresh_tokens
 from ka10100 import get_stockinfo
 from ka_condition import search_condition_by_name
 
@@ -855,7 +856,7 @@ def maybe_run_p3_condition_job(now):
 def background_data_gathering():
     """Background thread that runs the data gathering loop."""
     global status_info, thread_stop_event
-    
+    refresh_tokens()
     ensure_chart_dir()
     print("Background data gathering thread started.")
     
@@ -881,6 +882,8 @@ def background_data_gathering():
     while not thread_stop_event.is_set():
         now = datetime.now()
 
+        if now.hour == 6 and now.minute == 0:
+            refresh_tokens()
         maybe_run_p3_condition_job(now)
         
         # Calculate next run time
