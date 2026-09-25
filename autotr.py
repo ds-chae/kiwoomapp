@@ -1,10 +1,12 @@
 import traceback
 import traceback
 import copy
+import html
 import requests
 import json
 import os
 import mimetypes
+from urllib.parse import quote
 from datetime import datetime, timedelta, time, date
 from fn_kt00001 import get_yesu_list
 
@@ -2823,6 +2825,78 @@ async def conn_files_page_stock(token: str = Cookie(None, alias="stoken")):
     html_content = load_text_file("./conn_files.html")
     html_content = html_content.replace("{IP_SUFFIX}", ip_suffix)
     return HTMLResponse(content=html_content)
+
+
+def get_ccc_dir() -> str:
+    return os.path.expanduser(os.path.join("~", "ccc"))
+
+
+def _ccc_safe_file_path(filename: str) -> str | None:
+    name = os.path.basename(filename or "")
+    if not name or name in (".", ".."):
+        return None
+    base = os.path.realpath(get_ccc_dir())
+    path = os.path.realpath(os.path.join(base, name))
+    if path != base and path.startswith(base + os.sep) and os.path.isfile(path):
+        return path
+    return None
+
+
+def _ccc_page(title: str, body: str) -> str:
+    return f"""<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{html.escape(title)}</title>
+<style>
+body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 24px; }}
+a {{ color: #334; }}
+.file-list {{ list-style: none; padding: 0; }}
+.file-list li {{ margin: 8px 0; }}
+.file-body {{ font-family: Consolas, 'Courier New', monospace; white-space: normal; }}
+</style>
+</head>
+<body>
+{body}
+</body>
+</html>"""
+
+
+@app.get("/stock/ccc", response_class=HTMLResponse)
+async def ccc_file_list_page():
+    ccc_dir = get_ccc_dir()
+    names = []
+    if os.path.isdir(ccc_dir):
+        for fn in os.listdir(ccc_dir):
+            path = os.path.join(ccc_dir, fn)
+            if os.path.isfile(path):
+                names.append(fn)
+        names.sort()
+    items = "".join(
+        f'<li><a href="/stock/ccc/{quote(name)}">{html.escape(name)}</a></li>'
+        for name in names
+    )
+    if not items:
+        items = "<li>파일이 없습니다.</li>"
+    body = f"<h1>ccc</h1><ul class=\"file-list\">{items}</ul>"
+    return HTMLResponse(content=_ccc_page("ccc", body))
+
+
+@app.get("/stock/ccc/{filename}", response_class=HTMLResponse)
+async def ccc_file_view_page(filename: str):
+    path = _ccc_safe_file_path(filename)
+    if path is None:
+        return HTMLResponse(content=_ccc_page("ccc", "<p>파일을 찾을 수 없습니다.</p><p><a href=\"/stock/ccc\">목록</a></p>"), status_code=404)
+    with open(path, "rt", encoding="utf-8") as inf:
+        text = inf.read()
+    shown = html.escape(text).replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<br>")
+    body = (
+        f"<p><a href=\"/stock/ccc\">목록</a></p>"
+        f"<h1>{html.escape(os.path.basename(path))}</h1>"
+        f"<div class=\"file-body\">{shown}</div>"
+    )
+    return HTMLResponse(content=_ccc_page(os.path.basename(path), body))
 
 
 @app.get("/settings", response_class=HTMLResponse)
