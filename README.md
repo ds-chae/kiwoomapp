@@ -454,3 +454,5 @@ datetime.datetime과 datetime.time을 비교하는 문제를 수정하라.
 stk_cd 값이 없는데 사용하는 문제를 해결하라
 
 /stock/ccc로 요청이 들어오면 ~/ccc 폴더의 파일 목록을 보여준다.  파일 목록중 하나를 클릭하면 해당 파일의 내용을 보여준다. 보여줄 파일은 utf-8 텍스트 문서이다. 해당 파일의 내용을 보여줄 때는 줄 바꿈에는 <br> 태그를 넣어서 보여준다. /stock/ccc 요처에서는 로그인 여부를 검사하지 않는다.. 
+
+Error getting bun_chart 오류 로깅이 발생하는 부분을 문석해서 이 오류로부터 복귀하는 경우에 Success getting_bunchart를 로깅하도록 기능을 추가하라

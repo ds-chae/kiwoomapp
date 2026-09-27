@@ -1661,6 +1661,8 @@ def clear_for_new_day():
     init_order_count()
     with bun_charts_lock:
         bun_charts = {}
+    with bun_chart_failed_lock:
+        bun_chart_failed_stocks.clear()
     with daily_charts_lock:
         daily_charts = {}
     last_logs = {}
@@ -1853,6 +1855,27 @@ bun_charts = {}
 bun_charts_lock = threading.Lock()  # Lock for bun_charts dict
 bun_prices = {}
 bun_times = {}
+
+# Stocks whose bun_chart query failed at least once.
+# When such a stock succeeds again, "Success getting_bunchart" is logged once
+# so that recovery from "Error getting bun_chart" can be seen in the log.
+bun_chart_failed_stocks = set()
+bun_chart_failed_lock = threading.Lock()
+
+
+def mark_bun_chart_error(stk_cd):
+    """Remember that getting bun_chart failed for this stock."""
+    with bun_chart_failed_lock:
+        bun_chart_failed_stocks.add(stk_cd)
+
+
+def log_bun_chart_recovered(stk_cd, stk_nm):
+    """Log success once when a stock that previously failed gets bun_chart again."""
+    with bun_chart_failed_lock:
+        recovered = stk_cd in bun_chart_failed_stocks
+        bun_chart_failed_stocks.discard(stk_cd)
+    if recovered:
+        log_print('', stk_cd, f"Success getting_bunchart for {stk_nm}")
 
 # fill minutes chart if btype is 'CL'
 """
@@ -2187,10 +2210,13 @@ def query_bun_charts(MY_ACCESS_TOKEN, cl_stocks):
         if 'stk_min_pole_chart_qry' in resp_json:
             bun = resp_json['stk_min_pole_chart_qry']
             updated_charts[stk_cd] = bun
+            # if this stock failed before, it recovered now -> log success once
+            log_bun_chart_recovered(stk_cd, stk_nm)
         else:
             return_msg = resp_json['return_msg']
             return_code = int(resp_json['return_code'])
             log_print('', stk_cd, f"Error getting bun_chart for {return_msg}")
+            mark_bun_chart_error(stk_cd)
         time_module.sleep(2)
     with bun_charts_lock:
         bun_charts.update(updated_charts)

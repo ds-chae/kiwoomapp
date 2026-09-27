@@ -1594,6 +1594,8 @@ def clear_for_new_day():
     init_order_count()
     with bun_charts_lock:
         bun_charts = {}
+    with bun_chart_failed_lock:
+        bun_chart_failed_stocks.clear()
     with daily_charts_lock:
         daily_charts = {}
     last_logs = {}
@@ -1785,6 +1787,27 @@ bun_charts = {}
 bun_charts_lock = threading.Lock()  # Lock for bun_charts dict
 bun_prices = {}
 bun_times = {}
+
+# Stocks whose bun_chart query failed at least once.
+# When such a stock succeeds again, "Success getting_bunchart" is logged once
+# so that recovery from "Error getting bun_chart" can be seen in the log.
+bun_chart_failed_stocks = set()
+bun_chart_failed_lock = threading.Lock()
+
+
+def mark_bun_chart_error(stk_cd):
+    """Remember that getting bun_chart failed for this stock."""
+    with bun_chart_failed_lock:
+        bun_chart_failed_stocks.add(stk_cd)
+
+
+def log_bun_chart_recovered(stk_cd, stk_nm):
+    """Log success once when a stock that previously failed gets bun_chart again."""
+    with bun_chart_failed_lock:
+        recovered = stk_cd in bun_chart_failed_stocks
+        bun_chart_failed_stocks.discard(stk_cd)
+    if recovered:
+        log_print('', stk_cd, f"Success getting_bunchart for {stk_nm}")
 
 # fill minutes chart if btype is 'CL'
 """
@@ -2112,14 +2135,27 @@ def query_bun_charts(MY_ACCESS_TOKEN, cl_stocks):
 
         # Collect results and update bun_charts dict
         updated_charts = {}
+        stk_names = {stk_cd: stk_nm for stk_cd, stk_nm in cl_stocks}
         for future in as_completed(futures):
             stk_cd = futures[future]
+            stk_nm = stk_names.get(stk_cd, stk_cd)
             try:
                 bun_chart = future.result()
-                updated_charts[stk_cd] = bun_chart
             except Exception as e:
                 log_print('', '00000', f"Error getting bun_chart for {stk_cd}: {e}")
                 print(f"{now} Error getting bun_chart for {stk_cd}: {e}")
+                mark_bun_chart_error(stk_cd)
+                continue
+            if isinstance(bun_chart, dict) and 'stk_min_pole_chart_qry' in bun_chart:
+                updated_charts[stk_cd] = bun_chart
+                # if this stock failed before, it recovered now -> log success once
+                log_bun_chart_recovered(stk_cd, stk_nm)
+            else:
+                # API answered with an error instead of chart data
+                return_msg = bun_chart.get('return_msg', bun_chart) if isinstance(bun_chart, dict) else bun_chart
+                log_print('', stk_cd, f"Error getting bun_chart for {return_msg}")
+                print(f"{now} Error getting bun_chart for {stk_cd}: {return_msg}")
+                mark_bun_chart_error(stk_cd)
 
     with bun_charts_lock:
         bun_charts.update(updated_charts)
