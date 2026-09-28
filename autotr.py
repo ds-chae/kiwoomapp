@@ -3777,8 +3777,17 @@ def format_queued_buy():
     global buy_queue
     formatted = []
     for idx, bq in enumerate(buy_queue):
-        bq['idx'] = idx
-        formatted.append(bq)
+        formatted.append({
+            'queue_index': idx,
+            'trade_begin_hour': bq['trde_begin_h'],
+            'stock_code': bq['stk_cd'],
+            'stock_name': bq['stk_nm'],
+            'price': bq['ord_uv'],
+            'qty': bq['ord_qty'],
+            'accounts': bq['accounts'],
+            'market': bq['stex'],
+            'trade_type': bq['trde_tp'],
+        })
     return formatted
 
 
