@@ -2857,15 +2857,23 @@ def get_ccc_dir() -> str:
     return os.path.expanduser(os.path.join("~", "ccc"))
 
 
-def _ccc_safe_file_path(filename: str) -> str | None:
-    name = os.path.basename(filename or "")
-    if not name or name in (".", ".."):
+def _ccc_safe_path(*parts: str) -> str | None:
+    if any(not part or part in (".", "..") or "/" in part or "\\" in part
+           or ":" in part for part in parts):
         return None
     base = os.path.realpath(get_ccc_dir())
-    path = os.path.realpath(os.path.join(base, name))
-    if path != base and path.startswith(base + os.sep) and os.path.isfile(path):
-        return path
+    path = os.path.realpath(os.path.join(base, *parts))
+    try:
+        if os.path.commonpath([base, path]) == base and path != base:
+            return path
+    except ValueError:
+        pass
     return None
+
+
+def _ccc_safe_file_path(filename: str) -> str | None:
+    path = _ccc_safe_path(filename)
+    return path if path and os.path.isfile(path) else None
 
 
 def _ccc_page(title: str, body: str) -> str:
@@ -2881,6 +2889,7 @@ a {{ color: #334; }}
 .file-list {{ list-style: none; padding: 0; }}
 .file-list li {{ margin: 8px 0; }}
 .file-body {{ font-family: Consolas, 'Courier New', monospace; white-space: normal; }}
+video {{ display: block; width: 100%; max-width: 1100px; max-height: 80vh; background: #000; }}
 </style>
 </head>
 <body>
@@ -2890,17 +2899,20 @@ a {{ color: #334; }}
 
 
 @app.get("/stock/ccc", response_class=HTMLResponse)
+@app.get("/stock/ccc/", response_class=HTMLResponse)
 async def ccc_file_list_page():
     ccc_dir = get_ccc_dir()
     names = []
     if os.path.isdir(ccc_dir):
         for fn in os.listdir(ccc_dir):
-            path = os.path.join(ccc_dir, fn)
-            if os.path.isfile(path):
+            path = _ccc_safe_path(fn)
+            if path and (os.path.isdir(path) or
+                         (os.path.isfile(path) and fn.lower().endswith(".txt"))):
                 names.append(fn)
         names.sort()
     items = "".join(
-        f'<li><a href="/stock/ccc/{quote(name)}">{html.escape(name)}</a></li>'
+        f'<li><a href="/stock/ccc/{quote(name)}">{html.escape(name)}'
+        f'{"/" if os.path.isdir(os.path.join(ccc_dir, name)) else ""}</a></li>'
         for name in names
     )
     if not items:
@@ -2911,8 +2923,22 @@ async def ccc_file_list_page():
 
 @app.get("/stock/ccc/{filename}", response_class=HTMLResponse)
 async def ccc_file_view_page(filename: str):
+    folder = _ccc_safe_path(filename)
+    if folder and os.path.isdir(folder):
+        names = sorted(
+            name for name in os.listdir(folder)
+            if name.lower().endswith(".mp4")
+            and (path := _ccc_safe_path(filename, name)) and os.path.isfile(path)
+        )
+        items = "".join(
+            f'<li><a href="/stock/ccc/{quote(filename)}/{quote(name)}">'
+            f'{html.escape(name)}</a></li>' for name in names
+        ) or "<li>MP4 파일이 없습니다.</li>"
+        body = (f'<p><a href="/stock/ccc">목록</a></p>'
+                f'<h1>{html.escape(filename)}</h1><ul class="file-list">{items}</ul>')
+        return HTMLResponse(content=_ccc_page(filename, body))
     path = _ccc_safe_file_path(filename)
-    if path is None:
+    if path is None or not filename.lower().endswith(".txt"):
         return HTMLResponse(content=_ccc_page("ccc", "<p>파일을 찾을 수 없습니다.</p><p><a href=\"/stock/ccc\">목록</a></p>"), status_code=404)
     with open(path, "rt", encoding="utf-8") as inf:
         text = inf.read()
@@ -2923,6 +2949,34 @@ async def ccc_file_view_page(filename: str):
         f"<div class=\"file-body\">{shown}</div>"
     )
     return HTMLResponse(content=_ccc_page(os.path.basename(path), body))
+
+
+def _ccc_video_path(folder: str, filename: str) -> str:
+    directory = _ccc_safe_path(folder)
+    path = _ccc_safe_path(folder, filename)
+    if (not directory or not os.path.isdir(directory) or not path
+            or not filename.lower().endswith(".mp4") or not os.path.isfile(path)):
+        raise HTTPException(status_code=404, detail="Video not found")
+    return path
+
+
+@app.get("/stock/ccc/{folder}/{filename}", response_class=HTMLResponse)
+async def ccc_video_page(folder: str, filename: str):
+    _ccc_video_path(folder, filename)
+    folder_url = f'/stock/ccc/{quote(folder)}'
+    video_url = f'{folder_url}/{quote(filename)}/file'
+    body = (
+        f'<p><a href="{folder_url}">폴더 목록</a> · <a href="/stock/ccc">전체 목록</a></p>'
+        f'<h1>{html.escape(filename)}</h1>'
+        f'<video controls playsinline preload="metadata" src="{video_url}">'
+        f'비디오를 재생할 수 없습니다. <a href="{video_url}">MP4 열기</a></video>'
+    )
+    return HTMLResponse(content=_ccc_page(filename, body))
+
+
+@app.api_route("/stock/ccc/{folder}/{filename}/file", methods=["GET", "HEAD"])
+async def ccc_video_file(folder: str, filename: str):
+    return FileResponse(_ccc_video_path(folder, filename), media_type="video/mp4")
 
 
 @app.get("/settings", response_class=HTMLResponse)
