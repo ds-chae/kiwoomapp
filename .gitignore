@@ -1,0 +1,15 @@
+/chart_data/
+/logs/
+/pl/
+/uploads/
+/venv/
+/auto_sell_enabled.json
+/env.json
+/interested_stocks.json
+/jango_data.json
+/last_gathering_time.json
+/p3_interested_posted.json
+/pc_settings.json
+/sell_price_rate.json
+/stockinfos.json
+/stocknames.json
