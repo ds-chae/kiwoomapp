@@ -19,6 +19,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from fastapi import FastAPI, HTTPException, status, Cookie, Request, File, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, FileResponse
+from fastapi.security import HTTPBasic
 import uvicorn
 from contextlib import asynccontextmanager
 import secrets
@@ -2851,6 +2852,36 @@ async def conn_files_page_stock(token: str = Cookie(None, alias="stoken")):
     html_content = load_text_file("./conn_files.html")
     html_content = html_content.replace("{IP_SUFFIX}", ip_suffix)
     return HTMLResponse(content=html_content)
+
+
+ccc_basic_auth = HTTPBasic(auto_error=False, realm="ccc")
+
+
+@app.middleware("http")
+async def require_ccc_password(request: Request, call_next):
+    path = request.url.path
+    if path != "/stock/ccc" and not path.startswith("/stock/ccc/"):
+        return await call_next(request)
+
+    try:
+        password = os_getenv("CCC_PASSWORD")
+    except KeyError:
+        password = None
+    try:
+        credentials = await ccc_basic_auth(request)
+    except HTTPException:
+        credentials = None
+
+    headers = {"Cache-Control": "no-store"}
+    if not password or not credentials or not secrets.compare_digest(
+        credentials.password.encode("utf-8"), password.encode("utf-8")
+    ):
+        headers["WWW-Authenticate"] = 'Basic realm="ccc"'
+        return JSONResponse({"detail": "Password required"}, status_code=401, headers=headers)
+
+    response = await call_next(request)
+    response.headers.update(headers)
+    return response
 
 
 def get_ccc_dir() -> str:
